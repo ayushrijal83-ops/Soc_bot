@@ -1,0 +1,254 @@
+# Architecture Decision Records (ADRs)
+
+## ADR-001: V1 is Terminal-Based
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+Need to choose UI paradigm for V1.
+
+### Decision
+V1 will be a terminal-based CLI application using Python's standard library + `rich` for formatting.
+
+### Rationale
+- Fast development: no frontend build, no browser compatibility
+- Clean separation: publishing engine independent of UI
+- Portable: runs on servers, CI, headless environments
+- User base: developers/technical users comfortable with CLI
+- Future UI (web, desktop) can reuse core engine
+
+### Consequences
+- Limited accessibility for non-technical users
+- No drag-and-drop, rich media preview
+- Menu navigation via keyboard only
+
+---
+
+## ADR-002: Platform Adapters Are Isolated
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+Instagram, TikTok, YouTube APIs differ significantly in auth, upload, publishing.
+
+### Decision
+Each platform gets its own adapter package (`src/platforms/{instagram,tiktok,youtube}/`) implementing a common `PlatformAdapter` protocol. Core engine knows only the protocol.
+
+### Rationale
+- Instagram: Graph API, container-based, requires Facebook Page
+- TikTok: Creator API, direct upload URL, draft/publish separation
+- YouTube: Resumable upload, quota-based, long processing
+- Isolated changes: TikTok API update doesn't break Instagram
+- Testable: Mock each adapter independently
+- Replaceable: Swap adapter without touching core
+
+### Consequences
+- Some code duplication (HTTP clients, retry logic)
+- Need shared base classes for common patterns
+- Adapter protocol must be stable
+
+---
+
+## ADR-003: Official APIs Only
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+Unofficial APIs (scraping, private endpoints) exist but are unreliable.
+
+### Decision
+Use only official, documented, supported APIs:
+- Instagram: Instagram Graph API (Meta)
+- TikTok: TikTok Creator API / Content Posting API
+- YouTube: YouTube Data API v3
+
+### Rationale
+- Reliability: Official APIs have SLAs, deprecation notices
+- Security: No credential phishing, no session hijacking
+- Compliance: Terms of service compliant
+- Maintainability: Documented, versioned, supported
+- Account safety: No risk of platform bans
+
+### Consequences
+- Stricter account requirements (Business/Creator accounts)
+- OAuth setup required per platform
+- Rate limits and quotas apply
+- Some features unavailable (e.g., Instagram personal accounts)
+
+---
+
+## ADR-004: Independent Publishing Jobs
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+User selects multiple accounts across platforms for one post.
+
+### Decision
+Each (post, account) combination creates an independent `PublishJob`. Jobs execute in parallel. Failure of one job does not affect others.
+
+### Rationale
+- User expects partial success (e.g., 3 of 4 accounts published)
+- Retry per destination, not per post
+- Clear status per destination in history
+- Parallel execution = faster overall publishing
+- Matches mental model: "post to these accounts"
+
+### Consequences
+- More database records (1 job per destination)
+- Complex retry logic per job
+- Aggregated results display needed
+
+---
+
+## ADR-005: SQLite for V1 Database
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+Need local persistence for accounts, jobs, history.
+
+### Decision
+Use SQLite (`data/publisher.db`) for V1. Single file, zero config, embedded.
+
+### Rationale
+- No separate database server needed
+- Portable: copy file = copy entire state
+- Sufficient for single-user CLI tool
+- ACID compliant
+- Easy backup/restore
+- Can migrate to PostgreSQL later if needed
+
+### Consequences
+- No concurrent multi-process access (fine for CLI)
+- Limited horizontal scaling
+- File locking on Windows can be tricky
+
+---
+
+## ADR-006: Fernet for Token Encryption
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+Access/refresh tokens must be encrypted at rest.
+
+### Decision
+Use `cryptography.fernet.Fernet` (AES-128-GCM) with key from `ENCRYPTION_KEY` env var.
+
+### Rationale
+- Standard, audited implementation
+- Authenticated encryption (tamper-proof)
+- Simple API: `encrypt()` / `decrypt()`
+- Key rotation possible (re-encrypt all)
+- No external dependencies beyond `cryptography`
+
+### Consequences
+- Key management required (generate, store, rotate)
+- If key lost, all tokens unrecoverable
+- Symmetric: same key encrypts/decrypts
+
+---
+
+## ADR-007: Dry-Run Mode Required
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+Users need to verify publishing plan before committing.
+
+### Decision
+Implement `--dry-run` flag that shows exact plan without API calls.
+
+### Rationale
+- Prevents accidental publishes
+- Validates media, accounts, captions
+- Shows exactly which accounts will receive post
+- Useful for CI/CD verification
+- Builds user trust
+
+### Consequences
+- Must simulate all validation steps
+- Plan display must match actual execution
+- No API calls means no real media IDs
+
+---
+
+## ADR-008: Local OAuth Callback Server
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+OAuth flows require redirect URI to receive authorization code.
+
+### Decision
+Run local HTTP server on `http://localhost:8080/callback/{platform}` during authorization.
+
+### Rationale
+- Standard OAuth pattern for desktop/CLI apps
+- No external callback service needed
+- User sees success/failure in browser
+- Automatic browser opening via `webbrowser` module
+- Works on all platforms
+
+### Consequences
+- Port 8080 must be available
+- Firewall/antivirus may block
+- Need graceful shutdown after callback
+- State parameter validates callback authenticity
+
+---
+
+## ADR-009: No AI/Generation Features
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+Many social tools add AI caption generation, video editing, etc.
+
+### Decision
+This tool is **distribution/publishing only**. No AI generation, no video editing, no content creation.
+
+### Rationale
+- Focus: Do one thing well (reliable publishing)
+- Avoid scope creep
+- User provides finished video + caption
+- Separation of concerns: creation ≠ distribution
+- Simpler maintenance, testing, security
+
+### Consequences
+- Users must use other tools for content creation
+- No "smart" features (hashtag suggestions, timing optimization)
+
+---
+
+## ADR-010: Structured Logging with Sanitization
+
+**Date:** 2024-01-XX
+**Status:** Accepted
+
+### Context
+Need observability without leaking secrets.
+
+### Decision
+Use structured JSON logging. Sanitize all log output: no tokens, secrets, file paths, captions.
+
+### Rationale
+- Machine-parseable for debugging
+- Safe for shared logs
+- Correlation IDs trace jobs across components
+- Debug level for development only
+
+### Consequences
+- More verbose log format
+- Manual debugging requires correlation ID lookup
+- Must audit all log statements for secrets

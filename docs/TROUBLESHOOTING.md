@@ -1,0 +1,395 @@
+# Troubleshooting
+
+## Structure
+
+Each entry follows:
+- **Problem** — User-visible symptom
+- **Symptoms** — Error messages, behaviors
+- **Root Cause** — Why it happens
+- **Solution** — Steps to fix
+- **Affected Files** — Where to look
+- **How to Reproduce** — Steps to trigger
+- **How to Verify** — Confirm fix works
+
+---
+
+## OAuth / Authentication Issues
+
+### Problem: "Redirect URI mismatch" during OAuth
+
+**Symptoms:**
+- Browser shows platform error page: "Redirect URI does not match"
+- Callback server receives no request
+
+**Root Cause:**
+- Redirect URI in `.env` doesn't match platform developer dashboard exactly
+- Trailing slash difference, http vs https, port mismatch
+
+**Solution:**
+1. Check `.env`: `INSTAGRAM_REDIRECT_URI=http://localhost:8080/callback/instagram`
+2. Match exactly in Meta/TikTok/Google developer console
+3. Include/exclude trailing slash consistently
+4. Use `http://localhost:8080` for local dev (not 127.0.0.1)
+
+**Affected Files:** `.env`, platform developer dashboards
+
+**How to Reproduce:** Start OAuth with mismatched URI
+
+**How to Verify:** OAuth completes, tokens stored, account appears in "Connected Accounts"
+
+---
+
+### Problem: "Invalid state parameter" on callback
+
+**Symptoms:**
+- Callback server logs "Invalid state"
+- Browser shows error page
+
+**Root Cause:**
+- CSRF protection: state parameter generated != state received
+- Multiple OAuth attempts overlapping
+- Browser cache/cookies
+
+**Solution:**
+1. Only one OAuth flow at a time
+2. Clear browser cookies for platform
+3. Restart CLI, retry
+
+**Affected Files:** `src/platforms/*/auth.py`, callback server
+
+**How to Reproduce:** Start OAuth, don't complete, start again
+
+**How to Verify:** Single OAuth flow completes successfully
+
+---
+
+### Problem: Token refresh fails with "invalid_grant"
+
+**Symptoms:**
+- Account status shows `revoked` or `expired`
+- Publishing fails with auth error
+- Refresh attempt logged as failed
+
+**Root Cause:**
+- Refresh token expired (Instagram: 60 days)
+- User revoked access in platform settings
+- Platform rotated refresh token, old one invalid
+
+**Solution:**
+1. User must reconnect account via "Connected Accounts" → "Reconnect"
+2. Full OAuth flow required
+3. Old tokens automatically cleaned up
+
+**Affected Files:** `src/accounts/manager.py`, `src/platforms/*/auth.py`
+
+**How to Reproduce:** Wait for token expiry, or revoke in platform settings
+
+**How to Verify:** Reconnect works, new tokens stored, publishing succeeds
+
+---
+
+## Publishing Issues
+
+### Problem: "Video too large" / Upload fails
+
+**Symptoms:**
+- Validation passes but upload fails
+- Platform returns 413 or size error
+
+**Root Cause:**
+- Video exceeds platform limit
+- Validation used wrong limit
+- File size miscalculated
+
+**Solution:**
+1. Check platform limits in `API_INTEGRATIONS.md`
+2. Compress video or split
+3. Update validation limits if platform changed
+
+**Affected Files:** `src/core/validation.py`, platform adapters
+
+**How to Reproduce:** Try uploading >4GB video to Instagram/TikTok
+
+**How to Verify:** Validation rejects oversized video before API call
+
+---
+
+### Problem: Video stuck in "PROCESSING" state
+
+**Symptoms:**
+- Job status: `processing` for extended time
+- No error, no completion
+
+**Root Cause:**
+- Platform processing delay (YouTube: hours)
+- Polling interval too aggressive
+- Platform internal error
+
+**Solution:**
+1. Increase polling interval (YouTube: 5 min)
+2. Add max processing timeout (configurable)
+3. Allow manual "check status" in CLI
+
+**Affected Files:** `src/core/publisher.py`, platform adapters
+
+**How to Reproduce:** Upload large video to YouTube
+
+**How to Verify:** Job eventually reaches `published` or `failed` with clear error
+
+---
+
+### Problem: Partial publish — some accounts succeed, some fail
+
+**Symptoms:**
+- "3 of 4 accounts published"
+- One job shows `failed`
+
+**Root Cause:**
+- Per-account issues: quota, permissions, token expiry
+- Platform-specific limits
+
+**Solution:**
+1. Check failed job error message
+2. Retry individual job from "Publishing Queue"
+3. Fix underlying issue (reconnect account, wait for quota reset)
+
+**Affected Files:** `src/core/jobs.py`, `src/cli/menu.py`
+
+**How to Reproduce:** Publish to accounts where one has exhausted quota
+
+**How to Verify:** Failed job can be retried independently; successes unchanged
+
+---
+
+## Database Issues
+
+### Problem: "Database is locked" / SQLite busy
+
+**Symptoms:**
+- `sqlite3.OperationalError: database is locked`
+- Occurs on concurrent access
+
+**Root Cause:**
+- Multiple processes accessing DB (CLI + background job)
+- Long transaction holding lock
+
+**Solution:**
+1. Enable WAL mode: `PRAGMA journal_mode=WAL;`
+2. Use connection pooling / single connection
+3. Short transactions, commit quickly
+4. Retry with backoff on busy
+
+**Affected Files:** `src/storage/database.py`
+
+**How to Reproduce:** Run two CLI instances simultaneously
+
+**How to Verify:** Concurrent reads work; writes serialize cleanly
+
+---
+
+### Problem: Migration fails / schema mismatch
+
+**Symptoms:**
+- App crashes on startup with schema error
+- Column missing, table missing
+
+**Root Cause:**
+- Migration not run
+- DB corrupted
+- Version mismatch
+
+**Solution:**
+1. Run migration: `python -m src.storage.database migrate`
+2. If corrupted: backup, delete DB, re-run migrations
+3. Check `schema_version` table
+
+**Affected Files:** `src/storage/database.py`, `src/storage/migrations/`
+
+**How to Reproduce:** Upgrade code without running migrations
+
+**How to Verify:** App starts, all tables exist, version matches
+
+---
+
+## Configuration Issues
+
+### Problem: "ENCRYPTION_KEY not set" / Decryption fails
+
+**Symptoms:**
+- Startup error: missing encryption key
+- `InvalidToken` when reading tokens
+
+**Root Cause:**
+- `.env` missing `ENCRYPTION_KEY`
+- Key changed since tokens encrypted
+- Key format invalid (not 32-byte base64)
+
+**Solution:**
+1. Generate key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+2. Add to `.env`
+3. If key changed: re-authenticate all accounts (old tokens unrecoverable)
+
+**Affected Files:** `.env`, `src/storage/tokens.py`
+
+**How to Reproduce:** Delete ENCRYPTION_KEY from .env
+
+**How to Verify:** App starts, can read/write tokens
+
+---
+
+### Problem: Port 8080 in use / Callback server fails
+
+**Symptoms:**
+- `OSError: [Errno 98] Address already in use`
+- OAuth never completes
+
+**Root Cause:**
+- Another process on port 8080
+- Previous callback server didn't shut down
+
+**Solution:**
+1. Kill process on 8080: `lsof -ti:8080 | xargs kill`
+2. Or change port in `.env` and platform dashboards
+3. Ensure callback server has timeout/shutdown
+
+**Affected Files:** `src/accounts/manager.py`, `.env`
+
+**How to Reproduce:** Start OAuth, kill CLI, start again
+
+**How to Verify:** OAuth callback completes, server shuts down
+
+---
+
+## Platform-Specific Issues
+
+### Instagram: "Instagram account not linked to Facebook Page"
+
+**Symptoms:**
+- OAuth succeeds but no Instagram account found
+- "No Instagram Business Account" error
+
+**Root Cause:**
+- User has personal Instagram, not Business/Creator
+- Instagram not linked to Facebook Page
+
+**Solution:**
+1. Convert to Business/Creator account in Instagram app
+2. Link to Facebook Page in Meta Business Suite
+3. Re-run OAuth
+
+**Affected Files:** `src/platforms/instagram/auth.py`
+
+**How to Reproduce:** Connect personal Instagram account
+
+**How to Verify:** Account appears with `@username` in Connected Accounts
+
+---
+
+### TikTok: "Creator API access not approved"
+
+**Symptoms:**
+- OAuth succeeds but video upload returns 403
+- "Permission denied" on publish
+
+**Root Cause:**
+- TikTok Creator API requires app review/approval
+- Personal account not eligible
+
+**Solution:**
+1. Apply for Creator API access in TikTok Developer Portal
+2. Use approved app credentials
+3. Ensure account meets follower/content requirements
+
+**Affected Files:** `src/platforms/tiktok/auth.py`, `src/platforms/tiktok/publisher.py`
+
+**How to Reproduce:** Use unapproved app credentials
+
+**How to Verify:** Upload/publish succeeds with approved app
+
+---
+
+### YouTube: "Quota exceeded"
+
+**Symptoms:**
+- Upload fails with 403 "quotaExceeded"
+- Daily upload limit reached
+
+**Root Cause:**
+- Default quota: 10,000 units/day
+- Video insert: ~1,600 units
+- ~6 uploads/day
+
+**Solution:**
+1. Request quota increase in Google Cloud Console
+2. Space uploads across days
+3. Monitor quota usage in CLI
+
+**Affected Files:** `src/platforms/youtube/publisher.py`
+
+**How to Reproduce:** Upload >6 videos in one day
+
+**How to Verify:** Quota error handled gracefully, job marked failed with clear message
+
+---
+
+## CLI / UX Issues
+
+### Problem: Menu doesn't display / Rich formatting broken
+
+**Symptoms:**
+- Garbled output
+- Missing colors, tables
+- Terminal width issues
+
+**Root Cause:**
+- Terminal doesn't support ANSI/rich
+- Narrow terminal (< 80 cols)
+- Output redirected to file
+
+**Solution:**
+1. Detect terminal capabilities
+2. Fallback to plain text if not TTY
+3. Set `TERM=xterm-256color`
+4. Minimum width check
+
+**Affected Files:** `src/cli/display.py`, `src/cli/menu.py`
+
+**How to Reproduce:** Run in basic terminal or pipe output
+
+**How to Verify:** Menu renders correctly in target terminals
+
+---
+
+## Logging / Debugging
+
+### Problem: No logs / Can't debug failure
+
+**Symptoms:**
+- Job fails but no error details
+- Log files empty
+
+**Root Cause:**
+- Log level too high (WARNING)
+- Log directory not writable
+- Logger not configured
+
+**Solution:**
+1. Set `LOG_LEVEL=DEBUG` in `.env`
+2. Check `logs/` directory permissions
+3. Verify logging config in `main.py`
+
+**Affected Files:** `main.py`, `.env`, `logs/`
+
+**How to Reproduce:** Set LOG_LEVEL=ERROR, trigger failure
+
+**How to Verify:** Debug logs show full request/response (sanitized)
+
+---
+
+## Adding New Entries
+
+When new issues arise:
+1. Document in this format
+2. Add to relevant section
+3. Link from `CLAUDE_HANDOFF.md` if critical
+4. Update `PROJECT_STATUS.md` known issues

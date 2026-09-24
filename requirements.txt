@@ -1,0 +1,25 @@
+# Production Dependencies
+# Core
+rich>=13.7.0
+click>=8.1.7
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.1
+
+# Database
+sqlalchemy>=2.0.30
+alembic>=1.13.0
+
+# Security
+cryptography>=42.0.0
+
+# HTTP
+httpx>=0.27.0
+tenacity>=8.2.0
+
+# Media validation
+ffmpeg-python>=0.2.0
+
+# Utilities
+python-dateutil>=2.9.0
+PyYAML>=6.0.1
