@@ -1,13 +1,17 @@
 """OAuth callback server for receiving authorization callbacks."""
 
+import html
+import socket
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from src.auth.errors import OAuthStateError
+from src.auth.errors import OAuthCallbackError, OAuthStateError
 from src.auth.state import OAuthStateStore
+
+CALLBACK_PATH_PREFIX = "/callback/"
 
 
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
@@ -21,6 +25,11 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Handle GET request for OAuth callback."""
         parsed = urlparse(self.path)
+        if not parsed.path.startswith(CALLBACK_PATH_PREFIX):
+            # e.g. /favicon.ico — must not be mistaken for an OAuth callback
+            self._send_error("Not found", 404)
+            return
+        callback_platform = parsed.path[len(CALLBACK_PATH_PREFIX):].strip("/")
         query = parse_qs(parsed.query)
 
         # Extract parameters
@@ -64,8 +73,8 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
                 self._send_error("Missing state parameter in callback", 400)
                 return
 
-            # Validate state
-            oauth_state = self.state_store.consume_state(state)
+            # Validate state (single-use) and that it was issued for this callback's platform
+            oauth_state = self.state_store.consume_state(state, platform=callback_platform)
 
             # Add platform info to callback data
             callback_data["platform"] = oauth_state.platform
@@ -82,15 +91,15 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             callback_data["error_description"] = str(e)
             self.on_callback(callback_data)
             self._send_error("Invalid or expired state. Please try again.", 400)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - must always answer the browser
             callback_data["error"] = "server_error"
-            callback_data["error_description"] = str(e)
+            callback_data["error_description"] = type(e).__name__
             self.on_callback(callback_data)
-            self._send_error(f"Unexpected error: {e!s}", 500)
+            self._send_error("Unexpected error while handling the callback.", 500)
 
     def _send_success(self) -> None:
         """Send success HTML response."""
-        html = """
+        page = """
         <!DOCTYPE html>
         <html>
         <head>
@@ -109,11 +118,11 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
-        self.wfile.write(html.encode())
+        self.wfile.write(page.encode())
 
     def _send_error(self, message: str, status: int = 400) -> None:
         """Send error HTML response."""
-        html = f"""
+        page = f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -125,7 +134,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
         </head>
         <body>
             <h1 class="error">Authorization Failed</h1>
-            <p>{message}</p>
+            <p>{html.escape(message)}</p>
             <p>You can close this window and return to Soc_bot.</p>
         </body>
         </html>
@@ -133,19 +142,34 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
-        self.wfile.write(html.encode())
+        self.wfile.write(page.encode())
 
     def log_message(self, format: str, *args) -> None:
         """Suppress default log messages."""
 
 
+class _LoopbackHTTPServer(HTTPServer):
+    # HTTPServer enables SO_REUSEADDR, which on Windows lets another process bind the
+    # same port and intercept the authorization code. Require exclusive binding.
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows only
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 class OAuthCallbackServer:
-    """Local HTTP server for receiving OAuth callbacks."""
+    """Local loopback HTTP server for receiving OAuth callbacks.
+
+    ``port=0`` (the default) lets the OS pick a free port; read the bound port
+    from ``port`` after ``start()`` and build the redirect URI with ``redirect_uri()``.
+    """
 
     def __init__(
         self,
         host: str = "127.0.0.1",
-        port: int = 8080,
+        port: int = 0,
         state_store: OAuthStateStore | None = None,
         timeout: int = 300,
     ):
@@ -157,10 +181,9 @@ class OAuthCallbackServer:
         self._thread: threading.Thread | None = None
         self._callback_data: dict[str, Any] = {}
         self._callback_received = threading.Event()
-        self._error: Exception | None = None
 
-    def start(self, on_callback: Callable[[dict[str, Any]], None]) -> None:
-        """Start the callback server."""
+    def start(self, on_callback: Callable[[dict[str, Any]], None] | None = None) -> None:
+        """Bind the socket and start serving in a background thread."""
 
         def handler(*args, **kwargs):
             return OAuthCallbackHandler(
@@ -170,32 +193,45 @@ class OAuthCallbackServer:
                 **kwargs,
             )
 
-        self._server = HTTPServer((self.host, self.port), handler)
+        try:
+            self._server = _LoopbackHTTPServer((self.host, self.port), handler)
+        except OSError as e:
+            raise OAuthCallbackError(
+                f"Could not start OAuth callback server on {self.host}:{self.port}: {e.strerror or e}"
+            ) from e
+        self.port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
-    def _handle_callback(self, callback_data: dict[str, Any], on_callback: Callable[[dict[str, Any]], None]) -> None:
+    def redirect_uri(self, platform: str) -> str:
+        """Redirect URI for ``platform`` using the actually bound port."""
+        if self._server is None:
+            raise OAuthCallbackError("Callback server is not started")
+        return f"http://{self.host}:{self.port}/callback/{platform}"
+
+    def _handle_callback(
+        self, callback_data: dict[str, Any], on_callback: Callable[[dict[str, Any]], None] | None
+    ) -> None:
         """Handle callback data and signal completion."""
         self._callback_data = callback_data
         self._callback_received.set()
-        on_callback(callback_data)
+        if on_callback:
+            on_callback(callback_data)
 
     def wait_for_callback(self) -> dict[str, Any]:
-        """Wait for callback and return data."""
+        """Block until a callback arrives and return its data."""
         if not self._callback_received.wait(timeout=self.timeout):
             raise TimeoutError(f"OAuth callback timed out after {self.timeout} seconds")
-
-        if self._error:
-            raise self._error
-
         return self._callback_data
 
     def stop(self) -> None:
-        """Stop the callback server."""
-        if self._server:
-            self._server.shutdown()
-            self._server.server_close()
+        """Stop the callback server. Safe to call more than once."""
+        server, self._server = self._server, None
+        if server:
+            try:
+                server.shutdown()
+            finally:
+                server.server_close()
         if self._thread:
             self._thread.join(timeout=5)
-
-
+            self._thread = None

@@ -2,22 +2,22 @@
 
 import os
 import tempfile
+from datetime import datetime, timezone
+
 import pytest
-from datetime import datetime
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 
 from src.storage.database import (
-    Database,
     Account,
-    Video,
+    Database,
     Post,
-    PublishJob,
     PublishAttempt,
+    PublishJob,
     SchemaVersion,
-    Base,
+    Video,
 )
-from src.storage.tokens import TokenEncryption, generate_key
+from src.storage.tokens import TokenEncryption, TokenEncryptionError, generate_key
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ class TestDatabaseInitialization:
         """Test that init creates all required tables."""
         assert os.path.exists(temp_db_path)
 
-        with database.session() as session:
+        with database.session():
             inspector = inspect(database.engine)
             tables = inspector.get_table_names()
 
@@ -139,7 +139,7 @@ class TestAccountModel:
                 display_name="Test User",
                 access_token="access_token_abc",
                 refresh_token="refresh_token_xyz",
-                expires_at=datetime(2025, 12, 31, 23, 59, 59),
+                expires_at=datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
                 status="active",
                 _encryption=encryption,
             )
@@ -155,7 +155,7 @@ class TestAccountModel:
             assert account.username == "test_user"
             assert account.display_name == "Test User"
             assert account.status == "active"
-            assert account.expires_at == datetime(2025, 12, 31, 23, 59, 59)
+            assert account.expires_at.replace(tzinfo=timezone.utc) == datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
             # Verify tokens are encrypted
             assert account.access_token_enc != "access_token_abc"
@@ -853,7 +853,7 @@ class TestTokenEncryptionIntegration:
 
         with new_db.session() as session:
             account = session.query(Account).filter_by(id=account_id).first()
-            with pytest.raises(Exception):  # TokenEncryptionError
+            with pytest.raises(TokenEncryptionError):
                 account.get_access_token(encryption2)
 
 

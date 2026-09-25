@@ -1,18 +1,17 @@
 """Tests for CLI display utilities."""
 
-import io
-import sys
 from unittest.mock import patch
+
 from src.cli.display import (
-    print_header,
-    print_menu,
-    print_info,
-    print_success,
-    print_warning,
-    print_error,
-    print_not_implemented,
-    print_table,
     clear_screen,
+    print_error,
+    print_header,
+    print_info,
+    print_menu,
+    print_not_implemented,
+    print_success,
+    print_table,
+    print_warning,
 )
 
 

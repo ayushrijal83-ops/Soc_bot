@@ -1,236 +1,341 @@
-"""Tests for platform auth adapters."""
+"""Tests for platform auth adapters (all HTTP mocked — no real provider calls)."""
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+import asyncio
+import base64
+import hashlib
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
+
+import httpx
 import pytest
 
+from src.auth.base import (
+    OAuthTokenResult,
+    PlatformAuth,
+    expires_at_from,
+    is_token_expiring,
+)
+from src.auth.errors import OAuthConfigurationError, OAuthTokenExchangeError
 from src.platforms.instagram.auth import InstagramAuth
 from src.platforms.tiktok.auth import TikTokAuth
 from src.platforms.youtube.auth import YouTubeAuth
-from src.auth.base import OAuthConfig, OAuthTokenResult
-from src.auth.errors import (
-    OAuthConfigurationError,
-    OAuthTokenExchangeError,
-    OAuthAccountIdentityError,
-)
+
+
+def _adapter(cls, config):
+    return cls(config=config, state_store=MagicMock(), token_encryption=MagicMock(), account_manager=MagicMock())
+
+
+def _query(url: str) -> dict[str, str]:
+    return {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
+
+
+class FakeClient:
+    """Stands in for httpx.AsyncClient; records requests and returns canned responses in order."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def _respond(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        status, body = self.responses.pop(0)
+        return httpx.Response(status, json=body, request=httpx.Request(method, url))
+
+    async def get(self, url, **kwargs):
+        return await self._respond("GET", url, **kwargs)
+
+    async def post(self, url, **kwargs):
+        return await self._respond("POST", url, **kwargs)
+
+    async def delete(self, url, **kwargs):
+        return await self._respond("DELETE", url, **kwargs)
+
+
+def _patch_http(module: str, responses):
+    fake = FakeClient(responses)
+    return fake, patch(f"{module}.httpx.AsyncClient", fake)
 
 
 class TestInstagramAuth:
-    """Tests for InstagramAuth class."""
+    """Business Login for Instagram (Instagram API with Instagram Login)."""
 
     def setup_method(self):
-        """Set up test fixtures."""
-        self.config = OAuthConfig(
-            platform="instagram",
-            client_id="test_app_id",
-            client_secret="test_app_secret",
-            redirect_uri="http://localhost:8080/callback/instagram",
-            scopes=[
-                "instagram_graph_user_profile",
-                "instagram_graph_user_media",
-                "pages_show_list",
-                "pages_read_engagement",
-            ],
-            authorization_url="https://www.facebook.com/v22.0/dialog/oauth",
-            token_url="https://graph.facebook.com/v22.0/oauth/access_token",
-            pkce_required=True,
-        )
-
-        self.mock_state_store = MagicMock()
-        self.mock_encryption = MagicMock()
-        self.mock_account_manager = MagicMock()
-
-    def test_create_config(self):
-        """Test creating Instagram OAuth config."""
-        config = InstagramAuth.create_config(
+        self.config = InstagramAuth.create_config(
             app_id="test_app_id",
             app_secret="test_app_secret",
-            redirect_uri="http://localhost:8080/callback/instagram",
+            redirect_uri="http://127.0.0.1:8080/callback/instagram",
         )
+        self.auth = _adapter(InstagramAuth, self.config)
 
+    def test_create_config(self):
+        config = self.config
         assert config.platform == "instagram"
         assert config.client_id == "test_app_id"
         assert config.client_secret == "test_app_secret"
-        assert config.redirect_uri == "http://localhost:8080/callback/instagram"
-        assert config.authorization_url == "https://www.facebook.com/v22.0/dialog/oauth"
-        assert config.token_url == "https://graph.facebook.com/v22.0/oauth/access_token"
-        assert config.pkce_required is True
+        assert config.authorization_url == "https://www.instagram.com/oauth/authorize"
+        assert config.token_url == "https://api.instagram.com/oauth/access_token"
+        # Instagram Login does not document PKCE
+        assert config.pkce_required is False
+
+    def test_default_scopes_are_instagram_login_scopes(self):
+        assert self.config.scopes == ["instagram_business_basic", "instagram_business_content_publish"]
+        for legacy in (
+            "instagram_basic",
+            "instagram_graph_user_profile",
+            "instagram_graph_user_media",
+            "pages_show_list",
+            "pages_read_engagement",
+        ):
+            assert legacy not in self.config.scopes
 
     def test_validate_configuration_valid(self):
-        """Test validating valid configuration."""
-        auth = InstagramAuth(
-            config=self.config,
-            state_store=MagicMock(),
-            token_encryption=MagicMock(),
-            account_manager=MagicMock(),
-        )
-        auth.validate_configuration()  # Should not raise
+        self.auth.validate_configuration()
 
     def test_validate_configuration_missing_client_id(self):
-        """Test validation fails with missing client_id."""
-        config = OAuthConfig(
-            platform="instagram",
-            client_id="",
-            client_secret="secret",
-            redirect_uri="http://localhost",
-            scopes=["test"],
-            authorization_url="https://example.com/auth",
-            token_url="https://example.com/token",
-        )
-        auth = InstagramAuth(config, MagicMock(), MagicMock(), MagicMock())
-        with pytest.raises(Exception):  # OAuthConfigurationError
-            auth.validate_configuration()
-
-    def test_generate_pkce_pair(self):
-        """Test PKCE pair generation."""
-        auth = InstagramAuth(
-            config=self.config,
-            state_store=MagicMock(),
-            token_encryption=MagicMock(),
-            account_manager=MagicMock(),
-        )
-        verifier, challenge = auth.generate_pkce_pair()
-
-        assert isinstance(verifier, str)
-        assert len(verifier) > 40
-        assert isinstance(challenge, str)
-        assert len(challenge) > 0
+        config = InstagramAuth.create_config(app_id="", app_secret="s", redirect_uri="http://127.0.0.1:1/callback/instagram")
+        with pytest.raises(OAuthConfigurationError):
+            _adapter(InstagramAuth, config).validate_configuration()
 
     def test_get_authorization_url(self):
-        """Test generating authorization URL."""
-        auth = InstagramAuth(
-            config=self.config,
-            state_store=MagicMock(),
-            token_encryption=MagicMock(),
-            account_manager=MagicMock(),
-        )
+        url = self.auth.get_authorization_url("test_state", "ignored_challenge")
+        assert url.startswith("https://www.instagram.com/oauth/authorize?")
+        assert "facebook.com" not in url
+        q = _query(url)
+        assert q["client_id"] == "test_app_id"
+        assert q["redirect_uri"] == "http://127.0.0.1:8080/callback/instagram"
+        assert q["response_type"] == "code"
+        assert q["scope"] == "instagram_business_basic,instagram_business_content_publish"
+        assert q["state"] == "test_state"
+        assert "code_challenge" not in q
 
-        pkce_verifier, pkce_challenge = auth.generate_pkce_pair()
-        url = auth.get_authorization_url("test_state", pkce_challenge)
+    def test_exchange_code_short_then_long_lived(self):
+        fake, p = _patch_http("src.platforms.instagram.auth", [
+            (200, {"data": [{"access_token": "SHORT", "user_id": "1789", "permissions": "instagram_business_basic"}]}),
+            (200, {"access_token": "LONG", "token_type": "bearer", "expires_in": 5183944}),
+        ])
+        with p:
+            result = asyncio.run(self.auth.exchange_code("CODE", None))
 
-        assert "https://www.facebook.com/v22.0/dialog/oauth" in url
-        assert "client_id=test_app_id" in url
-        assert "redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback%2Finstagram" in url
-        assert "response_type=code" in url
-        assert "scope=instagram_graph_user_profile+instagram_graph_user_media+pages_show_list+pages_read_engagement" in url
-        assert "state=test_state" in url
-        assert "code_challenge=" in url
-        assert "code_challenge_method=S256" in url
+        (m1, url1, kw1), (m2, url2, kw2) = fake.calls
+        assert (m1, url1) == ("POST", "https://api.instagram.com/oauth/access_token")
+        assert kw1["data"] == {
+            "client_id": "test_app_id",
+            "client_secret": "test_app_secret",
+            "grant_type": "authorization_code",
+            "redirect_uri": "http://127.0.0.1:8080/callback/instagram",
+            "code": "CODE",
+        }
+        assert (m2, url2) == ("GET", "https://graph.instagram.com/access_token")
+        assert kw2["params"] == {"grant_type": "ig_exchange_token", "client_secret": "test_app_secret", "access_token": "SHORT"}
+
+        assert result.access_token == "LONG"
+        assert result.refresh_token is None
+        assert result.expires_in == 5183944
+        assert result.platform_account_id == "1789"
+        assert result.raw_response is None
+
+    def test_exchange_code_accepts_flat_response(self):
+        _, p = _patch_http("src.platforms.instagram.auth", [
+            (200, {"access_token": "SHORT", "user_id": 1789}),
+            (200, {"access_token": "LONG", "expires_in": 100}),
+        ])
+        with p:
+            result = asyncio.run(self.auth.exchange_code("CODE"))
+        assert result.access_token == "LONG"
+        assert result.platform_account_id == "1789"
+
+    def test_long_lived_failure_raises_instead_of_falling_back(self):
+        _, p = _patch_http("src.platforms.instagram.auth", [
+            (200, {"access_token": "SHORT", "user_id": "1"}),
+            (400, {"error": {"message": "bad"}}),
+        ])
+        with p, pytest.raises(OAuthTokenExchangeError) as exc:
+            asyncio.run(self.auth.exchange_code("CODE"))
+        assert "SHORT" not in str(exc.value)
+
+    def test_token_exchange_error_does_not_leak_secret_or_code(self):
+        _, p = _patch_http("src.platforms.instagram.auth", [(400, {"error_message": "Invalid code"})])
+        with p, pytest.raises(OAuthTokenExchangeError) as exc:
+            asyncio.run(self.auth.exchange_code("SECRET_CODE"))
+        assert "SECRET_CODE" not in str(exc.value)
+        assert "test_app_secret" not in str(exc.value)
+
+    def test_refresh_uses_ig_refresh_token_and_returns_new_token(self):
+        assert InstagramAuth.REFRESH_USES_ACCESS_TOKEN is True
+        fake, p = _patch_http("src.platforms.instagram.auth", [
+            (200, {"access_token": "NEW_LONG", "token_type": "bearer", "expires_in": 5184000}),
+        ])
+        with p:
+            result = asyncio.run(self.auth.refresh_tokens("OLD_LONG"))
+        method, url, kw = fake.calls[0]
+        assert (method, url) == ("GET", "https://graph.instagram.com/refresh_access_token")
+        assert kw["params"] == {"grant_type": "ig_refresh_token", "access_token": "OLD_LONG"}
+        assert result.access_token == "NEW_LONG"
+        assert result.expires_in == 5184000
+        assert result.refresh_token is None
+
+    def test_get_account_identity_uses_instagram_me_user_id(self):
+        fake, p = _patch_http("src.platforms.instagram.auth", [
+            (200, {"id": "APP_SCOPED", "user_id": "17841400000", "username": "acct", "name": "Acct"}),
+        ])
+        with p:
+            identity = asyncio.run(self.auth.get_account_identity("TOKEN"))
+        _, url, kw = fake.calls[0]
+        assert url == "https://graph.instagram.com/v25.0/me"
+        assert "user_id" in kw["params"]["fields"]
+        assert "instagram_business_account" not in kw["params"]["fields"]
+        # token goes in a header, not the URL
+        assert kw["headers"]["Authorization"] == "Bearer TOKEN"
+        assert "access_token" not in kw["params"]
+        assert identity["platform_account_id"] == "17841400000"
+        assert identity["username"] == "acct"
+
+    def test_revoke_makes_no_request_and_reports_unsupported(self):
+        fake, p = _patch_http("src.platforms.instagram.auth", [])
+        with p:
+            assert asyncio.run(self.auth.revoke_tokens("TOKEN")) is False
+        assert fake.calls == []
 
 
 class TestTikTokAuth:
-    """Tests for TikTokAuth class."""
+    """TikTok Login Kit for Desktop."""
 
     def setup_method(self):
-        self.config = OAuthConfig(
-            platform="tiktok",
-            client_id="test_client_key",
-            client_secret="test_client_secret",
-            redirect_uri="http://localhost:8080/callback/tiktok",
-            scopes=["video.upload", "video.publish", "user.info.basic"],
-            authorization_url="https://www.tiktok.com/v2/auth/authorize/",
-            token_url="https://open.tiktokapis.com/v2/oauth/token/",
-            pkce_required=True,
-        )
-
-    def test_create_config(self):
-        """Test creating TikTok OAuth config."""
-        config = TikTokAuth.create_config(
+        self.config = TikTokAuth.create_config(
             client_key="test_client_key",
             client_secret="test_client_secret",
-            redirect_uri="http://localhost:8080/callback/tiktok",
+            redirect_uri="http://127.0.0.1:8080/callback/tiktok",
         )
+        self.auth = _adapter(TikTokAuth, self.config)
 
-        assert config.platform == "tiktok"
-        assert config.client_id == "test_client_key"
-        assert config.client_secret == "test_client_secret"
-        assert config.redirect_uri == "http://localhost:8080/callback/tiktok"
-        assert config.authorization_url == "https://www.tiktok.com/v2/auth/authorize/"
-        assert config.token_url == "https://open.tiktokapis.com/v2/oauth/token/"
-        assert config.pkce_required is True
+    def test_create_config(self):
+        assert self.config.platform == "tiktok"
+        assert self.config.client_id == "test_client_key"
+        assert self.config.authorization_url == "https://www.tiktok.com/v2/auth/authorize/"
+        assert self.config.token_url == "https://open.tiktokapis.com/v2/oauth/token/"
+        assert self.config.pkce_required is True
+
+    def test_pkce_challenge_is_hex_sha256(self):
+        verifier, challenge = self.auth.generate_pkce_pair()
+        assert challenge == hashlib.sha256(verifier.encode()).hexdigest()
+        assert len(challenge) == 64
+        assert all(c in "0123456789abcdef" for c in challenge)
+        b64 = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+        assert challenge != b64
 
     def test_get_authorization_url(self):
-        """Test generating authorization URL."""
-        auth = TikTokAuth(
-            config=self.config,
-            state_store=MagicMock(),
-            token_encryption=MagicMock(),
-            account_manager=MagicMock(),
-        )
+        verifier, challenge = self.auth.generate_pkce_pair()
+        url = self.auth.get_authorization_url("test_state", challenge)
+        assert url.startswith("https://www.tiktok.com/v2/auth/authorize/?")
+        q = _query(url)
+        assert q["client_key"] == "test_client_key"
+        assert q["redirect_uri"] == "http://127.0.0.1:8080/callback/tiktok"
+        assert q["response_type"] == "code"
+        assert q["scope"] == "video.upload,video.publish,user.info.basic"
+        assert q["state"] == "test_state"
+        assert q["code_challenge"] == hashlib.sha256(verifier.encode()).hexdigest()
+        assert q["code_challenge_method"] == "S256"
 
-        pkce_verifier, pkce_challenge = auth.generate_pkce_pair()
-        url = auth.get_authorization_url("test_state", pkce_challenge)
+    def test_exchange_code_respects_expires_in(self):
+        _, p = _patch_http("src.platforms.tiktok.auth", [(200, {
+            "open_id": "oid", "scope": "user.info.basic", "access_token": "AT", "expires_in": 86400,
+            "refresh_token": "RT", "refresh_expires_in": 31536000, "token_type": "Bearer",
+        })])
+        before = datetime.now(timezone.utc)
+        with p:
+            result = asyncio.run(self.auth.exchange_code("CODE", "VERIFIER"))
+        assert result.expires_in == 86400
+        assert result.refresh_expires_in == 31536000
+        assert result.expires_at.tzinfo is not None
+        assert before + timedelta(seconds=86400) <= result.expires_at <= datetime.now(timezone.utc) + timedelta(seconds=86400)
 
-        assert "https://www.tiktok.com/v2/auth/authorize/" in url
-        assert "client_key=test_client_key" in url
-        assert "redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback%2Ftiktok" in url
-        assert "response_type=code" in url
-        assert "scope=video.upload+video.publish+user.info.basic" in url
-        assert "state=test_state" in url
-        assert "code_challenge=" in url
-        assert "code_challenge_method=S256" in url
+    def test_refresh_returns_rotated_refresh_token(self):
+        fake, p = _patch_http("src.platforms.tiktok.auth", [(200, {
+            "access_token": "NEW_AT", "expires_in": 86400, "refresh_token": "NEW_RT", "refresh_expires_in": 31536000,
+        })])
+        with p:
+            result = asyncio.run(self.auth.refresh_tokens("OLD_RT"))
+        _, url, kw = fake.calls[0]
+        assert url == "https://open.tiktokapis.com/v2/oauth/token/"
+        assert kw["data"]["grant_type"] == "refresh_token"
+        assert kw["data"]["refresh_token"] == "OLD_RT"
+        assert result.access_token == "NEW_AT"
+        assert result.refresh_token == "NEW_RT"
 
 
 class TestYouTubeAuth:
-    """Tests for YouTubeAuth class."""
+    """Google OAuth 2.0 for installed apps."""
 
     def setup_method(self):
-        self.config = OAuthConfig(
-            platform="youtube",
+        self.config = YouTubeAuth.create_config(
             client_id="test_client_id",
             client_secret="test_client_secret",
-            redirect_uri="http://localhost:8080/callback/youtube",
-            scopes=[
-                "https://www.googleapis.com/auth/youtube.upload",
-                "https://www.googleapis.com/auth/youtube",
-                "https://www.googleapis.com/auth/youtube.readonly",
-            ],
-            authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
-            token_url="https://oauth2.googleapis.com/token",
-            pkce_required=True,
-            additional_params={
-                "access_type": "offline",
-                "prompt": "consent",
-            },
+            redirect_uri="http://127.0.0.1:53123/callback/youtube",
         )
+        self.auth = _adapter(YouTubeAuth, self.config)
 
     def test_create_config(self):
-        """Test creating YouTube OAuth config."""
-        config = YouTubeAuth.create_config(
-            client_id="test_client_id",
-            client_secret="test_client_secret",
-            redirect_uri="http://localhost:8080/callback/youtube",
-        )
+        assert self.config.platform == "youtube"
+        assert self.config.authorization_url == "https://accounts.google.com/o/oauth2/v2/auth"
+        assert self.config.token_url == "https://oauth2.googleapis.com/token"
+        assert self.config.pkce_required is True
+        assert self.config.additional_params == {"access_type": "offline", "prompt": "consent"}
 
-        assert config.platform == "youtube"
-        assert config.client_id == "test_client_id"
-        assert config.client_secret == "test_client_secret"
-        assert config.redirect_uri == "http://localhost:8080/callback/youtube"
-        assert config.authorization_url == "https://accounts.google.com/o/oauth2/v2/auth"
-        assert config.token_url == "https://oauth2.googleapis.com/token"
-        assert config.pkce_required is True
-        assert config.additional_params["access_type"] == "offline"
-        assert config.additional_params["prompt"] == "consent"
+    def test_pkce_challenge_is_rfc7636_base64url(self):
+        verifier, challenge = self.auth.generate_pkce_pair()
+        expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+        assert challenge == expected
 
     def test_get_authorization_url(self):
-        """Test generating authorization URL."""
-        auth = YouTubeAuth(
-            config=self.config,
-            state_store=MagicMock(),
-            token_encryption=MagicMock(),
-            account_manager=MagicMock(),
-        )
+        _, challenge = self.auth.generate_pkce_pair()
+        url = self.auth.get_authorization_url("test_state", challenge)
+        assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+        q = _query(url)
+        assert q["client_id"] == "test_client_id"
+        assert q["redirect_uri"] == "http://127.0.0.1:53123/callback/youtube"
+        assert q["scope"] == " ".join(YouTubeAuth.DEFAULT_SCOPES)
+        assert q["code_challenge"] == challenge
+        assert q["code_challenge_method"] == "S256"
+        assert q["access_type"] == "offline"
+        assert q["prompt"] == "consent"
 
-        pkce_verifier, pkce_challenge = auth.generate_pkce_pair()
-        url = auth.get_authorization_url("test_state", pkce_challenge)
+    def test_refresh_keeps_refresh_token_when_google_omits_it(self):
+        _, p = _patch_http("src.platforms.youtube.auth", [(200, {"access_token": "NEW_AT", "expires_in": 3599})])
+        with p:
+            result = asyncio.run(self.auth.refresh_tokens("RT"))
+        assert result.refresh_token == "RT"
+        assert result.expires_in == 3599
 
-        assert "https://accounts.google.com/o/oauth2/v2/auth" in url
-        assert "client_id=test_client_id" in url
-        assert "redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback%2Fyoutube" in url
-        assert "response_type=code" in url
-        assert "scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.upload+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.readonly" in url
-        assert "state=test_state" in url
-        assert "code_challenge=" in url
-        assert "code_challenge_method=S256" in url
-        assert "access_type=offline" in url
-        assert "prompt=consent" in url
+
+class TestExpiryModel:
+    def test_expires_at_from_uses_provider_value(self):
+        now = datetime(2026, 9, 25, tzinfo=timezone.utc)
+        assert expires_at_from(86400, now) == now + timedelta(days=1)
+        assert expires_at_from(None, now) is None
+
+    def test_token_result_without_expires_in_has_no_invented_expiry(self):
+        assert OAuthTokenResult(access_token="x").expires_at is None
+
+    def test_is_token_expiring(self):
+        now = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
+        assert is_token_expiring(now + timedelta(seconds=60), margin_seconds=300, now=now) is True
+        assert is_token_expiring(now + timedelta(hours=2), margin_seconds=300, now=now) is False
+        assert is_token_expiring(now - timedelta(seconds=1), margin_seconds=0, now=now) is True
+        # SQLite returns naive datetimes: treated as UTC
+        assert is_token_expiring((now + timedelta(hours=2)).replace(tzinfo=None), now=now) is False
+        assert is_token_expiring(None, now=now) is False
+
+
+def test_adapters_share_platform_auth_base():
+    for cls in (InstagramAuth, TikTokAuth, YouTubeAuth):
+        assert issubclass(cls, PlatformAuth)

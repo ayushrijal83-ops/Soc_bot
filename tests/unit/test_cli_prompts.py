@@ -1,13 +1,13 @@
 """Tests for CLI prompts."""
 
-import pytest
 from unittest.mock import patch
+
 from src.cli.prompts import (
-    prompt_text,
-    prompt_int,
     prompt_choice,
-    prompt_yes_no,
+    prompt_int,
     prompt_menu_selection,
+    prompt_text,
+    prompt_yes_no,
 )
 
 

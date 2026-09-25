@@ -1,20 +1,17 @@
 """YouTube (Google) OAuth authentication."""
 
-import base64
 from typing import Any
-from urllib.parse import urlencode
 
 import httpx
 
-from src.auth.base import OAuthConfig, OAuthTokenResult
+from src.auth.base import OAuthConfig, OAuthTokenResult, PlatformAuth
 from src.auth.errors import (
     OAuthAccountIdentityError,
-    OAuthConfigurationError,
     OAuthTokenExchangeError,
 )
 
 
-class YouTubeAuth:
+class YouTubeAuth(PlatformAuth):
     """YouTube OAuth authentication via Google OAuth 2.0."""
 
     PLATFORM = "youtube"
@@ -25,68 +22,11 @@ class YouTubeAuth:
     USER_INFO_URL = "https://www.googleapis.com/youtube/v3/channels"
 
     # Default scopes for YouTube publishing
-    DEFAULT_SCOPES = [
+    DEFAULT_SCOPES = (
         "https://www.googleapis.com/auth/youtube.upload",
         "https://www.googleapis.com/auth/youtube",
         "https://www.googleapis.com/auth/youtube.readonly",
-    ]
-
-    def __init__(
-        self,
-        config: OAuthConfig,
-        state_store: "OAuthStateStore",
-        token_encryption: "TokenEncryption",
-        account_manager: "AccountManager",
-    ):
-        self.config = config
-        self._state_store = state_store
-        self.token_encryption = token_encryption
-        self.account_manager = account_manager
-
-    @property
-    def platform(self) -> str:
-        return self.PLATFORM
-
-    def _get_state_store(self):
-        return self._state_store
-
-    def generate_pkce_pair(self) -> tuple[str, str]:
-        """Generate PKCE verifier and challenge pair."""
-        verifier = self._generate_pkce_verifier()
-        challenge = self._generate_pkce_challenge(verifier)
-        return verifier, challenge
-
-    def _generate_pkce_verifier(self) -> str:
-        import secrets
-        return secrets.token_urlsafe(32)
-
-    def _generate_pkce_challenge(self, verifier: str) -> str:
-        import hashlib
-        digest = hashlib.sha256(verifier.encode()).digest()
-        challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-        return challenge
-
-    def get_authorization_url(self, state: str, pkce_challenge: str | None = None) -> str:
-        """Generate the authorization URL for YouTube."""
-
-        params = {
-            "client_id": self.config.client_id,
-            "redirect_uri": self.config.redirect_uri,
-            "response_type": "code",
-            "scope": " ".join(self.config.scopes),
-            "state": state,
-            "access_type": "offline",  # Required for refresh token
-            "prompt": "consent",  # Force consent to ensure refresh token
-        }
-
-        if self.config.pkce_required and pkce_challenge:
-            params["code_challenge"] = pkce_challenge
-            params["code_challenge_method"] = "S256"
-
-        if self.config.additional_params:
-            params.update(self.config.additional_params)
-
-        return f"{self.AUTHORIZATION_URL}?{urlencode(params)}"
+    )
 
     async def exchange_code(self, code: str, pkce_verifier: str) -> OAuthTokenResult:
         """Exchange authorization code for tokens."""
@@ -240,22 +180,11 @@ class YouTubeAuth:
 
         return response.status_code == 200
 
-    def validate_configuration(self) -> None:
-        """Validate OAuth configuration."""
-        if not self.config.client_id:
-            raise OAuthConfigurationError("Missing client_id for YouTube", platform=self.PLATFORM)
-        if not self.config.client_secret:
-            raise OAuthConfigurationError("Missing client_secret for YouTube", platform=self.PLATFORM)
-        if not self.config.redirect_uri:
-            raise OAuthConfigurationError("Missing redirect_uri for YouTube", platform=self.PLATFORM)
-        if not self.config.scopes:
-            raise OAuthConfigurationError("Missing scopes for YouTube", platform=self.PLATFORM)
-
     @staticmethod
     def create_config(
         client_id: str,
         client_secret: str,
-        redirect_uri: str,
+        redirect_uri: str | None,
         scopes: list | None = None,
     ) -> OAuthConfig:
         """Create OAuth configuration for YouTube."""
@@ -264,7 +193,7 @@ class YouTubeAuth:
             client_id=client_id,
             client_secret=client_secret,
             redirect_uri=redirect_uri,
-            scopes=scopes or YouTubeAuth.DEFAULT_SCOPES,
+            scopes=list(scopes or YouTubeAuth.DEFAULT_SCOPES),
             authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
             token_url="https://oauth2.googleapis.com/token",
             pkce_required=True,

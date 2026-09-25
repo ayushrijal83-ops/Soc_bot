@@ -1,27 +1,24 @@
 """OAuth authentication manager."""
 
 import asyncio
+import os
 import webbrowser
 from typing import Any
+from urllib.parse import urlparse
 
-from src.accounts.manager import AccountManager
+from src.accounts.manager import AccountManager, AccountNotFoundError
 from src.auth.base import OAuthConfig
-from src.auth.callback_server import OAuthCallbackServer
-from src.auth.state import (
-    OAuthStateStore,
-)
+from src.auth.callback_server import CALLBACK_PATH_PREFIX, OAuthCallbackServer
+from src.auth.errors import OAuthCallbackError, OAuthConfigurationError, OAuthStateError
+from src.auth.state import OAuthStateStore
 from src.storage.database import Database
 from src.storage.tokens import TokenEncryption
+
+SUPPORTED_PLATFORMS = ("instagram", "tiktok", "youtube")
 
 
 class AuthManager:
     """Manages OAuth authentication flows for all platforms."""
-
-    PLATFORMS = {
-        "instagram": "src.platforms.instagram.auth.InstagramAuth",
-        "tiktok": "src.platforms.tiktok.auth.TikTokAuth",
-        "youtube": "src.platforms.youtube.auth.YouTubeAuth",
-    }
 
     def __init__(
         self,
@@ -29,7 +26,7 @@ class AuthManager:
         encryption: TokenEncryption,
         account_manager: AccountManager,
         callback_host: str = "127.0.0.1",
-        callback_port: int = 8080,
+        callback_port: int = 0,
         callback_timeout: int = 300,
     ):
         self.database = database
@@ -37,26 +34,28 @@ class AuthManager:
         self.account_manager = account_manager
         self.state_store = OAuthStateStore()
         self.callback_host = callback_host
+        # 0 = OS picks a free loopback port per flow (Google installed-app guidance).
         self.callback_port = callback_port
         self.callback_timeout = callback_timeout
 
         # Platform auth instances (lazy loaded)
         self._auth_adapters: dict[str, Any] = {}
         self._configs: dict[str, OAuthConfig] = {}
+        # Platforms whose redirect URI is fixed (pre-registered with the provider).
+        self._fixed_redirect_uris: dict[str, str] = {}
 
     def _get_auth_class(self, platform: str):
         """Dynamically import and return the platform auth class."""
         if platform == "instagram":
             from src.platforms.instagram.auth import InstagramAuth
             return InstagramAuth
-        elif platform == "tiktok":
+        if platform == "tiktok":
             from src.platforms.tiktok.auth import TikTokAuth
             return TikTokAuth
-        elif platform == "youtube":
+        if platform == "youtube":
             from src.platforms.youtube.auth import YouTubeAuth
             return YouTubeAuth
-        else:
-            raise ValueError(f"Unsupported platform: {platform}")
+        raise ValueError(f"Unsupported platform: {platform}")
 
     def configure_platform(
         self,
@@ -66,40 +65,40 @@ class AuthManager:
         redirect_uri: str | None = None,
         scopes: list[str] | None = None,
     ) -> None:
-        """Configure OAuth credentials for a platform."""
-        if platform not in ["instagram", "tiktok", "youtube"]:
+        """Configure OAuth credentials for a platform.
+
+        With no ``redirect_uri`` the callback server binds a dynamic loopback port for each
+        flow and the redirect URI is built from the actual port. A fixed ``redirect_uri``
+        must point at this machine's loopback callback server: ``http://<host>:<port>/callback/<platform>``.
+        """
+        if platform not in SUPPORTED_PLATFORMS:
             raise ValueError(f"Unsupported platform: {platform}")
 
-        # Generate redirect URI if not provided
-        if redirect_uri is None:
-            redirect_uri = f"http://{self.callback_host}:{self.callback_port}/callback/{platform}"
+        if redirect_uri:
+            parsed = urlparse(redirect_uri)
+            if parsed.path.rstrip("/") != f"{CALLBACK_PATH_PREFIX}{platform}" or not parsed.port:
+                raise OAuthConfigurationError(
+                    f"Redirect URI must be http://<host>:<port>{CALLBACK_PATH_PREFIX}{platform}",
+                    platform=platform,
+                )
+            self._fixed_redirect_uris[platform] = redirect_uri
 
-        # Create platform-specific config
+        auth_class = self._get_auth_class(platform)
         if platform == "instagram":
-            from src.platforms.instagram.auth import InstagramAuth
-            config = InstagramAuth.create_config(
-                app_id=client_id,
-                app_secret=client_secret,
-                redirect_uri=redirect_uri,
+            config = auth_class.create_config(
+                app_id=client_id, app_secret=client_secret, redirect_uri=redirect_uri, scopes=scopes
             )
         elif platform == "tiktok":
-            from src.platforms.tiktok.auth import TikTokAuth
-            config = TikTokAuth.create_config(
-                client_key=client_id,
-                client_secret=client_secret,
-                redirect_uri=redirect_uri,
-            )
-        elif platform == "youtube":
-            from src.platforms.youtube.auth import YouTubeAuth
-            config = YouTubeAuth.create_config(
-                client_id=client_id,
-                client_secret=client_secret,
-                redirect_uri=redirect_uri,
+            config = auth_class.create_config(
+                client_key=client_id, client_secret=client_secret, redirect_uri=redirect_uri, scopes=scopes
             )
         else:
-            raise ValueError(f"Unsupported platform: {platform}")
+            config = auth_class.create_config(
+                client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri, scopes=scopes
+            )
 
         self._configs[platform] = config
+        self._auth_adapters.pop(platform, None)
 
     def is_configured(self, platform: str) -> bool:
         """Check if platform is configured."""
@@ -111,8 +110,7 @@ class AuthManager:
 
     def get_missing_config_platforms(self) -> list[str]:
         """Get list of platforms missing configuration."""
-        all_platforms = ["instagram", "tiktok", "youtube"]
-        return [p for p in all_platforms if p not in self._configs]
+        return [p for p in SUPPORTED_PLATFORMS if p not in self._configs]
 
     def _get_auth_adapter(self, platform: str):
         """Get or create auth adapter for platform."""
@@ -122,92 +120,70 @@ class AuthManager:
                 raise ValueError(f"Platform {platform} not configured")
 
             auth_class = self._get_auth_class(platform)
-            adapter = auth_class(
+            self._auth_adapters[platform] = auth_class(
                 config=config,
                 state_store=self.state_store,
                 token_encryption=self.encryption,
                 account_manager=self.account_manager,
             )
-            self._auth_adapters[platform] = adapter
 
         return self._auth_adapters[platform]
 
+    def _start_callback_server(self, platform: str) -> tuple[OAuthCallbackServer, str]:
+        """Start the loopback callback server; return it and the redirect URI to use."""
+        fixed = self._fixed_redirect_uris.get(platform)
+        if fixed:
+            parsed = urlparse(fixed)
+            server = OAuthCallbackServer(
+                host=parsed.hostname, port=parsed.port, state_store=self.state_store, timeout=self.callback_timeout
+            )
+            server.start()
+            return server, fixed
+
+        server = OAuthCallbackServer(
+            host=self.callback_host, port=self.callback_port, state_store=self.state_store, timeout=self.callback_timeout
+        )
+        server.start()
+        return server, server.redirect_uri(platform)
+
     async def connect_account(self, platform: str) -> dict[str, Any]:
-        """Initiate OAuth flow for a platform."""
+        """Run the OAuth flow for a platform and store the account."""
         if not self.is_configured(platform):
             raise ValueError(f"Platform {platform} is not configured. Set credentials in .env first.")
 
         auth = self._get_auth_adapter(platform)
-
-        # Validate configuration
-        auth.validate_configuration()
-
-        # Generate PKCE pair
-        pkce_verifier, pkce_challenge = auth.generate_pkce_pair()
-
-        # Create OAuth state
-        oauth_state = self.state_store.create_state(
-            platform=platform,
-            pkce_verifier=pkce_verifier,
-        )
-
-        # Generate authorization URL
-        auth_url = auth.get_authorization_url(oauth_state.state, pkce_challenge)
-
-        # Start callback server
-        callback_server = OAuthCallbackServer(
-            host="127.0.0.1",
-            port=self.callback_port,
-            state_store=self.state_store,
-            timeout=300,
-        )
-
-        callback_data: dict[str, Any] = {}
-        callback_received = asyncio.Event()
-
-        def handle_callback(data: dict[str, Any]) -> None:
-            callback_data.update(data)
-            callback_received.set()
-
-        # Start callback server
-        callback_server.start(handle_callback)
-
-        # Open browser for authorization
-        webbrowser.open(auth_url)
+        callback_server, redirect_uri = self._start_callback_server(platform)
 
         try:
-            # Wait for callback
-            try:
-                await asyncio.wait_for(callback_received.wait(), timeout=300)
-            except asyncio.TimeoutError:
-                raise TimeoutError("OAuth authorization timed out")
+            # The authorization URL and the token exchange must use the same redirect URI.
+            auth.config.redirect_uri = redirect_uri
+            auth.validate_configuration()
 
-            # Extract callback data
+            pkce_verifier, pkce_challenge = auth.generate_pkce_pair()
+            oauth_state = self.state_store.create_state(platform=platform, pkce_verifier=pkce_verifier)
+            auth_url = auth.get_authorization_url(oauth_state.state, pkce_challenge)
+
+            webbrowser.open(auth_url)
+
+            # The HTTP server runs in its own thread; wait on its threading.Event off the loop.
+            callback_data = await asyncio.to_thread(callback_server.wait_for_callback)
+
             code = callback_data.get("code")
-            if not code:
-                error = callback_data.get("error")
-                error_desc = callback_data.get("error_description")
-                raise Exception(f"Authorization failed: {error} - {error_desc}")
+            if not code or callback_data.get("error"):
+                raise OAuthCallbackError(
+                    f"Authorization failed: {callback_data.get('error')} - {callback_data.get('error_description')}",
+                    platform=platform,
+                    error=callback_data.get("error"),
+                    error_description=callback_data.get("error_description"),
+                )
+            # The handler already bound state to the callback path; re-check against this flow.
+            if callback_data.get("platform") != platform:
+                raise OAuthStateError("OAuth state was issued for a different platform", platform=platform)
 
-            # Exchange code for tokens
-            auth = self._get_auth_adapter(platform)
-            pkce_verifier = callback_data.get("pkce_verifier")
-            token_result = await auth.exchange_code(code, pkce_verifier)
+            token_result = await auth.exchange_code(code, callback_data.get("pkce_verifier"))
+            identity = await auth.get_account_identity(token_result.access_token)
 
-            # Get account identity
-            account_identity = await auth.get_account_identity(token_result.access_token)
-
-            # Create or update account
-            account = self.account_manager.create_account(
-                platform=platform,
-                platform_account_id=account_identity["platform_account_id"],
-                username=account_identity["username"],
-                access_token=token_result.access_token,
-                refresh_token=token_result.refresh_token,
-                expires_in=token_result.expires_in,
-                display_name=account_identity.get("display_name"),
-                status="active",
-            )
+            account = self._store_account(platform, identity, token_result)
 
             return {
                 "success": True,
@@ -218,23 +194,47 @@ class AuthManager:
                     "display_name": account.display_name,
                 },
             }
-
         finally:
             callback_server.stop()
 
+    def _store_account(self, platform: str, identity: dict[str, Any], token_result) -> Any:
+        """Create the account, or update tokens/identity if it is already connected."""
+        expires_at = token_result.expires_at
+        try:
+            existing = self.account_manager.find_account(platform, identity["platform_account_id"])
+        except AccountNotFoundError:
+            return self.account_manager.create_account(
+                platform=platform,
+                platform_account_id=identity["platform_account_id"],
+                username=identity["username"],
+                access_token=token_result.access_token,
+                refresh_token=token_result.refresh_token,
+                expires_at=expires_at,
+                display_name=identity.get("display_name"),
+                status="active",
+            )
+
+        return self.account_manager.update_account(
+            existing.id,
+            username=identity["username"],
+            display_name=identity.get("display_name"),
+            status="active",
+            access_token=token_result.access_token,
+            refresh_token=token_result.refresh_token,
+            expires_at=expires_at,
+        )
+
     def disconnect_account(self, account_id: int) -> bool:
-        """Disconnect an account (revoke tokens and mark as disconnected)."""
+        """Disconnect an account (revoke tokens where the platform supports it, mark disconnected)."""
         account = self.account_manager.get_account(account_id)
 
-        # Try to revoke tokens on platform
         try:
             auth = self._get_auth_adapter(account.platform)
             access_token = account.get_access_token(self.encryption)
             asyncio.run(auth.revoke_tokens(access_token))
-        except Exception:
-            pass  # Ignore revocation errors
+        except Exception:  # noqa: BLE001, S110 - local disconnect must succeed even if revocation fails
+            pass
 
-        # Disconnect in account manager
         self.account_manager.disconnect_account(account_id)
         return True
 
@@ -246,68 +246,58 @@ class AuthManager:
         return access_token, refresh_token
 
     def refresh_account_tokens(self, account_id: int) -> bool:
-        """Refresh tokens for an account."""
+        """Refresh an account's access token and persist the result (including a rotated refresh token)."""
         account = self.account_manager.get_account(account_id)
         auth = self._get_auth_adapter(account.platform)
 
-        refresh_token = account.get_refresh_token(self.encryption)
-        if not refresh_token:
+        # Instagram re-exchanges the long-lived access token itself; others use the refresh token.
+        if getattr(auth, "REFRESH_USES_ACCESS_TOKEN", False):
+            token = account.get_access_token(self.encryption)
+        else:
+            token = account.get_refresh_token(self.encryption)
+        if not token:
             return False
 
         try:
-            auth_adapter = self._get_auth_adapter(account.platform)
-            token_result = asyncio.run(auth_adapter.refresh_tokens(refresh_token))
-
-            # Update account with new tokens
-            self.account_manager.update_account(
-                account_id,
-                access_token=token_result.access_token,
-                refresh_token=token_result.refresh_token,
-                expires_in=token_result.expires_in,
-            )
-            return True
-        except Exception:
+            token_result = asyncio.run(auth.refresh_tokens(token))
+        except Exception:  # noqa: BLE001 - caller only needs success/failure; errors carry no tokens
             return False
+
+        self.account_manager.update_account(
+            account_id,
+            access_token=token_result.access_token,
+            refresh_token=token_result.refresh_token,  # None = provider has none; keeps the stored one
+            expires_at=token_result.expires_at,
+        )
+        return True
 
 
 def create_auth_manager(
     database: Database,
     encryption: TokenEncryption,
     account_manager: AccountManager,
-    callback_host: str = "127.0.0.1",
-    callback_port: int = 8080,
-) -> "AuthManager":
-    """Factory function to create AuthManager with configuration from environment."""
-    import os
-
+) -> AuthManager:
+    """Create an AuthManager configured from environment variables."""
     auth_manager = AuthManager(
         database=database,
         encryption=encryption,
         account_manager=account_manager,
         callback_host=os.environ.get("OAUTH_CALLBACK_HOST", "127.0.0.1"),
-        callback_port=int(os.environ.get("OAUTH_CALLBACK_PORT", "8080")),
+        callback_port=int(os.environ.get("OAUTH_CALLBACK_PORT", "0")),
     )
 
-    # Configure platforms from environment
-    if os.environ.get("INSTAGRAM_APP_ID") and os.environ.get("INSTAGRAM_APP_SECRET"):
-        auth_manager.configure_platform(
-            platform="instagram",
-            client_id=os.environ["INSTAGRAM_APP_ID"],
-            client_secret=os.environ["INSTAGRAM_APP_SECRET"],
-        )
-
-    if os.environ.get("TIKTOK_CLIENT_KEY") and os.environ.get("TIKTOK_CLIENT_SECRET"):
-        auth_manager.configure_platform(
-            platform="tiktok",
-            client_id=os.environ["TIKTOK_CLIENT_KEY"],
-            client_secret=os.environ["TIKTOK_CLIENT_SECRET"],
-        )
-
-    if os.environ.get("YOUTUBE_CLIENT_ID") and os.environ.get("YOUTUBE_CLIENT_SECRET"):
-        auth_manager.configure_platform(
-            platform="youtube",
-            client_id=os.environ["YOUTUBE_CLIENT_ID"],
-            client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
-        )
+    env = {
+        "instagram": ("INSTAGRAM_APP_ID", "INSTAGRAM_APP_SECRET", "INSTAGRAM_REDIRECT_URI"),
+        "tiktok": ("TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "TIKTOK_REDIRECT_URI"),
+        "youtube": ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REDIRECT_URI"),
+    }
+    for platform, (id_var, secret_var, redirect_var) in env.items():
+        if os.environ.get(id_var) and os.environ.get(secret_var):
+            auth_manager.configure_platform(
+                platform=platform,
+                client_id=os.environ[id_var],
+                client_secret=os.environ[secret_var],
+                redirect_uri=os.environ.get(redirect_var) or None,
+            )
 
     return auth_manager

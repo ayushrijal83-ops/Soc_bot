@@ -28,8 +28,8 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | Project structure & documentation | ✅ **IMPLEMENTED** |
 | Terminal CLI menu system | ✅ **IMPLEMENTED** |
 | Account management core (CRUD, listing, status) | ✅ **IMPLEMENTED** |
-| OAuth authentication (Instagram, TikTok, YouTube) | ✅ **IMPLEMENTED** |
-| OAuth callback server & PKCE | ✅ **IMPLEMENTED** |
+| OAuth authentication (Instagram, TikTok, YouTube) | ✅ **IMPLEMENTED**, mock-tested; real OAuth NOT RUN |
+| OAuth callback server (dynamic loopback port) & PKCE | ✅ **IMPLEMENTED** |
 | Job management & queue | 📋 **PLANNED** |
 | Instagram publishing adapter | 📋 **PLANNED** |
 | TikTok publishing adapter | 📋 **PLANNED** |
@@ -37,7 +37,7 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | SQLite database layer | ✅ **IMPLEMENTED** |
 | Video validation | 📋 **PLANNED** |
 | Dry-run mode | 📋 **PLANNED** (placeholder) |
-| Unit/integration tests | ✅ **IMPLEMENTED** (170 unit tests) |
+| Unit/integration tests | ✅ **IMPLEMENTED** (214 unit tests, Ruff clean) |
 
 **Legend:** ✅ IMPLEMENTED | 🔄 IN PROGRESS | 📋 PLANNED | 🚫 BLOCKED
 
@@ -45,9 +45,9 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 
 | Platform | API | Status |
 |----------|-----|--------|
-| Instagram | Instagram Graph API / Meta Business API | ✅ VERIFIED |
-| TikTok | TikTok Creator API / TikTok Shop API | ✅ VERIFIED |
-| YouTube | YouTube Data API v3 | ✅ VERIFIED |
+| Instagram | Instagram API with Instagram Login | OAuth docs verified 2026-09-25 |
+| TikTok | Login Kit for Desktop + Content Posting API | OAuth docs verified 2026-09-25 |
+| YouTube | YouTube Data API v3 (Google OAuth installed app) | OAuth docs verified 2026-09-25 |
 
 ## Requirements
 
@@ -89,31 +89,33 @@ DATABASE_URL=sqlite:///data/publisher.db
 # Encryption key for token storage (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 ENCRYPTION_KEY=
 
-# Instagram (Meta)
-INSTAGRAM_APP_ID=your_app_id
-INSTAGRAM_APP_SECRET=your_app_secret
-INSTAGRAM_REDIRECT_URI=http://localhost:8080/callback/instagram
+# Instagram (Instagram API with Instagram Login; use the Instagram app ID/secret)
+INSTAGRAM_APP_ID=your_instagram_app_id
+INSTAGRAM_APP_SECRET=your_instagram_app_secret
+INSTAGRAM_REDIRECT_URI=http://127.0.0.1:8765/callback/instagram   # fixed; must be registered
 
-# TikTok
+# TikTok (Login Kit for Desktop; register http://127.0.0.1:*/callback/tiktok)
 TIKTOK_CLIENT_KEY=your_client_key
 TIKTOK_CLIENT_SECRET=your_client_secret
-TIKTOK_REDIRECT_URI=http://localhost:8080/callback/tiktok
+TIKTOK_REDIRECT_URI=          # blank = dynamic port
 
-# YouTube (Google)
+# YouTube (Google OAuth client type "Desktop app")
 YOUTUBE_CLIENT_ID=your_client_id
 YOUTUBE_CLIENT_SECRET=your_client_secret
-YOUTUBE_REDIRECT_URI=http://localhost:8080/callback/youtube
+YOUTUBE_REDIRECT_URI=         # blank = dynamic port
 
 # Application
 LOG_LEVEL=INFO
 DRY_RUN=false
 
-# Optional: Override callback host/port (default 127.0.0.1:8080)
+# Optional: callback host/port (default 127.0.0.1, port 0 = OS picks a free port per flow)
 # OAUTH_CALLBACK_HOST=127.0.0.1
-# OAUTH_CALLBACK_PORT=8080
+# OAUTH_CALLBACK_PORT=0
 ```
 
 **⚠️ Never commit `.env` to version control.** It is protected by `.gitignore`.
+
+Note: `main.py` does not load `.env` automatically yet. Export these variables in your shell before running.
 
 ## Running the Application
 
@@ -161,27 +163,27 @@ CONNECTED ACCOUNTS
 
 - Uses **official OAuth 2.0 / OAuth 2.1 flows** for each platform
 - User authorizes via platform's official login page
-- Application receives **access tokens** and **refresh tokens**
+- Application receives access tokens, plus refresh tokens where the platform issues them (TikTok, YouTube). Instagram issues long-lived access tokens that are re-exchanged instead.
 - Tokens stored securely in encrypted SQLite database
-- Automatic token refresh before expiration
+- Token expiry recorded from the provider's `expires_in`; a renewal method exists, but automatic scheduling is not implemented yet (Phase 4)
 - No passwords ever requested or stored
 
 ## OAuth Implementation Details
 
-- **PKCE (S256)**: Required for all platforms (Instagram, TikTok, YouTube)
-- **State Parameter**: CSRF protection, cryptographically random, single-use
-- **Callback Server**: Local HTTP server on `http://localhost:8080/callback/{platform}`
-- **Token Storage**: Fernet (AES-128-GCM) encryption at rest
-- **Token Refresh**: Automatic proactive refresh (24h before expiry) + on-demand
-- **Token Revocation**: Platform-specific revocation endpoints
+- **PKCE (S256)**: YouTube (RFC 7636 base64url), TikTok (hex, per TikTok docs). Instagram Login does not document PKCE.
+- **State Parameter**: CSRF protection, cryptographically random, single-use, bound to the platform
+- **Callback Server**: `http://127.0.0.1:<dynamic-port>/callback/{platform}` (or a fixed `*_REDIRECT_URI`)
+- **Token Storage**: Fernet encryption at rest
+- **Token Renewal**: TikTok/YouTube refresh token (rotated TikTok tokens are persisted); Instagram `ig_refresh_token` re-exchange
+- **Token Revocation**: TikTok and YouTube revoke endpoints; Instagram has none documented (local disconnect only)
 
 ### Platform-Specific OAuth
 
 | Platform | Auth Product | Auth Flow | Scopes |
 |----------|--------------|-----------|--------|
-| Instagram | Facebook Login for Instagram | Auth Code + PKCE | instagram_graph_user_profile, instagram_graph_user_media, pages_show_list, pages_read_engagement |
-| TikTok | TikTok Login Kit | Auth Code + PKCE | video.upload, video.publish, user.info.basic |
-| YouTube | Google OAuth 2.0 (Installed App) | Auth Code + PKCE | youtube.upload, youtube, youtube.readonly |
+| Instagram | Business Login for Instagram | Auth Code (no PKCE) → long-lived token | instagram_business_basic, instagram_business_content_publish |
+| TikTok | Login Kit for Desktop | Auth Code + PKCE (hex) | video.upload, video.publish, user.info.basic |
+| YouTube | Google OAuth 2.0 (Installed App) | Auth Code + PKCE (base64url), loopback | youtube.upload, youtube, youtube.readonly |
 
 ## Security Rules
 
@@ -195,14 +197,14 @@ CONNECTED ACCOUNTS
 
 ## Development Status
 
-This project is in **Phase 3B (Official OAuth Verification + OAuth Infrastructure) — COMPLETE**. The repository contains:
+This project is in **Phase 3B (Official OAuth Verification + OAuth Infrastructure): COMPLETE, audit fixes applied 2026-09-25**. Real provider OAuth has not been run yet (no credentials). The repository contains:
 - ✅ SQLite database layer with migrations and token encryption
 - ✅ Terminal CLI menu system with input validation
 - ✅ Account management core (CRUD, listing, status, filtering)
 - ✅ OAuth authentication for Instagram, TikTok, YouTube
-- ✅ OAuth callback server with PKCE (S256) and CSRF protection
+- ✅ OAuth callback server (dynamic loopback port) with platform-specific PKCE and platform-bound state
 - ✅ Connected Accounts CLI submenu (list, details, connect, update, disconnect, enable)
-- ✅ 170 unit tests passing
+- ✅ 214 unit tests passing; `ruff check .` clean
 - Project structure and documentation
 
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.

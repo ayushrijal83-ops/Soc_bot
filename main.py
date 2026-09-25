@@ -4,11 +4,11 @@
 import argparse
 import sys
 
-from src.storage.database import get_database
-from src.storage.tokens import TokenEncryption
 from src.accounts.manager import AccountManager
 from src.auth.manager import create_auth_manager
 from src.cli.menu import run_menu
+from src.storage.database import get_database
+from src.storage.tokens import TokenEncryption
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,7 +62,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\n\nInterrupted. Goodbye!")
         return 0
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - top-level CLI boundary
         print(f"\n[ERROR] Unexpected error: {e}")
         return 1
 

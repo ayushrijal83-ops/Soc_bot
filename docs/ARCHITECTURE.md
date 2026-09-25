@@ -50,9 +50,9 @@
 - Provides account selection for publishing
 
 ### 4. Auth Infrastructure (`src/auth/`) — ✅ **IMPLEMENTED**
-- **base.py** — Base classes: OAuthConfig, OAuthTokenResult, PlatformAuth
-- **state.py** — OAuth state management, PKCE (S256) generation/validation
-- **callback_server.py** — Local HTTP callback server (port 8080) with timeout, CSRF protection
+- **base.py**: `OAuthConfig`, `OAuthTokenResult` (with `expires_at` from `expires_in`), `PlatformAuth` base class that all three adapters subclass, and the `expires_at_from` / `is_token_expiring` helpers
+- **state.py**: OAuth state (single-use, platform-bound) and PKCE; `generate_pkce_challenge(verifier, encoding)` supports `base64url` (RFC 7636) and `hex` (TikTok)
+- **callback_server.py**: one shared `OAuthCallbackServer` on 127.0.0.1, dynamic port (0) by default, exposing the bound `port` and `redirect_uri(platform)`, with timeout and state/platform validation
 - **errors.py** — OAuth-specific exception hierarchy
 - **manager.py** — AuthManager coordinating all platform adapters
 
@@ -179,26 +179,23 @@ class PublisherEngine:
 
 ## Platform Adapters — Auth ✅ IMPLEMENTED
 
-### Instagram (Meta / Facebook Login for Instagram)
-- **Authorization URL**: `https://www.facebook.com/v22.0/dialog/oauth`
-- **Token URL**: `https://graph.facebook.com/v22.0/oauth/access_token`
-- **Scopes**: `instagram_graph_user_profile`, `instagram_graph_user_media`, `pages_show_list`, `pages_read_engagement`
-- **PKCE**: Required (S256)
-- **Account Linking**: Instagram Business/Creator account linked to Facebook Page
+```
+PlatformAuth (src/auth/base.py)
+  PKCE_CHALLENGE_ENCODING = "base64url"   SCOPE_SEPARATOR = " "
+  generate_pkce_pair() / get_authorization_url() / validate_configuration()
+     |
+     +-- YouTubeAuth     (inherits defaults; access_type=offline, prompt=consent)
+     +-- TikTokAuth      (PKCE "hex", scopes ",", client_key param)
+     +-- InstagramAuth   (no PKCE, scopes ",", REFRESH_USES_ACCESS_TOKEN)
 
-### TikTok
-- **Authorization URL**: `https://www.tiktok.com/v2/auth/authorize/`
-- **Token URL**: `https://open.tiktokapis.com/v2/oauth/token/`
-- **Scopes**: `video.upload`, `video.publish`, `user.info.basic`
-- **PKCE**: Required (S256)
+OAuthCallbackServer (shared) --binds 127.0.0.1:0--> actual port --> redirect_uri --> adapter.config
+```
 
-### YouTube (Google OAuth 2.0)
-- **Authorization URL**: `https://accounts.google.com/o/oauth2/v2/auth`
-- **Token URL**: `https://oauth2.googleapis.com/token`
-- **Scopes**: `youtube.upload`, `youtube`, `youtube.readonly`
-- **PKCE**: Required (S256)
-- **Access Type**: `offline` (for refresh token)
-- **Prompt**: `consent`
+Endpoint details and verification status: see [API_INTEGRATIONS.md](API_INTEGRATIONS.md) (verified 2026-09-25).
+
+- **Instagram**: Business Login for Instagram (`instagram.com/oauth/authorize` → `api.instagram.com/oauth/access_token` → `ig_exchange_token`). No Facebook Page. Identity is `/me` `user_id`.
+- **TikTok**: Login Kit for Desktop, with a hex PKCE challenge and refresh-token rotation.
+- **YouTube**: Google OAuth for installed apps on a dynamic loopback port.
 
 ## Storage
 
@@ -214,11 +211,11 @@ Token encryption using Fernet (symmetric encryption) with key from environment.
 ## Authentication
 
 OAuth 2.0 / 2.1 flows per platform:
-- Instagram: Meta OAuth (Instagram Graph API) — **IMPLEMENTED**
-- TikTok: TikTok OAuth 2.0 (Creator API) — **IMPLEMENTED**
-- YouTube: Google OAuth 2.0 (YouTube Data API v3) — **IMPLEMENTED**
+- Instagram: Instagram API with Instagram Login: **IMPLEMENTED, mock-tested, real OAuth NOT RUN**
+- TikTok: Login Kit for Desktop: **IMPLEMENTED, mock-tested, real OAuth NOT RUN**
+- YouTube: Google OAuth 2.0 installed-app flow: **IMPLEMENTED, mock-tested, real OAuth NOT RUN**
 
-Local callback server on `http://localhost:8080/callback/{platform}`.
+Local callback server on `http://127.0.0.1:<dynamic-port>/callback/{platform}` (or a fixed `*_REDIRECT_URI`).
 
 ## Error Handling
 

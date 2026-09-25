@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -24,12 +25,12 @@ class OAuthConfig:
     platform: str
     client_id: str
     client_secret: str
-    redirect_uri: str
+    redirect_uri: str | None
     scopes: list[str]
     authorization_url: str
     token_url: str
     pkce_required: bool = True
-    additional_params: dict[str, str] = None
+    additional_params: dict[str, str] | None = None
 
     def __post_init__(self):
         if self.additional_params is None:
@@ -46,11 +47,43 @@ class OAuthTokenResult:
     token_type: str = "Bearer"
     scope: str | None = None
     platform_account_id: str | None = None
-    raw_response: dict[str, Any] = None
+    refresh_expires_in: int | None = None
+    raw_response: dict[str, Any] | None = None
+
+    @property
+    def expires_at(self) -> datetime | None:
+        """Absolute UTC expiry of the access token, from the provider's ``expires_in``.
+
+        None when the provider did not return ``expires_in`` — never guessed.
+        """
+        return expires_at_from(self.expires_in)
+
+
+def expires_at_from(expires_in: int | None, now: datetime | None = None) -> datetime | None:
+    """Convert a provider ``expires_in`` (seconds) into an aware UTC datetime."""
+    if expires_in is None:
+        return None
+    return (now or datetime.now(timezone.utc)) + timedelta(seconds=int(expires_in))
+
+
+def is_token_expiring(expires_at: datetime | None, margin_seconds: int = 300, now: datetime | None = None) -> bool:
+    """True if the token is expired or expires within ``margin_seconds``.
+
+    Naive datetimes (SQLite drops tzinfo) are treated as UTC. Unknown expiry → False.
+    """
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at - timedelta(seconds=margin_seconds) <= (now or datetime.now(timezone.utc))
 
 
 class PlatformAuth(ABC):
     """Abstract base class for platform-specific OAuth implementations."""
+
+    # RFC 7636 base64url by default; TikTok overrides with "hex".
+    PKCE_CHALLENGE_ENCODING = "base64url"
+    SCOPE_SEPARATOR = " "
 
     def __init__(
         self,
@@ -60,7 +93,6 @@ class PlatformAuth(ABC):
         account_manager: AccountManager,
     ):
         self.config = config
-        self.state_store = config.state_store if hasattr(config, 'state_store') else None
         self._state_store = state_store
         self.token_encryption = token_encryption
         self.account_manager = account_manager
@@ -75,7 +107,7 @@ class PlatformAuth(ABC):
     def generate_pkce_pair(self) -> tuple[str, str]:
         """Generate PKCE verifier and challenge pair."""
         verifier = generate_pkce_verifier()
-        challenge = generate_pkce_challenge(verifier)
+        challenge = generate_pkce_challenge(verifier, self.PKCE_CHALLENGE_ENCODING)
         return verifier, challenge
 
     def get_authorization_url(self, state: str, pkce_challenge: str | None = None) -> str:
@@ -84,7 +116,7 @@ class PlatformAuth(ABC):
             "client_id": self.config.client_id,
             "redirect_uri": self.config.redirect_uri,
             "response_type": "code",
-            "scope": " ".join(self.config.scopes),
+            "scope": self.SCOPE_SEPARATOR.join(self.config.scopes),
             "state": state,
         }
 
@@ -113,25 +145,6 @@ class PlatformAuth(ABC):
     @abstractmethod
     async def revoke_tokens(self, access_token: str) -> bool:
         """Revoke tokens on platform (optional)."""
-
-    def create_account_from_oauth(
-        self,
-        platform_account_id: str,
-        username: str,
-        display_name: str | None,
-        token_result: OAuthTokenResult,
-    ) -> "Account":
-        """Create or update account from OAuth result."""
-        return self.account_manager.create_account(
-            platform=self.config.platform,
-            platform_account_id=platform_account_id,
-            username=username,
-            access_token=token_result.access_token,
-            refresh_token=token_result.refresh_token,
-            expires_in=token_result.expires_in,
-            display_name=display_name,
-            status="active",
-        )
 
     def validate_configuration(self) -> None:
         """Validate OAuth configuration."""

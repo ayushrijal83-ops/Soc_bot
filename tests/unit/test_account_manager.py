@@ -2,18 +2,20 @@
 
 import os
 import tempfile
+from datetime import datetime, timezone
+
 import pytest
-from datetime import datetime, timedelta
-from src.storage.database import Database
-from src.storage.tokens import TokenEncryption, generate_key
+
 from src.accounts.manager import (
-    AccountManager,
     AccountError,
+    AccountManager,
     AccountNotFoundError,
     DuplicateAccountError,
     InvalidPlatformError,
     InvalidStatusError,
 )
+from src.storage.database import Database
+from src.storage.tokens import TokenEncryption, generate_key
 
 
 @pytest.fixture
@@ -67,7 +69,7 @@ class TestAccountManager:
             username="test_user",
             access_token="access_token_abc",
             refresh_token="refresh_token_xyz",
-            expires_at=datetime(2025, 12, 31, 23, 59, 59),
+            expires_at=datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
             display_name="Test User",
             status="active",
         )
@@ -79,7 +81,7 @@ class TestAccountManager:
         assert account.username == "test_user"
         assert account.display_name == "Test User"
         assert account.status == "active"
-        assert account.expires_at == datetime(2025, 12, 31, 23, 59, 59)
+        assert account.expires_at.replace(tzinfo=timezone.utc) == datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
         # Verify tokens are encrypted in database
         assert account.access_token_enc != "access_token_abc"
@@ -532,9 +534,9 @@ class TestAccountManager:
             access_token="token",
         )
 
-        new_expiry = datetime(2026, 1, 1, 12, 0, 0)
+        new_expiry = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         updated = account_manager.update_account(account.id, expires_at=new_expiry)
-        assert updated.expires_at == new_expiry
+        assert updated.expires_at.replace(tzinfo=timezone.utc) == new_expiry
 
     def test_update_meta_json(self, account_manager):
         """Test updating meta_json."""

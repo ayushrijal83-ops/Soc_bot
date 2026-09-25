@@ -2,10 +2,11 @@
 
 import os
 import sys
-import pytest
-from unittest.mock import patch, MagicMock
-from main import parse_args, main
+from unittest.mock import patch
 
+import pytest
+
+from main import main, parse_args
 
 # Set ENCRYPTION_KEY for tests that need it
 os.environ["ENCRYPTION_KEY"] = "nZEJx1hxthoUa6wzoWYOVg0rNAsmhidhd9uASEPii5s="
@@ -28,15 +29,13 @@ class TestParseArgs:
 
     def test_parse_args_help(self):
         """Test parse_args with --help."""
-        with patch.object(sys, 'argv', ['main.py', '--help']):
-            with pytest.raises(SystemExit):
-                parse_args()
+        with patch.object(sys, 'argv', ['main.py', '--help']), pytest.raises(SystemExit):
+            parse_args()
 
     def test_parse_args_version(self):
         """Test parse_args with --version."""
-        with patch.object(sys, 'argv', ['main.py', '--version']):
-            with pytest.raises(SystemExit):
-                parse_args()
+        with patch.object(sys, 'argv', ['main.py', '--version']), pytest.raises(SystemExit):
+            parse_args()
 
 
 class TestMain:
@@ -44,9 +43,8 @@ class TestMain:
 
     def test_main_normal(self):
         """Test main runs menu normally."""
-        with patch('main.run_menu') as mock_run:
-            with patch.object(sys, 'argv', ['main.py']):
-                result = main()
+        with patch('main.run_menu') as mock_run, patch.object(sys, 'argv', ['main.py']):
+            result = main()
         assert result == 0
         mock_run.assert_called_once()
 
@@ -61,16 +59,14 @@ class TestMain:
 
     def test_main_keyboard_interrupt(self):
         """Test main handles KeyboardInterrupt."""
-        with patch('main.run_menu', side_effect=KeyboardInterrupt):
-            with patch.object(sys, 'argv', ['main.py']):
-                result = main()
+        with patch('main.run_menu', side_effect=KeyboardInterrupt), patch.object(sys, 'argv', ['main.py']):
+            result = main()
         assert result == 0
 
     def test_main_exception(self, capsys):
         """Test main handles unexpected exceptions."""
-        with patch('main.run_menu', side_effect=RuntimeError("Test error")):
-            with patch.object(sys, 'argv', ['main.py']):
-                result = main()
+        with patch('main.run_menu', side_effect=RuntimeError("Test error")), patch.object(sys, 'argv', ['main.py']):
+            result = main()
         assert result == 1
         captured = capsys.readouterr()
         assert "Unexpected error" in captured.out

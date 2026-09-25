@@ -1,5 +1,7 @@
 """OAuth state management for CSRF protection."""
 
+import base64
+import hashlib
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -39,6 +41,7 @@ class OAuthStateStore:
             state=self._generate_state(),
             platform=platform,
             pkce_verifier=pkce_verifier,
+            expires_at=time.time() + self.default_ttl,
         )
         self._states[state.state] = state
         return state
@@ -47,13 +50,19 @@ class OAuthStateStore:
         """Get state by value."""
         return self._states.get(state)
 
-    def consume_state(self, state: str) -> OAuthState:
-        """Get and remove state (single-use)."""
+    def consume_state(self, state: str, platform: str | None = None) -> OAuthState:
+        """Get and remove state (single-use).
+
+        If ``platform`` is given, the state must have been issued for that
+        platform. The state is consumed even on mismatch so it can't be replayed.
+        """
         oauth_state = self._states.pop(state, None)
         if oauth_state is None:
             raise OAuthStateError("Invalid or expired state", state=state)
         if oauth_state.is_expired():
             raise OAuthStateError("State has expired", state=state)
+        if platform is not None and oauth_state.platform != platform:
+            raise OAuthStateError("State was issued for a different platform", platform=platform, state=state)
         return oauth_state
 
     def cleanup_expired(self) -> int:
@@ -69,17 +78,19 @@ class OAuthStateStore:
 
 
 def generate_pkce_verifier() -> str:
-    """Generate a PKCE code verifier (43-128 characters)."""
-    return secrets.token_urlsafe(32)
+    """Generate a PKCE code verifier (43-128 characters, RFC 7636 unreserved charset)."""
+    return secrets.token_urlsafe(48)
 
 
-def generate_pkce_challenge(verifier: str) -> str:
-    """Generate PKCE code challenge from verifier using S256."""
-    import hashlib
+def generate_pkce_challenge(verifier: str, encoding: str = "base64url") -> str:
+    """Generate an S256 PKCE code challenge from a verifier.
 
-    digest = hashlib.sha256(verifier.encode()).digest()
-    challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-    return challenge
-
-
-import base64
+    encoding="base64url": RFC 7636 (Google, and the default).
+    encoding="hex": TikTok Login Kit for Desktop, which hex-encodes the SHA-256 digest.
+    """
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    if encoding == "base64url":
+        return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    if encoding == "hex":
+        return digest.hex()
+    raise ValueError(f"Unsupported PKCE challenge encoding: {encoding}")

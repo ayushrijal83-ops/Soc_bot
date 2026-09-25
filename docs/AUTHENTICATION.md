@@ -1,197 +1,97 @@
 # Authentication
 
-## OAuth Architecture
+Official endpoint details and doc links live in [API_INTEGRATIONS.md](API_INTEGRATIONS.md). This file covers how Soc_bot runs OAuth. Last verified against official docs: **2026-09-25**.
 
-Each platform uses **OAuth 2.0 with PKCE (Proof Key for Code Exchange)** for secure authorization without client secrets in the authorization request.
-
-```
-User → CLI → Browser (Platform Login) → Platform Consent → Callback Server → Token Exchange → Secure Storage
-```
+Status: OAuth is implemented and tested with mocks. **Real provider OAuth: NOT RUN** (no credentials configured). Publishing is not implemented.
 
 ## Browser Authorization Flow
 
-1. **User selects "Connect Account"** in CLI menu
-2. **Application generates PKCE code_verifier/code_challenge**
-3. **Application opens system browser** to platform authorization URL with:
-   - `client_id`
-   - `redirect_uri` (http://localhost:8080/callback/{platform})
-   - `scope` (space-separated)
-   - `response_type=code`
-   - `code_challenge` + `code_challenge_method=S256`
-   - `state` (CSRF protection)
-4. **User logs in** on platform's official site
-5. **User grants permissions** (scopes)
-6. **Platform redirects** to `redirect_uri?code=AUTH_CODE&state=STATE`
-7. **Local callback server** receives request, validates state, extracts code
-8. **Application exchanges code for tokens** via token endpoint (with `code_verifier`)
-9. **Tokens stored securely** in encrypted database
-10. **Account available** for publishing
-
-## Callback Flow
-
-Local HTTP server on `http://localhost:8080/callback/{platform}`:
-- Single-use per authorization attempt
-- Validates `state` parameter matches generated value
-- Returns success/failure HTML to browser
-- Shuts down after receiving callback
-
-## Platform-Specific OAuth Details
-
-### Instagram (Meta / Facebook Login for Instagram)
-- **Authorization URL:** `https://www.facebook.com/v22.0/dialog/oauth`
-- **Token URL:** `https://graph.facebook.com/v22.0/oauth/access_token`
-- **Scopes:** `instagram_graph_user_profile`, `instagram_graph_user_media`, `pages_show_list`, `pages_read_engagement`
-- **PKCE:** Required (S256)
-- **State:** Required (CSRF protection)
-- **Account Linking:** Instagram Business/Creator account must be linked to Facebook Page
-- **Access Token Lifetime:** 60 days (extendable via long-lived token exchange)
-- **Refresh:** Long-lived tokens can be refreshed before expiry
-
-### TikTok
-- **Authorization URL:** `https://www.tiktok.com/v2/auth/authorize/`
-- **Token URL:** `https://open.tiktokapis.com/v2/oauth/token/`
-- **Scopes:** `video.upload`, `video.publish`, `user.info.basic`
-- **PKCE:** Required (S256)
-- **State:** Required (CSRF protection)
-- **Access Token Lifetime:** 2 years (refreshable)
-- **Refresh Endpoint:** `https://open.tiktokapis.com/v2/oauth/token/`
-
-### YouTube (Google OAuth 2.0)
-- **Authorization URL:** `https://accounts.google.com/o/oauth2/v2/auth`
-- **Token URL:** `https://oauth2.googleapis.com/token`
-- **Scopes:** `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube`, `https://www.googleapis.com/auth/youtube.readonly`
-- **PKCE:** Required (S256)
-- **State:** Required (CSRF protection)
-- **Access Token Lifetime:** 1 hour
-- **Refresh Token:** Until revoked (offline access)
-- **Refresh Endpoint:** `https://oauth2.googleapis.com/token`
-- **Access Type:** `offline` (required for refresh token)
-- **Prompt:** `consent` (to ensure refresh token on first auth)
-
-## Token Storage
-
-### Access Tokens
-
-| Platform | Token Type | Typical Lifetime |
-|----------|------------|------------------|
-| Instagram | User Access Token | 60 days (extendable) |
-| TikTok | Access Token | 2 years (refreshable) |
-| YouTube | Access Token | 1 hour |
-
-**Never log access tokens.** Store encrypted only.
-
-### Refresh Tokens
-
-| Platform | Refresh Token Lifetime | Refresh Endpoint |
-|----------|------------------------|------------------|
-| Instagram | 60 days (with token refresh) | `https://graph.facebook.com/v22.0/oauth/access_token` |
-| TikTok | Long-lived (revocable) | `https://open.tiktokapis.com/v2/oauth/token/` |
-| YouTube | Until revoked | `https://oauth2.googleapis.com/token` |
-
-Refresh logic:
-- Proactive refresh: 24h before expiry
-- On-demand: when API returns 401/expired token error
-- Store new token pair atomically (replace old)
-
-## Expiration Handling
-
-```python
-def is_token_expired(expires_at: datetime) -> bool:
-    return datetime.utcnow() >= (expires_at - timedelta(hours=1))
-
-def needs_refresh(expires_at: datetime) -> bool:
-    return datetime.utcnow() >= (expires_at - timedelta(hours=24))
+```
+Connect Account (CLI)
+  → start loopback callback server on 127.0.0.1:<port>   (port 0 = OS picks a free port)
+  → redirect_uri = http://127.0.0.1:<actual-port>/callback/<platform>   (or fixed *_REDIRECT_URI)
+  → create state (bound to platform) + PKCE verifier
+  → open browser at the platform authorization URL
+  → callback: /callback/<platform>?code=…&state=…
+       state must exist, be unexpired, be unused, and be issued for <platform>
+  → exchange code (same redirect_uri) → identity lookup → create/update account (tokens encrypted)
+  → stop callback server
 ```
 
-## Token Refresh Flow
+- `OAuthCallbackServer` is shared by all platforms. It binds `127.0.0.1` by default (never `0.0.0.0`), with exclusive binding so another process cannot share the port.
+- Only `/callback/<platform>` paths are handled. Other paths (e.g. `/favicon.ico`) get a 404 and do not end the flow.
+- State is single-use: it is consumed on the first callback, even when rejected. If the callback path's platform differs from the state's platform, the callback is rejected **before** any code exchange.
+- The flow times out after 300 s by default. Bind or startup failures raise `OAuthCallbackError` without credentials in the message.
+- Provider error text shown on the result page is HTML-escaped. Authorization codes are never echoed.
 
-```
-API Call → 401 Unauthorized / Token Expired
-     |
-     v
-Refresh Token Request (with stored refresh_token)
-     |
-     v
-New Access Token + New Refresh Token (if rotated)
-     |
-     v
-Update Database (atomic)
-     |
-     v
-Retry Original API Call
-```
+## PKCE
+
+| Platform | PKCE | Challenge encoding |
+|----------|------|--------------------|
+| YouTube | S256 | RFC 7636 base64url, no padding |
+| TikTok (Login Kit for Desktop) | S256 | **hex** SHA-256 digest (TikTok-specific) |
+| Instagram (Instagram Login) | not documented, not sent | — |
+
+`generate_pkce_challenge(verifier, encoding="base64url" | "hex")` in `src/auth/state.py` is the single implementation. An adapter chooses its encoding with the `PKCE_CHALLENGE_ENCODING` class attribute (`PlatformAuth` defaults to `base64url`; `TikTokAuth` sets `hex`).
+
+## Token Lifetimes & Expiry Model
+
+Soc_bot never assumes a lifetime. `expires_at = now(UTC) + expires_in`, using the `expires_in` the provider returned (`OAuthTokenResult.expires_at`, `src.auth.base.expires_at_from`). If the provider returned no `expires_in`, `expires_at` stays `None`. `is_token_expiring(expires_at, margin_seconds)` reports whether a token is expired or close to expiry. SQLite returns naive datetimes, which are treated as UTC.
+
+| Platform | Access token (documented) | Renewal mechanism |
+|----------|---------------------------|-------------------|
+| Instagram | Short-lived 1 h → exchanged immediately for long-lived ~60 days | **Token re-exchange** (`ig_refresh_token`) of the long-lived access token. There is no refresh token. Allowed when the token is ≥ 24 h old and unexpired, and returns a **new** token that replaces the stored one. |
+| TikTok | 24 h (`expires_in`) | Refresh token (365 days, `refresh_expires_in`). The refresh token **may rotate**: the returned refresh token is always encrypted and stored in place of the old one. |
+| YouTube | ~1 h (`expires_in`) | Refresh token (until revoked). Google usually omits `refresh_token` on refresh, so the stored one is kept. |
+
+`AuthManager.refresh_account_tokens(account_id)` performs the renewal. It uses the stored access token for Instagram (`REFRESH_USES_ACCESS_TOKEN`) and the refresh token for the other platforms, then stores the new access token, any new refresh token, and the new `expires_at`. Scheduling proactive refresh (e.g. before a publish) is a Phase 4 concern and is not implemented.
+
+`refresh_expires_in` (TikTok) is returned on `OAuthTokenResult` but not persisted; the schema has no column for it. When a TikTok refresh fails with an expired refresh token, the user must reconnect.
 
 ## Account Identification
 
-Store platform-specific identifiers:
-- **Instagram:** `instagram_user_id` (IG User ID) + `page_id` (Facebook Page ID)
-- **TikTok:** `open_id` / `union_id` + `display_name`
-- **YouTube:** `channel_id` + `channel_title`
+| Platform | `platform_account_id` | Source |
+|----------|-----------------------|--------|
+| Instagram | Instagram professional account ID (`user_id`) | `GET graph.instagram.com/v25.0/me?fields=user_id,username,…` |
+| TikTok | `open_id` | `GET open.tiktokapis.com/v2/user/info/` |
+| YouTube | channel `id` | `GET youtube/v3/channels?mine=true` |
 
-Display name shown in CLI: `@username` or `Channel Name`
+Reconnecting an account that already exists (same platform + `platform_account_id`) updates its tokens, expiry and identity. It does not fail as a duplicate.
 
 ## Disconnecting Accounts
 
-1. User selects "Disconnect" in Connected Accounts menu
-2. **Revoke tokens** via platform revoke endpoint (if available):
-   - Instagram: `DELETE /<USER_ID>/permissions`
-   - TikTok: `POST /v2/oauth/revoke/`
+1. Revoke on the platform where supported:
+   - TikTok: `POST https://open.tiktokapis.com/v2/oauth/revoke/`
    - YouTube: `POST https://oauth2.googleapis.com/revoke`
-3. **Delete local record** from database
-4. **Clear any cached data**
-
-## Invalid/Revoked Token Handling
-
-Detection:
-- API returns 401 with specific error codes
-- Token refresh fails (invalid_grant, revoked_token)
-
-Response:
-1. Mark account status = `REVOKED` in database
-2. Notify user in CLI ("Account disconnected, please reconnect")
-3. Remove from available accounts for publishing
-4. Preserve history/jobs for audit
+   - Instagram: **no documented revocation endpoint**, so no request is made. The user removes access in Instagram → Settings → Apps and websites.
+2. Revocation errors never block the local disconnect.
+3. Account status is set to `disconnected`; history is preserved.
 
 ## Secure Token Storage
 
-- **Encryption:** Fernet (AES-128-GCM) via `cryptography` library
-- **Key:** `ENCRYPTION_KEY` from environment (32-byte base64)
-- **Storage:** Encrypted blob in SQLite `access_token_enc`, `refresh_token_enc` columns
-- **Key Rotation:** Not implemented in V1 (document for future)
-
-```python
-# Encryption
-fernet = Fernet(key)
-encrypted = fernet.encrypt(token.encode())
-
-# Decryption
-decrypted = fernet.decrypt(encrypted).decode()
-```
+- Fernet encryption (`cryptography`), key from `ENCRYPTION_KEY`
+- Encrypted columns `access_token_enc`, `refresh_token_enc`
+- Tokens, authorization codes and client secrets are never logged, never put in exception messages, and never echoed to the browser (covered by regression tests)
 
 ## Environment Variables
 
 ```env
-ENCRYPTION_KEY=base64_encoded_32_byte_key
-# Generated via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+ENCRYPTION_KEY=
 
-# Instagram
-INSTAGRAM_APP_ID=
+INSTAGRAM_APP_ID=          # Instagram app ID (Instagram Login), not the Facebook app ID
 INSTAGRAM_APP_SECRET=
-INSTAGRAM_REDIRECT_URI=http://localhost:8080/callback/instagram
+INSTAGRAM_REDIRECT_URI=    # fixed, must be registered, e.g. http://127.0.0.1:8765/callback/instagram
 
-# TikTok
 TIKTOK_CLIENT_KEY=
 TIKTOK_CLIENT_SECRET=
-TIKTOK_REDIRECT_URI=http://localhost:8080/callback/tiktok
+TIKTOK_REDIRECT_URI=       # optional; register http://127.0.0.1:*/callback/tiktok and leave blank
 
-# YouTube
-YOUTUBE_CLIENT_ID=
+YOUTUBE_CLIENT_ID=         # Desktop-app OAuth client
 YOUTUBE_CLIENT_SECRET=
-YOUTUBE_REDIRECT_URI=http://localhost:8080/callback/youtube
+YOUTUBE_REDIRECT_URI=      # leave blank: dynamic loopback port
 
-# Callback Server
 OAUTH_CALLBACK_HOST=127.0.0.1
-OAUTH_CALLBACK_PORT=8080
+OAUTH_CALLBACK_PORT=0      # 0 = dynamic (default)
 ```
 
-**Never commit encryption key.** Generate unique per deployment.
+A fixed `*_REDIRECT_URI` must have the form `http://<host>:<port>/callback/<platform>`. The callback server binds exactly that host and port.

@@ -1,7 +1,7 @@
 """Tests for CLI menu system."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from src.cli.menu import MenuHandler, run_menu
 
 
@@ -34,18 +34,16 @@ class TestMenuHandler:
     def test_handle_choice_create_post(self):
         """Test handle_choice for Create Post."""
         handler = MenuHandler()
-        with patch('src.cli.menu.print_not_implemented') as mock_print:
-            with patch('src.cli.menu.MenuHandler._pause'):
-                result = handler.handle_choice(1)
+        with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
+            result = handler.handle_choice(1)
         assert result is True
         mock_print.assert_called_once_with("Create Post")
 
     def test_handle_choice_connected_accounts(self):
         """Test handle_choice for Connected Accounts."""
         handler = MenuHandler()
-        with patch('src.cli.menu.print_not_implemented') as mock_print:
-            with patch('src.cli.menu.MenuHandler._pause'):
-                result = handler.handle_choice(2)
+        with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
+            result = handler.handle_choice(2)
         assert result is True
         # AccountManager not initialized, should show appropriate message
         mock_print.assert_called_once_with("Account management (AccountManager not initialized)")
@@ -53,27 +51,24 @@ class TestMenuHandler:
     def test_handle_choice_publishing_queue(self):
         """Test handle_choice for Publishing Queue."""
         handler = MenuHandler()
-        with patch('src.cli.menu.print_not_implemented') as mock_print:
-            with patch('src.cli.menu.MenuHandler._pause'):
-                result = handler.handle_choice(3)
+        with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
+            result = handler.handle_choice(3)
         assert result is True
         mock_print.assert_called_once_with("Publishing queue")
 
     def test_handle_choice_history(self):
         """Test handle_choice for History."""
         handler = MenuHandler()
-        with patch('src.cli.menu.print_not_implemented') as mock_print:
-            with patch('src.cli.menu.MenuHandler._pause'):
-                result = handler.handle_choice(4)
+        with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
+            result = handler.handle_choice(4)
         assert result is True
         mock_print.assert_called_once_with("Publishing history")
 
     def test_handle_choice_settings(self):
         """Test handle_choice for Settings."""
         handler = MenuHandler()
-        with patch('src.cli.menu.print_not_implemented') as mock_print:
-            with patch('src.cli.menu.MenuHandler._pause'):
-                result = handler.handle_choice(5)
+        with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
+            result = handler.handle_choice(5)
         assert result is True
         mock_print.assert_called_once_with("Settings")
 
@@ -95,18 +90,16 @@ class TestMenuHandler:
         """Test run loop exits on exit choice."""
         handler = MenuHandler()
         # Simulate user selecting Exit (6) then pressing Enter
-        with patch('src.cli.menu.prompt_menu_selection', side_effect=[6]):
-            with patch('src.cli.menu.MenuHandler._pause'):
-                handler.run()
+        with patch('src.cli.menu.prompt_menu_selection', side_effect=[6]), patch('src.cli.menu.MenuHandler._pause'):
+            handler.run()
         assert handler.running is False
 
     def test_run_continues_on_other_choices(self):
         """Test run loop continues on other choices."""
         handler = MenuHandler()
         # Simulate user selecting Create Post (1) then Exit (6)
-        with patch('src.cli.menu.prompt_menu_selection', side_effect=[1, 6]):
-            with patch('src.cli.menu.MenuHandler._pause'):
-                handler.run()
+        with patch('src.cli.menu.prompt_menu_selection', side_effect=[1, 6]), patch('src.cli.menu.MenuHandler._pause'):
+            handler.run()
         assert handler.running is False
 
     def test_run_handles_none_choice(self):

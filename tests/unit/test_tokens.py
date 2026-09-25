@@ -1,7 +1,9 @@
 """Tests for token encryption utilities."""
 
 import os
+
 import pytest
+
 from src.storage.tokens import TokenEncryption, TokenEncryptionError, generate_key
 
 

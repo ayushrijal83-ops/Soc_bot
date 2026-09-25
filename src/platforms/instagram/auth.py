@@ -1,101 +1,55 @@
-"""Instagram (Meta) OAuth authentication."""
+"""Instagram OAuth authentication via Business Login for Instagram (Instagram API with Instagram Login).
+
+Flow (verified against Meta docs, 2026-09):
+    instagram.com/oauth/authorize            -> authorization code
+    POST api.instagram.com/oauth/access_token -> short-lived token (1 hour) + user_id
+    GET graph.instagram.com/access_token      -> long-lived token (grant_type=ig_exchange_token, ~60 days)
+    GET graph.instagram.com/refresh_access_token (grant_type=ig_refresh_token)
+        -> NEW long-lived token; allowed once the current token is >= 24h old and unexpired.
+
+Instagram Login has no refresh token and no documented token-revocation endpoint.
+"""
 
 from typing import Any
 
-import base64
 import httpx
 
-from src.auth.base import OAuthConfig, OAuthTokenResult
-from src.auth.errors import (
-    OAuthAccountIdentityError,
-    OAuthConfigurationError,
-    OAuthTokenExchangeError,
-)
+from src.auth.base import OAuthConfig, OAuthTokenResult, PlatformAuth
+from src.auth.errors import OAuthAccountIdentityError, OAuthTokenExchangeError
 
 
-class InstagramAuth:
-    """Instagram (Meta) OAuth authentication via Facebook Login for Instagram."""
+class InstagramAuth(PlatformAuth):
+    """Instagram OAuth via Business Login for Instagram (no Facebook Page required)."""
 
     PLATFORM = "instagram"
+    SCOPE_SEPARATOR = ","
+    # Instagram has no refresh token: the long-lived access token itself is re-exchanged.
+    REFRESH_USES_ACCESS_TOKEN = True
 
-    # OAuth endpoints
-    AUTHORIZATION_URL = "https://www.facebook.com/v22.0/dialog/oauth"
-    TOKEN_URL = "https://graph.facebook.com/v22.0/oauth/access_token"
-    USER_INFO_URL = "https://graph.facebook.com/v22.0/me"
+    AUTHORIZATION_URL = "https://www.instagram.com/oauth/authorize"
+    TOKEN_URL = "https://api.instagram.com/oauth/access_token"
+    LONG_LIVED_TOKEN_URL = "https://graph.instagram.com/access_token"
+    REFRESH_TOKEN_URL = "https://graph.instagram.com/refresh_access_token"
+    USER_INFO_URL = "https://graph.instagram.com/v25.0/me"
 
-    # Default scopes for Instagram publishing
-    DEFAULT_SCOPES = [
-        "instagram_graph_user_profile",
-        "instagram_graph_user_media",
-        "pages_show_list",
-        "pages_read_engagement",
-    ]
+    # instagram_business_basic: required for every Instagram Login flow (and for token refresh).
+    # instagram_business_content_publish: required to publish (Phase 4).
+    DEFAULT_SCOPES = (
+        "instagram_business_basic",
+        "instagram_business_content_publish",
+    )
 
-    def __init__(
-        self,
-        config: OAuthConfig,
-        state_store: "OAuthStateStore",
-        token_encryption: "TokenEncryption",
-        account_manager: "AccountManager",
-    ):
-        self.config = config
-        self._state_store = state_store
-        self.token_encryption = token_encryption
-        self.account_manager = account_manager
+    async def exchange_code(self, code: str, pkce_verifier: str | None = None) -> OAuthTokenResult:
+        """Exchange the code for a short-lived token, then for a long-lived token.
 
-    @property
-    def platform(self) -> str:
-        return self.PLATFORM
-
-    def _get_state_store(self):
-        return self._state_store
-
-    def generate_pkce_pair(self) -> tuple[str, str]:
-        """Generate PKCE verifier and challenge pair."""
-        verifier = self._generate_pkce_verifier()
-        challenge = self._generate_pkce_challenge(verifier)
-        return verifier, challenge
-
-    def _generate_pkce_verifier(self) -> str:
-        import secrets
-        return secrets.token_urlsafe(32)
-
-    def _generate_pkce_challenge(self, verifier: str) -> str:
-        import hashlib
-        digest = hashlib.sha256(verifier.encode()).digest()
-        challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-        return challenge
-
-    def get_authorization_url(self, state: str, pkce_challenge: str | None = None) -> str:
-        """Generate the authorization URL for Instagram."""
-
-        params = {
-            "client_id": self.config.client_id,
-            "redirect_uri": self.config.redirect_uri,
-            "response_type": "code",
-            "scope": " ".join(self.config.scopes),
-            "state": state,
-        }
-
-        if self.config.pkce_required and pkce_challenge:
-            params["code_challenge"] = pkce_challenge
-            params["code_challenge_method"] = "S256"
-
-        if self.config.additional_params:
-            params.update(self.config.additional_params)
-
-        return f"{self.AUTHORIZATION_URL}?{urlencode(params)}"
-
-    async def exchange_code(self, code: str, pkce_verifier: str) -> OAuthTokenResult:
-        """Exchange authorization code for tokens."""
-
+        ``pkce_verifier`` is accepted for interface compatibility; Instagram Login does not document PKCE.
+        """
         data = {
             "client_id": self.config.client_id,
             "client_secret": self.config.client_secret,
+            "grant_type": "authorization_code",
             "redirect_uri": self.config.redirect_uri,
             "code": code,
-            "code_verifier": pkce_verifier,
-            "grant_type": "authorization_code",
         }
 
         async with httpx.AsyncClient() as client:
@@ -103,153 +57,125 @@ class InstagramAuth:
 
         if response.status_code != 200:
             raise OAuthTokenExchangeError(
-                f"Token exchange failed: {response.text}",
+                f"Token exchange failed (HTTP {response.status_code})",
                 platform=self.PLATFORM,
                 status_code=response.status_code,
-                response_body=response.text,
+                response_body=_error_body(response),
             )
 
-        data = response.json()
+        body = response.json()
+        # Docs show {"data": [{access_token, user_id, permissions}]}; accept the flat form too.
+        short = body["data"][0] if isinstance(body.get("data"), list) and body["data"] else body
+        short_token = short.get("access_token")
+        if not short_token:
+            raise OAuthTokenExchangeError("Token exchange returned no access_token", platform=self.PLATFORM)
 
-        # Exchange short-lived token for long-lived token (60 days)
-        long_lived_token = await self._exchange_for_long_lived_token(data.get("access_token"))
+        long_lived = await self._exchange_for_long_lived_token(short_token)
 
         return OAuthTokenResult(
-            access_token=long_lived_token or data.get("access_token"),
-            refresh_token=data.get("refresh_token"),
-            expires_in=data.get("expires_in"),
-            token_type=data.get("token_type", "Bearer"),
-            scope=data.get("scope"),
-            platform_account_id=None,  # Will be populated by get_account_identity
-            raw_response=data,
+            access_token=long_lived["access_token"],
+            refresh_token=None,
+            expires_in=long_lived.get("expires_in"),
+            token_type=long_lived.get("token_type", "bearer"),
+            scope=short.get("permissions"),
+            platform_account_id=str(short["user_id"]) if short.get("user_id") is not None else None,
+            raw_response=None,  # never keep token-bearing bodies around
         )
 
-    async def _exchange_for_long_lived_token(self, short_lived_token: str) -> str | None:
-        """Exchange short-lived token for long-lived token (60 days)."""
-
-        url = "https://graph.facebook.com/v22.0/oauth/access_token"
+    async def _exchange_for_long_lived_token(self, short_lived_token: str) -> dict[str, Any]:
+        """Exchange a short-lived token for a long-lived one (grant_type=ig_exchange_token)."""
         params = {
-            "grant_type": "fb_exchange_token",
-            "client_id": self.config.client_id,
+            "grant_type": "ig_exchange_token",
             "client_secret": self.config.client_secret,
-            "fb_exchange_token": short_lived_token,
+            "access_token": short_lived_token,
         }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params)
-
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("access_token")
-        return None
-
-    async def get_account_identity(self, access_token: str) -> dict[str, Any]:
-        """Get Instagram account identity from access token."""
-
-        # Get user's Instagram accounts (requires page access)
-        url = f"{self.USER_INFO_URL}"
-        params = {
-            "fields": "id,name,instagram_business_account{id,username,profile_picture_url}",
-            "access_token": access_token,
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params)
-
-        if response.status_code != 200:
-            raise OAuthAccountIdentityError(
-                f"Failed to get account identity: {response.text}",
-                platform=self.PLATFORM,
-            )
-
-        data = response.json()
-
-        # Extract Instagram Business Account info
-        ig_account = data.get("instagram_business_account")
-        if not ig_account:
-            raise OAuthAccountIdentityError(
-                "No Instagram Business Account found. Ensure Instagram account is linked to a Facebook Page.",
-                platform=self.PLATFORM,
-            )
-
-        return {
-            "platform_account_id": ig_account.get("id"),
-            "username": ig_account.get("username"),
-            "display_name": ig_account.get("name") or ig_account.get("username"),
-            "profile_picture_url": ig_account.get("profile_picture_url"),
-        }
+        return await self._get_token(self.LONG_LIVED_TOKEN_URL, params, "Long-lived token exchange")
 
     async def refresh_tokens(self, refresh_token: str) -> OAuthTokenResult:
-        """Refresh access token using refresh token."""
+        """Re-exchange a long-lived ACCESS token for a new long-lived token (grant_type=ig_refresh_token).
 
-        data = {
-            "client_id": self.config.client_id,
-            "client_secret": self.config.client_secret,
-            "grant_type": "fb_exchange_token",
-            "fb_exchange_token": refresh_token,
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(self.TOKEN_URL, params=data)
-
-        if response.status_code != 200:
-            raise OAuthTokenExchangeError(
-                f"Token refresh failed: {response.text}",
-                platform=self.PLATFORM,
-                status_code=response.status_code,
-                response_body=response.text,
-            )
-
-        data = response.json()
+        Instagram has no refresh token; pass the current long-lived access token. The returned
+        token replaces the stored one. Meta only allows this once the token is >= 24h old and unexpired.
+        """
+        params = {"grant_type": "ig_refresh_token", "access_token": refresh_token}
+        data = await self._get_token(self.REFRESH_TOKEN_URL, params, "Long-lived token refresh")
         return OAuthTokenResult(
-            access_token=data.get("access_token"),
-            refresh_token=refresh_token,  # Facebook doesn't return new refresh token
+            access_token=data["access_token"],
+            refresh_token=None,
             expires_in=data.get("expires_in"),
-            token_type=data.get("token_type", "Bearer"),
-            scope=data.get("scope"),
-            raw_response=data,
+            token_type=data.get("token_type", "bearer"),
         )
 
-    async def revoke_tokens(self, access_token: str) -> bool:
-        """Revoke tokens on platform."""
+    async def _get_token(self, url: str, params: dict[str, str], action: str) -> dict[str, Any]:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params)
+        if response.status_code != 200:
+            raise OAuthTokenExchangeError(
+                f"{action} failed (HTTP {response.status_code})",
+                platform=self.PLATFORM,
+                status_code=response.status_code,
+                response_body=_error_body(response),
+            )
+        data = response.json()
+        if not data.get("access_token"):
+            raise OAuthTokenExchangeError(f"{action} returned no access_token", platform=self.PLATFORM)
+        return data
 
-        url = "https://graph.facebook.com/v22.0/me/permissions"
+    async def get_account_identity(self, access_token: str) -> dict[str, Any]:
+        """Get the Instagram professional account ID (``user_id``) and username via /me."""
+        params = {"fields": "user_id,username,name,profile_picture_url"}
         headers = {"Authorization": f"Bearer {access_token}"}
 
         async with httpx.AsyncClient() as client:
-            response = await client.delete(url, headers=headers)
+            response = await client.get(self.USER_INFO_URL, params=params, headers=headers)
 
-        return response.status_code == 200
+        if response.status_code != 200:
+            raise OAuthAccountIdentityError(
+                f"Failed to get account identity (HTTP {response.status_code})",
+                platform=self.PLATFORM,
+            )
 
-    def validate_configuration(self) -> None:
-        """Validate OAuth configuration."""
-        if not self.config.client_id:
-            raise OAuthConfigurationError("Missing client_id for Instagram", platform=self.PLATFORM)
-        if not self.config.client_secret:
-            raise OAuthConfigurationError("Missing client_secret for Instagram", platform=self.PLATFORM)
-        if not self.config.redirect_uri:
-            raise OAuthConfigurationError("Missing redirect_uri for Instagram", platform=self.PLATFORM)
-        if not self.config.scopes:
-            raise OAuthConfigurationError("Missing scopes for Instagram", platform=self.PLATFORM)
+        data = response.json()
+        # user_id is the Instagram professional account ID; id is only app-scoped.
+        user_id = data.get("user_id")
+        if not user_id:
+            raise OAuthAccountIdentityError("Instagram /me returned no user_id", platform=self.PLATFORM)
+
+        return {
+            "platform_account_id": str(user_id),
+            "username": data.get("username"),
+            "display_name": data.get("name") or data.get("username"),
+            "profile_picture_url": data.get("profile_picture_url"),
+        }
+
+    async def revoke_tokens(self, access_token: str) -> bool:
+        """Instagram Login documents no token-revocation endpoint.
+
+        Returns False without making a request. The user removes access in Instagram
+        settings (Apps and websites); Meta then calls the app's Deauthorize Callback URL.
+        """
+        return False
 
     @staticmethod
     def create_config(
         app_id: str,
         app_secret: str,
-        redirect_uri: str,
+        redirect_uri: str | None,
         scopes: list | None = None,
     ) -> OAuthConfig:
-        """Create OAuth configuration for Instagram."""
+        """Create OAuth configuration for Instagram (app_id/app_secret = the *Instagram* app ID/secret)."""
         return OAuthConfig(
             platform="instagram",
             client_id=app_id,
             client_secret=app_secret,
             redirect_uri=redirect_uri,
-            scopes=scopes or InstagramAuth.DEFAULT_SCOPES,
-            authorization_url="https://www.facebook.com/v22.0/dialog/oauth",
-            token_url="https://graph.facebook.com/v22.0/oauth/access_token",
-            pkce_required=True,
+            scopes=list(scopes or InstagramAuth.DEFAULT_SCOPES),
+            authorization_url=InstagramAuth.AUTHORIZATION_URL,
+            token_url=InstagramAuth.TOKEN_URL,
+            pkce_required=False,
         )
 
 
-from urllib.parse import urlencode
+def _error_body(response: httpx.Response) -> str:
+    """Error body for diagnostics; error responses carry no tokens but keep it bounded."""
+    return response.text[:500]

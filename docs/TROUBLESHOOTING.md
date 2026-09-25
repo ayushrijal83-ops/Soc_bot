@@ -26,10 +26,10 @@ Each entry follows:
 - Trailing slash difference, http vs https, port mismatch
 
 **Solution:**
-1. Check `.env`: `INSTAGRAM_REDIRECT_URI=http://localhost:8080/callback/instagram`
-2. Match exactly in Meta/TikTok/Google developer console
-3. Include/exclude trailing slash consistently
-4. Use `http://localhost:8080` for local dev (not 127.0.0.1)
+1. YouTube: use a "Desktop app" OAuth client and leave `YOUTUBE_REDIRECT_URI` blank (dynamic `http://127.0.0.1:<port>/callback/youtube`)
+2. TikTok: register `http://127.0.0.1:*/callback/tiktok` (wildcard port) and leave `TIKTOK_REDIRECT_URI` blank
+3. Instagram: set `INSTAGRAM_REDIRECT_URI` to exactly the URI registered in Business login settings (format `http://<host>:<port>/callback/instagram`)
+4. Include/exclude trailing slash consistently
 
 **Affected Files:** `.env`, platform developer dashboards
 
@@ -237,22 +237,22 @@ Each entry follows:
 
 ---
 
-### Problem: Port 8080 in use / Callback server fails
+### Problem: Callback server fails to start
 
 **Symptoms:**
-- `OSError: [Errno 98] Address already in use`
+- `OAuthCallbackError: Could not start OAuth callback server on <host>:<port>`
 - OAuth never completes
 
 **Root Cause:**
-- Another process on port 8080
-- Previous callback server didn't shut down
+- A fixed `*_REDIRECT_URI` or `OAUTH_CALLBACK_PORT` points at a port another process already holds
+- The default dynamic port (0) should not normally conflict
 
 **Solution:**
-1. Kill process on 8080: `lsof -ti:8080 | xargs kill`
-2. Or change port in `.env` and platform dashboards
-3. Ensure callback server has timeout/shutdown
+1. Leave `OAUTH_CALLBACK_PORT` unset (dynamic) and `*_REDIRECT_URI` blank where the platform allows it
+2. For a fixed Instagram redirect URI, free that port or register a different one
+3. The callback server times out (300 s) and always shuts down after each flow
 
-**Affected Files:** `src/accounts/manager.py`, `.env`
+**Affected Files:** `src/auth/callback_server.py`, `src/auth/manager.py`, `.env`
 
 **How to Reproduce:** Start OAuth, kill CLI, start again
 

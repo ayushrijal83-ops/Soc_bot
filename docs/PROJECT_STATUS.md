@@ -1,7 +1,15 @@
 # Project Status
 
 ## Current Phase
-**Phase 3B: Official OAuth Verification + OAuth Infrastructure** — ✅ **COMPLETE**
+**Phase 3B: Official OAuth Verification + OAuth Infrastructure**: ✅ **COMPLETE, audit fixes applied 2026-09-25**
+
+| Claim | Status |
+|-------|--------|
+| OAuth implemented (Instagram, TikTok, YouTube) | ✅ |
+| Endpoints verified against current official docs | ✅ 2026-09-25 |
+| OAuth tested with mocks | ✅ 214 unit tests |
+| Real provider OAuth tested | ❌ NOT RUN (credentials not configured) |
+| Publishing implemented | ❌ Phase 4 |
 
 ## Implementation State
 
@@ -65,23 +73,34 @@
 - [x] Total 138 unit tests passing
 
 ### Phase 3B: Official OAuth Verification + OAuth Infrastructure — **COMPLETE** ✅
-- [x] OAuth callback server (port 8080, localhost)
-- [x] Instagram OAuth flow (`src/platforms/instagram/auth.py`) — VERIFIED against Meta docs
-- [x] TikTok OAuth flow (`src/platforms/tiktok/auth.py`) — VERIFIED against TikTok docs
-- [x] YouTube OAuth flow (`src/platforms/youtube/auth.py`) — VERIFIED against Google docs
+- [x] OAuth callback server (127.0.0.1, dynamic port, exclusive bind)
+- [x] Instagram OAuth flow (`src/platforms/instagram/auth.py`): Instagram API with Instagram Login, docs verified 2026-09-25
+- [x] TikTok OAuth flow (`src/platforms/tiktok/auth.py`): Login Kit for Desktop (hex PKCE), docs verified 2026-09-25
+- [x] YouTube OAuth flow (`src/platforms/youtube/auth.py`): Google installed-app loopback flow, docs verified 2026-09-25
 - [x] Shared OAuth infrastructure (`src/auth/`): state management, PKCE, callback server, error handling
 - [x] OAuth configuration from environment variables
-- [x] Authorization URL generation with PKCE (S256)
-- [x] Token exchange with PKCE verifier
+- [x] Authorization URL generation with platform-specific PKCE (base64url / hex / none)
+- [x] Token exchange with PKCE verifier (where supported)
 - [x] Account identity retrieval from platform APIs
-- [x] Token refresh and revocation
+- [x] Token renewal (TikTok/YouTube refresh; Instagram `ig_refresh_token` re-exchange) and revocation where supported
 - [x] AuthManager for coordinating all platforms
 - [x] Connected Accounts CLI integration (Connect Instagram/TikTok/YouTube)
 - [x] Platform credential validation and configuration
-- [x] OAuth state management with PKCE (S256) and CSRF protection
+- [x] OAuth state management: single-use and platform-bound (CSRF)
 - [x] Callback server with timeout, error handling, CSRF protection
-- [x] 32 new unit tests for OAuth infrastructure
-- [x] Total 170 unit tests passing
+- [x] Total 214 unit tests passing; `ruff check .` clean
+
+#### Phase 3B audit fixes (2026-09-25)
+- [x] TikTok PKCE uses a hex SHA-256 challenge (shared generator gained an `encoding` option; others stay RFC 7636)
+- [x] TikTok scopes comma-separated; rotated refresh tokens persisted; `expires_in` respected
+- [x] Instagram migrated from Facebook Login to Business Login for Instagram (authorize URL, scopes, api.instagram.com code exchange, `ig_exchange_token`, `ig_refresh_token`, `/me` `user_id` identity, honest "no revocation endpoint")
+- [x] YouTube and all platforms use a dynamic loopback port; the redirect URI is built from the bound port
+- [x] Callback rejects a state issued for a different platform before any code exchange
+- [x] `expires_at` computed from provider `expires_in` (timezone-aware UTC); was previously passed as an unsupported `expires_in=` kwarg, so real connects would have crashed
+- [x] Reconnecting an existing account updates it instead of raising a duplicate error
+- [x] Callback server: exclusive bind, non-callback paths ignored, HTML-escaped errors, thread-safe wait
+- [x] Adapters now subclass `PlatformAuth` (duplicate PKCE/validation code removed)
+- [x] 80 Ruff errors fixed (0 remaining)
 
 ### In Progress 🔄
 - None
@@ -139,21 +158,14 @@
 | `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- **170 unit tests passing** in `tests/unit/`
-  - `test_tokens.py` — 14 tests for token encryption
-  - `test_database.py` — 33 tests for database layer
-  - `test_cli_display.py` — 11 tests for display utilities
-  - `test_cli_prompts.py` — 24 tests for input validation
-  - `test_cli_menu.py` — 14 tests for menu navigation
-  - `test_main.py` — 4 tests for entry point
-  - `test_account_manager.py` — 38 tests for Account Manager
-  - `test_auth_state.py` — 10 tests for OAuth state/PKCE
-  - `test_auth_callback.py` — 7 tests for OAuth callback server
-  - `test_platform_auth.py` — 9 tests for platform auth adapters
+- **214 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
 
 ## Known Limitations
-- Platform API integrations verified in documentation only
-- Real OAuth testing requires developer credentials (not in test environment)
+- Real OAuth: NOT RUN for any platform (no credentials configured). Mocked tests are not provider verification.
+- Instagram needs a fixed, registered `INSTAGRAM_REDIRECT_URI`. Meta may require HTTPS for it, which a plain loopback server cannot serve; check before the first real login.
+- `main.py` does not load `.env` (python-dotenv is installed but not called), so variables must be set in the shell environment
+- TikTok `refresh_expires_in` is not persisted (no schema column)
+- Proactive token refresh before use is not scheduled yet (Phase 4 will call `is_token_expiring` / `refresh_account_tokens`)
 - No logging setup yet
 - Publishing features are placeholders only
 

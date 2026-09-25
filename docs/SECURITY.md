@@ -18,18 +18,19 @@
 | Token exposure in logs | Structured logging with sanitization | 📋 PLANNED |
 | .env committed to git | .gitignore, pre-commit hooks | ✅ IMPLEMENTED |
 | MITM on API calls | HTTPS enforcement, cert validation | 📋 PLANNED |
-| CSRF in OAuth | PKCE + state parameter | 📋 PLANNED |
+| CSRF in OAuth | State (single-use, platform-bound) + PKCE where supported | ✅ IMPLEMENTED |
 | Malicious video upload | Validation, size limits, type checking | 📋 PLANNED |
-| Token replay | Short-lived access tokens, refresh rotation | 📋 PLANNED |
+| Token replay | Provider expiry honoured; rotated TikTok refresh tokens replace old ones | ✅ IMPLEMENTED |
+| Auth-code interception on loopback | 127.0.0.1 only, exclusive port bind (no SO_REUSEADDR), dynamic port, state check before exchange | ✅ IMPLEMENTED |
 
 ## OAuth Security
 
-- **PKCE mandatory** — Prevents authorization code interception
-- **State parameter** — Prevents CSRF on callback
-- **Redirect URI exact match** — Preconfigured in platform dashboards
-- **Minimal scopes** — Only request needed permissions
-- **Token refresh** — Proactive, before expiry
-- **Revocation handling** — Detect and disable compromised accounts
+- **PKCE** where the provider documents it (YouTube: base64url; TikTok: hex). Instagram Login does not document PKCE.
+- **State parameter**: prevents CSRF on callback and is bound to the platform
+- **Redirect URI**: dynamic loopback port (YouTube, TikTok wildcard) or an exact registered URI (Instagram)
+- **Minimal scopes**: only the scopes needed to identify the account and (later) publish
+- **Token renewal**: `AuthManager.refresh_account_tokens`; proactive scheduling is Phase 4
+- **Revocation**: TikTok/YouTube revoke endpoints; Instagram has none documented (local disconnect only)
 
 ## Token Protection (IMPLEMENTED)
 
@@ -78,20 +79,27 @@ videos/
 ## OAuth Security (IMPLEMENTED)
 
 ### CSRF Protection
-- **State parameter** — Cryptographically random, single-use, expires
-- **State validation** — Required on every callback, mismatch = rejection
-- **State expiration** — 10 minutes default, cleaned up after use
+- **State parameter**: cryptographically random, single-use, expires after 10 minutes
+- **State validation**: required on every callback; unknown, expired or reused state is rejected
+- **Platform binding**: the state's platform must equal the callback path's platform (`/callback/<platform>`). A mismatch is rejected and the state consumed **before** any code exchange. `AuthManager` re-checks the platform against the flow it started.
 
 ### PKCE (Proof Key for Code Exchange)
-- **Code verifier** — 32-128 char cryptographically random string
-- **Code challenge** — S256 (SHA-256) of verifier
-- **Verifier storage** — In-memory with authorization state, cleaned up after callback
-- **Platform support:** Required for Instagram, TikTok, YouTube (all verified)
+- **Code verifier**: 64-char `secrets.token_urlsafe(48)` (RFC 7636 range 43–128)
+- **Code challenge**: S256; base64url (RFC 7636) by default, hex for TikTok Login Kit for Desktop
+- **Verifier storage**: in memory with the authorization state, removed when the state is consumed
+- **Platform support**: YouTube and TikTok send PKCE; Instagram Login does not document it, so it is not sent
 
-### Redirect URI Protection
-- **Exact match required** — Must match platform dashboard exactly
-- **Localhost only** — Binds to 127.0.0.1, not 0.0.0.0
-- **Path validation** — Only accepts configured callback paths
+### Redirect URI / Callback Server Protection
+- **Loopback only**: binds 127.0.0.1 by default, never 0.0.0.0
+- **Dynamic port**: port 0; the OS assigns a free port for each flow and the redirect URI uses the actual port
+- **Exclusive bind**: `SO_REUSEADDR` is disabled and `SO_EXCLUSIVEADDRUSE` is set on Windows, so another process cannot bind the same port and receive the code
+- **Path validation**: only `/callback/<platform>` is handled; other paths get a 404 and do not complete the flow
+- **Output escaping**: provider error text is HTML-escaped; codes are never echoed; unexpected exceptions show a generic message
+
+### No Secrets in Logs / Errors
+- Instagram token-exchange errors carry only the HTTP status and a bounded error body, never the code, secret or token. `raw_response` is not kept for Instagram token responses.
+- The Instagram `/me` call sends the token in the `Authorization` header, not in the URL
+- Regression tests check that access/refresh tokens, authorization codes and client secrets do not appear in logs, results or exception messages
 
 ### Token Handling
 ```python

@@ -45,24 +45,24 @@ ENCRYPTION_KEY=your_generated_key
 LOG_LEVEL=DEBUG
 DRY_RUN=true
 
-# Instagram (Meta)
+# Instagram (Instagram API with Instagram Login)
 INSTAGRAM_APP_ID=
 INSTAGRAM_APP_SECRET=
-INSTAGRAM_REDIRECT_URI=http://localhost:8080/callback/instagram
+INSTAGRAM_REDIRECT_URI=        # fixed + registered, e.g. http://127.0.0.1:8765/callback/instagram
 
-# TikTok
+# TikTok (Login Kit for Desktop)
 TIKTOK_CLIENT_KEY=
 TIKTOK_CLIENT_SECRET=
-TIKTOK_REDIRECT_URI=http://localhost:8080/callback/tiktok
+TIKTOK_REDIRECT_URI=           # blank = dynamic port
 
-# YouTube (Google)
+# YouTube (Google, Desktop app client)
 YOUTUBE_CLIENT_ID=
 YOUTUBE_CLIENT_SECRET=
-YOUTUBE_REDIRECT_URI=http://localhost:8080/callback/youtube
+YOUTUBE_REDIRECT_URI=          # blank = dynamic port
 
-# Optional: Override callback host/port (default 127.0.0.1:8080)
+# Optional: callback host/port (default 127.0.0.1, port 0 = dynamic)
 # OAUTH_CALLBACK_HOST=127.0.0.1
-# OAUTH_CALLBACK_PORT=8080
+# OAUTH_CALLBACK_PORT=0
 ```
 
 Generate encryption key:

@@ -200,7 +200,7 @@ class AccountMenuHandler:
             else:
                 print_error(f"Failed to connect {platform_display}: {result.get('error', 'Unknown error')}")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - CLI boundary: report and return to menu
             print_error(f"Error during OAuth: {e!s}")
 
         self._pause()
@@ -331,7 +331,7 @@ class AccountMenuHandler:
             if self.auth_manager:
                 try:
                     self.auth_manager.disconnect_account(account_id)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - revocation is best-effort
                     print_warning(f"Token revocation warning: {e}")
                     # Still disconnect locally
                     self.account_manager.disconnect_account(account_id)

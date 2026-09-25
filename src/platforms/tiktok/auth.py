@@ -1,23 +1,25 @@
 """TikTok OAuth authentication."""
 
-import base64
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 
-from src.auth.base import OAuthConfig, OAuthTokenResult
+from src.auth.base import OAuthConfig, OAuthTokenResult, PlatformAuth
 from src.auth.errors import (
     OAuthAccountIdentityError,
-    OAuthConfigurationError,
     OAuthTokenExchangeError,
 )
 
 
-class TikTokAuth:
-    """TikTok OAuth authentication via TikTok Login Kit."""
+class TikTokAuth(PlatformAuth):
+    """TikTok OAuth via Login Kit for Desktop (PKCE with a HEX-encoded S256 challenge)."""
 
     PLATFORM = "tiktok"
+    # Login Kit for Desktop: code_challenge = hex(SHA256(code_verifier)), not RFC 7636 base64url.
+    PKCE_CHALLENGE_ENCODING = "hex"
+    # Login Kit: "A comma (,) separated string of authorization scope(s)".
+    SCOPE_SEPARATOR = ","
 
     # OAuth endpoints
     AUTHORIZATION_URL = "https://www.tiktok.com/v2/auth/authorize/"
@@ -25,46 +27,11 @@ class TikTokAuth:
     USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 
     # Default scopes for TikTok publishing
-    DEFAULT_SCOPES = [
+    DEFAULT_SCOPES = (
         "video.upload",
         "video.publish",
         "user.info.basic",
-    ]
-
-    def __init__(
-        self,
-        config: OAuthConfig,
-        state_store: "OAuthStateStore",
-        token_encryption: "TokenEncryption",
-        account_manager: "AccountManager",
-    ):
-        self.config = config
-        self._state_store = state_store
-        self.token_encryption = token_encryption
-        self.account_manager = account_manager
-
-    @property
-    def platform(self) -> str:
-        return self.PLATFORM
-
-    def _get_state_store(self):
-        return self._state_store
-
-    def generate_pkce_pair(self) -> tuple[str, str]:
-        """Generate PKCE verifier and challenge pair."""
-        verifier = self._generate_pkce_verifier()
-        challenge = self._generate_pkce_challenge(verifier)
-        return verifier, challenge
-
-    def _generate_pkce_verifier(self) -> str:
-        import secrets
-        return secrets.token_urlsafe(32)
-
-    def _generate_pkce_challenge(self, verifier: str) -> str:
-        import hashlib
-        digest = hashlib.sha256(verifier.encode()).digest()
-        challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-        return challenge
+    )
 
     def get_authorization_url(self, state: str, pkce_challenge: str | None = None) -> str:
         """Generate the authorization URL for TikTok."""
@@ -72,7 +39,7 @@ class TikTokAuth:
             "client_key": self.config.client_id,
             "redirect_uri": self.config.redirect_uri,
             "response_type": "code",
-            "scope": " ".join(self.config.scopes),
+            "scope": self.SCOPE_SEPARATOR.join(self.config.scopes),
             "state": state,
         }
 
@@ -126,6 +93,7 @@ class TikTokAuth:
             access_token=data.get("access_token"),
             refresh_token=data.get("refresh_token"),
             expires_in=data.get("expires_in"),
+            refresh_expires_in=data.get("refresh_expires_in"),
             token_type=data.get("token_type", "Bearer"),
             scope=data.get("scope"),
             platform_account_id=None,  # Will be populated by get_account_identity
@@ -170,7 +138,12 @@ class TikTokAuth:
         }
 
     async def refresh_tokens(self, refresh_token: str) -> OAuthTokenResult:
-        """Refresh access token using refresh token."""
+        """Refresh the access token.
+
+        TikTok may rotate the refresh token: "You must use the newly-returned token
+        if the value is different than the previous one." The returned result carries
+        whichever refresh token TikTok sent back; callers must persist it.
+        """
 
         data = {
             "client_key": self.config.client_id,
@@ -205,8 +178,10 @@ class TikTokAuth:
 
         return OAuthTokenResult(
             access_token=data.get("access_token"),
-            refresh_token=data.get("refresh_token"),
+            # Rotation: use the new refresh token whenever TikTok returns one.
+            refresh_token=data.get("refresh_token") or refresh_token,
             expires_in=data.get("expires_in"),
+            refresh_expires_in=data.get("refresh_expires_in"),
             token_type=data.get("token_type", "Bearer"),
             scope=data.get("scope"),
             raw_response=data,
@@ -231,22 +206,11 @@ class TikTokAuth:
 
         return response.status_code == 200
 
-    def validate_configuration(self) -> None:
-        """Validate OAuth configuration."""
-        if not self.config.client_id:
-            raise OAuthConfigurationError("Missing client_key for TikTok", platform=self.PLATFORM)
-        if not self.config.client_secret:
-            raise OAuthConfigurationError("Missing client_secret for TikTok", platform=self.PLATFORM)
-        if not self.config.redirect_uri:
-            raise OAuthConfigurationError("Missing redirect_uri for TikTok", platform=self.PLATFORM)
-        if not self.config.scopes:
-            raise OAuthConfigurationError("Missing scopes for TikTok", platform=self.PLATFORM)
-
     @staticmethod
     def create_config(
         client_key: str,
         client_secret: str,
-        redirect_uri: str,
+        redirect_uri: str | None,
         scopes: list | None = None,
     ) -> OAuthConfig:
         """Create OAuth configuration for TikTok."""
@@ -255,7 +219,7 @@ class TikTokAuth:
             client_id=client_key,
             client_secret=client_secret,
             redirect_uri=redirect_uri,
-            scopes=scopes or TikTokAuth.DEFAULT_SCOPES,
+            scopes=list(scopes or TikTokAuth.DEFAULT_SCOPES),
             authorization_url="https://www.tiktok.com/v2/auth/authorize/",
             token_url="https://open.tiktokapis.com/v2/oauth/token/",
             pkce_required=True,

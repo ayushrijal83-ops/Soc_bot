@@ -6,7 +6,7 @@
 
 ## Current Objective
 
-**Phase 3B Complete** — Official OAuth Verification + OAuth Infrastructure implemented with all three platform adapters (Instagram, TikTok, YouTube), callback server, PKCE, state management, and comprehensive test coverage. Ready for Phase 4: Publishing Engine.
+**Phase 3B complete, audit fixes applied 2026-09-25.** OAuth for Instagram (Instagram Login), TikTok (Login Kit for Desktop) and YouTube (Google installed-app loopback) is implemented, checked against current official docs, and tested with mocks. **Real provider OAuth has NOT been run** (no credentials). Publishing is not implemented. Next: Phase 4.
 
 ---
 
@@ -77,7 +77,7 @@ Soc_bot/
 │           └── auth.py     # YouTube/Google OAuth flow
 ├── tests/
 │   ├── __init__.py
-│   ├── unit/               # 170 TESTS PASSING
+│   ├── unit/               # 214 TESTS PASSING
 │   │   ├── __init__.py
 │   │   ├── test_tokens.py
 │   │   ├── test_database.py
@@ -303,7 +303,7 @@ All 11 required documentation files updated to reflect Phase 3B completion:
 
 ### Files Created
 1. `src/auth/state.py` — OAuth state management, PKCE generation/validation
-2. `src/auth/callback_server.py` — Local HTTP callback server (port 8080)
+2. `src/auth/callback_server.py`: local HTTP callback server (dynamic loopback port since the audit fixes)
 3. `src/auth/errors.py` — OAuth-specific exception hierarchy
 4. `src/auth/base.py` — Base classes: OAuthConfig, OAuthTokenResult, PlatformAuth
 4. `src/auth/manager.py` — AuthManager coordinating all platforms
@@ -327,43 +327,33 @@ All 11 required documentation files updated to reflect Phase 3B completion:
 - **OAuth State Management**: In-memory store with automatic expiration (10 min default)
 - **PKCE (S256)**: Cryptographically secure verifier/challenge generation
 - **State Management**: Cryptographically secure random state, single-use, expires
-- **Callback Server**: Local HTTP server on localhost:8080 with timeout, CSRF protection
+- **Callback Server**: local HTTP server on 127.0.0.1 with a dynamic port, timeout, and state/platform validation
 - **Authorization URL Generation**: Platform-specific with proper parameters
 - **Token Exchange**: Authorization code → access/refresh tokens with PKCE verifier
-- **Account Identity**: Platform-specific identity retrieval (IG Business Account, TikTok open_id, YouTube channel)
+- **Account Identity**: platform-specific identity retrieval (Instagram `/me` `user_id`, TikTok open_id, YouTube channel)
 - **Token Refresh**: Automatic refresh with encrypted storage
 - **Token Revocation**: Platform-specific revocation endpoints
 - **AuthManager**: Central coordinator for all platform adapters
 
 ### Platform-Specific OAuth Implementations
 
-#### Instagram (Meta / Facebook Login for Instagram)
-- **Authorization URL**: `https://www.facebook.com/v22.0/dialog/oauth`
-- **Token URL**: `https://graph.facebook.com/v22.0/oauth/access_token`
-- **Scopes**: `instagram_graph_user_profile`, `instagram_graph_user_media`, `pages_show_list`, `pages_read_engagement`
-- **PKCE**: Required (S256)
-- **Account Linking**: Instagram Business/Creator account must be linked to Facebook Page
-- **Access Token Lifetime**: 60 days (extendable via long-lived token exchange)
-- **Identity**: IG User ID + Facebook Page ID
+> The original per-platform notes that were here are superseded by the 2026-09-25 audit fixes below. Authoritative details: API_INTEGRATIONS.md and AUTHENTICATION.md.
 
-#### TikTok
-- **Authorization URL**: `https://www.tiktok.com/v2/auth/authorize/`
-- **Token URL**: `https://open.tiktokapis.com/v2/oauth/token/`
-- **Scopes**: `video.upload`, `video.publish`, `user.info.basic`
-- **PKCE**: Required (S256)
-- **Access Token Lifetime**: 2 years (refreshable)
-- **Identity**: open_id / union_id + display_name
+### Phase 3B Audit Fixes (2026-09-25, Claude Code)
 
-#### YouTube (Google OAuth 2.0)
-- **Authorization URL**: `https://accounts.google.com/o/oauth2/v2/auth`
-- **Token URL**: `https://oauth2.googleapis.com/token`
-- **Scopes**: `youtube.upload`, `youtube`, `youtube.readonly`
-- **PKCE**: Required (S256)
-- **Access Type**: `offline` (required for refresh token)
-- **Prompt**: `consent` (ensures refresh token on first auth)
-- **Access Token Lifetime**: 1 hour
-- **Refresh Token**: Until revoked
-- **Identity**: channel_id + channel_title
+| Audit finding | Fix |
+|---------------|-----|
+| TikTok PKCE used base64url | `generate_pkce_challenge(verifier, encoding)`; `TikTokAuth.PKCE_CHALLENGE_ENCODING = "hex"`; RFC 7636 stays the default |
+| TikTok scopes space-separated | `SCOPE_SEPARATOR = ","` (Login Kit docs) |
+| TikTok refresh-token rotation | Refresh result carries the new refresh token; `refresh_account_tokens` encrypts and stores it |
+| Expiry handling (all platforms) | `OAuthTokenResult.expires_at` = now(UTC) + `expires_in`; nothing hard-coded. AuthManager previously passed `expires_in=` to `create_account` (TypeError on any real connect). Fixed. |
+| Instagram on legacy Facebook Login | Business Login for Instagram: `instagram.com/oauth/authorize`, scopes `instagram_business_basic,instagram_business_content_publish`, `POST api.instagram.com/oauth/access_token`, `ig_exchange_token`, `ig_refresh_token`, identity `graph.instagram.com/v25.0/me` `user_id`. No Page linking, no PKCE (undocumented). |
+| Instagram revocation via `/me/permissions` | Removed. No documented revocation endpoint, so `revoke_tokens` returns False without a request; the account is disconnected locally only |
+| YouTube fixed port 8080 | `OAuthCallbackServer(port=0)` binds a free port; `redirect_uri(platform)` uses the bound port; the adapter uses the same URI for the authorize and token requests |
+| State not checked against callback platform | `consume_state(state, platform=)`; the handler compares with `/callback/<platform>`; AuthManager re-checks; the state is consumed on mismatch |
+| Ruff errors (audit said 23; 80 found) | 0 remaining |
+
+Other fixes found along the way: callback server exclusive bind (Windows `SO_REUSEADDR` allowed port sharing); `/favicon.ico` could end the flow; HTML-escaped error page; thread-safe wait (`asyncio.to_thread`) instead of setting an `asyncio.Event` from another thread; reconnect updates the existing account; adapters subclass `PlatformAuth` (duplicate code removed).
 
 ### AuthManager Features
 - **Platform Configuration**: Load from environment variables
@@ -379,7 +369,7 @@ All 11 required documentation files updated to reflect Phase 3B completion:
 - **Development Accounts**: Still available for testing without OAuth
 
 ### Security Implementation
-- **PKCE (S256)**: All platforms, verifier stored in-memory only
+- **PKCE (S256)**: YouTube (base64url) and TikTok (hex); Instagram Login does not document PKCE. Verifier kept in memory only
 - **State Parameter**: Cryptographically random, single-use, 10-min expiry
 - **CSRF Protection**: State validation on callback
 - **PKCE Verifier**: Stored with state, cleaned up after callback
@@ -388,9 +378,12 @@ All 11 required documentation files updated to reflect Phase 3B completion:
 - **Callback Server**: Binds to 127.0.0.1, timeout, clean shutdown
 - **No Token Logging**: Callbacks and errors sanitized
 
-### Test Results (Phase 1 + 2 + 3A + 3B)
+### Test Results (Phase 1 + 2 + 3A + 3B, after audit fixes)
 ```
-170 passed in ~15s
+214 passed (see TESTING.md for per-module counts); ruff check .: All checks passed
+Real OAuth test: NOT RUN (credentials not configured)
+
+Before fixes: 170 passed
 - test_tokens.py: 14 tests (encryption, decryption, edge cases)
 - test_database.py: 33 tests (init, models, constraints, relationships, indexes, encryption integration)
 - test_cli_display.py: 11 tests (headers, menus, tables, status messages)
@@ -435,6 +428,7 @@ All 11 required documentation files updated to reflect Phase 3B completion:
 | 2026-09-25 | **Phase 2: CLI Framework implemented** |
 | 2026-09-25 | **Phase 3A: Account Management Core implemented** |
 | 2026-09-25 | **Phase 3B: OAuth Verification + Infrastructure implemented** |
+| 2026-09-25 | **Phase 3B audit fixes** (TikTok hex PKCE + rotation, Instagram Login migration, dynamic loopback port, state/platform binding, expiry model, Ruff 0) |
 
 ---
 
@@ -499,7 +493,7 @@ main.py → Terminal CLI → Account Manager + Job Manager → Publisher Engine 
 3. **Independent jobs** — One failure ≠ all fail
 4. **Dry-run mandatory** — `--dry-run` shows plan without API calls
 5. **SQLite + Fernet** — Simple, secure, portable
-6. **UNVERIFIED APIs** — All platform specs now VERIFIED in API_INTEGRATIONS.md
+6. **Verification is dated**: OAuth specs verified 2026-09-25; publishing specs not yet re-verified
 
 ---
 
@@ -519,30 +513,29 @@ Migration system: versioned SQL files in `src/storage/migrations/`
 
 ## Authentication State
 
-**OAuth implemented for all three platforms.** Design in AUTHENTICATION.md:
-- PKCE + state for all platforms
-- Local callback server on `http://localhost:8080/callback/{platform}`
-- Token refresh: proactive (24h) + on-demand (401)
+**OAuth implemented for all three platforms; mock-tested; real OAuth NOT RUN.** Design in AUTHENTICATION.md:
+- State (single-use, platform-bound) for all platforms; PKCE for YouTube (base64url) and TikTok (hex)
+- Loopback callback server on `http://127.0.0.1:<dynamic-port>/callback/{platform}` (Instagram: fixed registered `INSTAGRAM_REDIRECT_URI`)
+- `expires_at` from provider `expires_in`; `is_token_expiring()` helper; renewal via `AuthManager.refresh_account_tokens()` (not scheduled yet; Phase 4)
 - Encrypted storage via Fernet
-- Revocation handling → mark account `revoked`, require reconnect
 
 ---
 
 ## API Integration State
 
-**All VERIFIED against official documentation (2025-01).**
+**OAuth endpoints verified against official documentation on 2026-09-25.** Publishing endpoints were not re-verified (Phase 4).
 
-| Platform | API | Status |
-|----------|-----|--------|
-| Instagram | Graph API v22.0 | ✅ VERIFIED |
-| TikTok | Creator API v2 | ✅ VERIFIED |
-| YouTube | Data API v3 | ✅ VERIFIED |
+| Platform | OAuth product | Docs verified | Mock tests | Real OAuth |
+|----------|---------------|---------------|------------|------------|
+| Instagram | Instagram API with Instagram Login | ✅ 2026-09-25 | ✅ | NOT RUN |
+| TikTok | Login Kit for Desktop | ✅ 2026-09-25 | ✅ | NOT RUN |
+| YouTube | Google OAuth 2.0 installed app | ✅ 2026-09-25 | ✅ | NOT RUN |
 
 ---
 
 ## Tests
 
-**170 unit tests passing.** TESTING.md defines strategy:
+**214 unit tests passing; Ruff clean.** TESTING.md defines strategy:
 - Unit: validation, models, encryption, state machine, CLI parsing
 - Integration: database, account manager, publisher engine
 - Platform: mocked API tests per adapter
@@ -556,7 +549,10 @@ Run: `pytest tests/unit/ -v`
 
 | Issue | Impact | Workaround |
 |-------|--------|------------|
-| Real OAuth testing requires credentials | Cannot test end-to-end | Set up developer accounts |
+| Real OAuth not run on any platform | Provider behaviour unconfirmed | Configure dev apps + credentials, connect each platform once |
+| Instagram redirect URI: Meta may require HTTPS | Plain loopback callback may be rejected | Check the dashboard; use an HTTPS tunnel/redirect if required |
+| `main.py` does not call `load_dotenv()` | `.env` values are not picked up automatically | Export variables in the shell (or add `load_dotenv()`) |
+| TikTok `refresh_expires_in` not persisted | Can't warn before the refresh token expires | Add a column in a later migration |
 | No logging setup | No observability | Add in Phase 4 |
 | Publishing features placeholders | Menu shows "not implemented" | Implement in Phase 4-5 |
 
@@ -575,7 +571,7 @@ Run: `pytest tests/unit/ -v`
 
 ## Current Blockers
 
-**None.** Ready to begin Phase 4.
+**None for Phase 4 code.** Real OAuth verification still needs credentials.
 
 ---
 
@@ -609,7 +605,7 @@ Run: `pytest tests/unit/ -v`
 
 1. **Read PROJECT_STATUS.md** — Current progress tracker
 2. **Read ARCHITECTURE.md** — Understand component boundaries
-3. **Read API_INTEGRATIONS.md** — All VERIFIED
+3. **Read API_INTEGRATIONS.md**: OAuth verified 2026-09-25; re-verify publishing endpoints before Phase 4
 4. **Verify `.env`** has ENCRYPTION_KEY set
 5. **Run tests** to confirm baseline: `pytest tests/unit/ -v`
 6. **Implement Publishing Engine** (Phase 4 above)
@@ -635,7 +631,7 @@ Run: `pytest tests/unit/ -v`
 - [ ] `git status` clean (only intended changes)
 - [ ] No secrets in diff (`git diff` check)
 - [ ] Tests pass (`pytest tests/unit/`)
-- [ ] Lint passes (`ruff check src`)
+- [ ] Lint passes (`ruff check .`)
 - [ ] Type check passes (`mypy src`)
 - [ ] PROJECT_STATUS.md updated
 - [ ] CLAUDE_HANDOFF.md updated

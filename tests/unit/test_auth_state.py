@@ -1,10 +1,16 @@
 """Tests for OAuth state management."""
 
 import time
+
 import pytest
 
-from src.auth.state import OAuthState, OAuthStateStore, generate_pkce_verifier, generate_pkce_challenge
 from src.auth.errors import OAuthStateError
+from src.auth.state import (
+    OAuthState,
+    OAuthStateStore,
+    generate_pkce_challenge,
+    generate_pkce_verifier,
+)
 
 
 class TestOAuthState:
@@ -165,3 +171,40 @@ class TestPKCE:
         """Test that generated verifiers are unique."""
         verifiers = {generate_pkce_verifier() for _ in range(100)}
         assert len(verifiers) == 100
+
+class TestPlatformPKCEAndBinding:
+    def test_hex_challenge_for_tiktok(self):
+        import hashlib
+
+        verifier = generate_pkce_verifier()
+        assert generate_pkce_challenge(verifier, "hex") == hashlib.sha256(verifier.encode()).hexdigest()
+
+    def test_default_challenge_is_base64url(self):
+        verifier = generate_pkce_verifier()
+        assert generate_pkce_challenge(verifier) == generate_pkce_challenge(verifier, "base64url")
+        assert "=" not in generate_pkce_challenge(verifier)
+
+    def test_unknown_encoding_rejected(self):
+        with pytest.raises(ValueError):
+            generate_pkce_challenge("v" * 43, "plain")
+
+    def test_verifier_length_within_rfc7636_bounds(self):
+        assert 43 <= len(generate_pkce_verifier()) <= 128
+
+    def test_consume_with_matching_platform(self):
+        store = OAuthStateStore()
+        st = store.create_state("youtube", "v")
+        assert store.consume_state(st.state, platform="youtube").pkce_verifier == "v"
+
+    def test_consume_with_mismatched_platform_rejected_and_consumed(self):
+        store = OAuthStateStore()
+        st = store.create_state("instagram", "v")
+        with pytest.raises(OAuthStateError, match="different platform"):
+            store.consume_state(st.state, platform="tiktok")
+        with pytest.raises(OAuthStateError):
+            store.consume_state(st.state, platform="instagram")
+
+    def test_store_ttl_is_applied(self):
+        store = OAuthStateStore(default_ttl=5)
+        st = store.create_state("tiktok")
+        assert st.expires_at - st.created_at < 6
