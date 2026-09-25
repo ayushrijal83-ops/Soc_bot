@@ -10,6 +10,46 @@
 
 ---
 
+## Instagram Local Media Delivery — read this first (2026-09-25, uncommitted)
+
+**Latest (size-based routing, `MEDIA_STORAGE_PROVIDER=auto`):**
+- `src/media_storage/router.py` → `MediaStorageRouter` (a `MediaSourceProvider`), built by `provider.build_router()`. Order: TempFile then S3; each provider declares `max_file_size` (TempFile 100,000,000 B; S3 None; 0x0 512 MiB); margin `MEDIA_STORAGE_AUTO_MARGIN_MB` (default 1). The handle carries its owning provider (`MediaHandle.provider`, hidden from repr). No failure fallback.
+- `delivery_notes(options, media)` now gets the media, so plans and dry-run show the size and the chosen provider.
+- Real small test (auto): job 7 published via TempFile.
+- **Not done:** real S3 large test (no S3 credentials); two-account test (only one Instagram account).
+- A valid 150 MB test MP4 (the test video plus an MP4 `free` box) can be rebuilt as shown in the Phase report; it was only kept in the session scratchpad.
+- 28 router tests; **602 pass**. Nothing committed.
+
+**Earlier (TempFile.org):**
+- `src/media_storage/tempfile.py` → `TempFileMediaStorage`, selected by `MEDIA_STORAGE_PROVIDER=tempfile`.
+- API verified from `https://tempfile.org/openapi.json` + real requests: `POST /api/upload/local` (files, expiryHours ∈ {1,6,24,48}); JSON `files[0].id`; media URL = `https://tempfile.org/<id>/download` (the response `url` is HTML); unauthenticated `DELETE /api/file/<id>`; 100 MB; 200 uploads/hour.
+- **REAL INSTAGRAM REEL PUBLISHED** via Create Post with the local file: job 6, media id 17981564450901718, https://www.instagram.com/reel/DdttFw8CqnI/. The TempFile copy was deleted; nothing is in the DB.
+- 0x0.st: implemented but uploads are disabled by the service.
+- Shared helpers `is_public_https_host`/`check_upload_file` moved to `media_storage/base.py`.
+- 52 new tests (`tests/unit/test_tempfile.py`); **574 pass**; Ruff clean.
+- `.env` NOT modified: the user must set `MEDIA_STORAGE_PROVIDER=tempfile`.
+
+**Update (0x0.st provider):** `src/media_storage/zerox0.py` → `ZeroX0MediaStorage` (a `MediaSourceProvider`), selected by `MEDIA_STORAGE_PROVIDER=0x0` in `create_media_provider()`. It uploads to https://0x0.st (multipart `file`, `secret`, `expires` in hours, unique UA), checks the URL (https, same host, public, HEAD reachable), keeps the `X-Token` in memory only, and deletes via `POST <url> token=…&delete=` after each attempt. The settings check only GETs the page. 0x0.st's rules (verified from its page): 512 MiB max; 30 days–1 year retention unless `expires`; the ToS forbids piracy, backups and "automated mass uploads"; it stores uploader IP + UA. So: public hosting, not for AUTO. `docs/privacy.html` was updated for media storage. 56 new tests (`tests/unit/test_zerox0.py`); **522 pass**. **Real test: NOT RUN.**
+
+**State:** Instagram OAuth works for real (`noxivra_01`, account #3, both publishing scopes). Instagram publishing now takes the **local file**: `InstagramPublisher` → `MediaSourceProvider` → private S3-compatible bucket → presigned HTTPS URL → Reels container → poll → publish → object deleted. **Real publish NOT RUN**: no `MEDIA_STORAGE_*` in `.env` yet. 466 tests pass; Ruff is clean; YouTube/TikTok files untouched. Nothing committed (user's rule).
+
+**Audit conclusions:** the YouTube Data API returns no direct media URL; watch/Shorts URLs are HTML pages. Scraping/yt-dlp is prohibited. A YouTube "Media Hub" channel is only an optional archive destination. Real job 4 (Instagram, failed) had two problems: a stale reused video path (bug, fixed) and a YouTube Shorts URL as `video_url` (would never have worked).
+
+**Files:**
+- **New:** `src/media_storage/{__init__,base,s3,service,provider}.py`, `tests/unit/test_media_storage.py`
+- **Instagram:** `src/platforms/instagram/publisher.py` (`media_provider` factory, `_media_url` with `ExitStack` cleanup, `delivery_notes`, no `video_url` requirement)
+- **Shared:**
+  - `src/platforms/base.py`: `redact()` strips `X-Amz-*` URLs; `delivery_notes()` hook
+  - `src/core/publisher.py`: adds delivery notes to plans
+  - `src/core/jobs.py`: a reused video row takes the current path
+- **CLI and content:** `src/cli/publish_menu.py` (no URL prompt), `src/cli/content_menu.py` (Settings → Check Instagram media storage), `src/content/*` (`video_url.txt` removed)
+- **Other:** `main.py` (`configure_logging` prints `soc_bot.*` INFO), `requirements.txt` (`boto3>=1.34`), `.env.example`, tests updated for the new behaviour
+- **Docs:** API_INTEGRATIONS ("Instagram Media Delivery"), ARCHITECTURE §7c, SECURITY, TROUBLESHOOTING, DECISIONS ADR-023 (supersedes ADR-012), CONTENT_INTAKE, README, PROJECT_STATUS
+
+**Next:** the user creates a private bucket + scoped keys → `.env` → Settings → Check Instagram media storage → Create Post with `D:\Soc_bot\videos\test_youtub.mp4` → account `noxivra_01` → check that the job is published, the media ID is stored, the object is deleted, and no URL is in the DB or logs.
+
+---
+
 ## Phase 5C (Instagram) Audit — read this first
 
 **Status: code fixed, REAL INSTAGRAM OAUTH NOT YET TESTED. Uncommitted** (user asked for no commit).
@@ -545,6 +585,8 @@ See ARCHITECTURE.md → "Publishing (Phase 4)" for the state machine, engine flo
 | 2026-09-25 | **Phase 3B: OAuth Verification + Infrastructure implemented** |
 | 2026-09-25 | **Phase 3B audit fixes** (TikTok hex PKCE + rotation, Instagram Login migration, dynamic loopback port, state/platform binding, expiry model, Ruff 0) |
 | 2026-09-25 | **Phase 4: Publishing engine** (engine, job state machine, 3 publishers, retries, idempotent resume, dry-run, minimal CLI; 305 tests) |
+| 2026-09-25 | **Cloudflare Quick Tunnel media provider** (`cloudflare_tunnel`, AUTO tier 2 for videos > 99 MB; local server + cloudflared; 701 tests). Real 131.9 MB tunnel test passed (SHA-256 match); real Instagram Reel published (job 9, https://www.instagram.com/reel/DduAxFSgaZt/) |
+| 2026-09-25 | **Published-Link Library**: per-platform JSON link files, menu 6 "Published Links", Instagram permalink fetch, TikTok not saved (no documented URL); 639 tests |
 
 ---
 
@@ -653,7 +695,7 @@ Migration system: versioned SQL files in `src/storage/migrations/`
 
 ## Tests
 
-**305 unit tests passing; Ruff clean; 0 skipped.** TESTING.md defines strategy:
+**701 unit tests passing; Ruff clean; 0 skipped.** `tests/conftest.py` hides any real cloudflared from tests. TESTING.md defines strategy:
 - Unit: validation, models, encryption, state machine, CLI parsing
 - Integration: database, account manager, publisher engine
 - Platform: mocked API tests per adapter
@@ -688,6 +730,8 @@ Run: `pytest tests/unit/ -v`
 - No analytics/insights
 - No bulk operations beyond multi-account select
 - Platform API limits apply (quotas, rate limits)
+- Instagram videos > 99 MB use a Cloudflare Quick Tunnel (testing/development service, no uptime guarantee; PC must stay online while Meta fetches) or S3
+- TikTok published links are not saved: the Content Posting API documents no post URL (see CONTENT_INTAKE.md → Published Links)
 
 ---
 

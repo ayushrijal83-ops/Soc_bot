@@ -75,6 +75,13 @@ class YouTubePublisher(PlatformPublisher):
     def can_restart(self, state: dict[str, Any]) -> bool:
         return bool(state.get("video_id"))
 
+    def published_url(self, platform_media_id: str | None, state: dict[str, Any]) -> str | None:
+        # The video id returned by videos.insert; YouTube ids are 11 chars of [A-Za-z0-9_-].
+        video_id = platform_media_id or state.get("video_id")
+        if video_id and len(video_id) == 11 and all(c.isalnum() or c in "-_" for c in video_id):
+            return f"https://www.youtube.com/watch?v={video_id}"
+        return None
+
     # videos.insert accepts any of these (Google lets users un-tick scopes at consent).
     REQUIRED_SCOPES = ((
         "https://www.googleapis.com/auth/youtube.upload",

@@ -428,7 +428,8 @@ class TestDryRun:
         accounts.update_account(ids["instagram"], expires_at=datetime.now(timezone.utc) - timedelta(days=1))
         plan = engine(env, pubs).plan_destinations(video, "c", [(ids["tiktok"], {}), (ids["instagram"], OPTIONS["instagram"])])
         assert not plan[0].ready and "privacy_level" in plan[0].errors[0]
-        assert plan[1].ready and "expired" in plan[1].notes[0]
+        assert plan[1].ready and any("expired" in n for n in plan[1].notes)
+        assert any("media delivery" in n for n in plan[1].notes)
 
 
 class TestEndToEndWithMockedProviders:

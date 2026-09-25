@@ -425,3 +425,73 @@ Instagram requires `INSTAGRAM_REDIRECT_URI`. A loopback URI uses the local callb
 - One extra copy/paste step for Instagram
 - The one-time code passes through GitHub Pages' request logs (it's short-lived, single-use and needs the secret)
 
+---
+
+## ADR-023: Instagram Local Media via Temporary Private Object Storage (supersedes ADR-012)
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Context
+ADR-012 required the user to supply a public `video_url`. That was a bad UX and led to invalid inputs (a YouTube Shorts page URL). Instagram Login publishing only documents `video_url` (Meta downloads the media).
+
+### Decision
+`InstagramPublisher` gets the local file and uses a provider-neutral `MediaSourceProvider` (`src/media_storage/`). The implemented provider uploads to a **private** S3-compatible bucket, gives Meta a **presigned HTTPS GET URL** (default 900 s), and deletes the object when the attempt ends. Rejected alternatives:
+- A YouTube watch or Shorts URL: not a media file, and the YouTube API offers no direct media URL.
+- Scraping YouTube or yt-dlp: against YouTube's Terms, and brittle.
+- A Cloudflare Quick Tunnel from a local server: development-only, needs an extra binary, and exposes the machine.
+- A public bucket or permanent hosting.
+
+### Consequences
+- Instagram publishing needs `MEDIA_STORAGE_*` (a bucket on AWS S3, R2 or MinIO). New dependency: `boto3`.
+- A YouTube "Media Hub" channel is an optional archive destination only, never a media source.
+- The engine stays storage-agnostic; YouTube and TikTok are unchanged.
+
+---
+
+## ADR-024: 0x0.st as an Opt-in Temporary Media Provider
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+Add `ZeroX0MediaStorage` as a second `MediaSourceProvider`, selected with `MEDIA_STORAGE_PROVIDER=0x0`. The default stays `s3`; Soc_bot never falls back to a public host. The operator's client guidelines are followed: unique user agent, `secret` URLs, short `expires`, token-based delete after each attempt, and prominent public-hosting warnings.
+
+### Consequences
+- Instagram works without a bucket, at the cost of privacy: the video is public on a third-party host for up to `expires` hours, and 0x0.st logs the uploader's IP and user agent.
+- 0x0.st's Terms forbid "automated mass uploads", so it's documented as not for AUTO or bulk publishing.
+- The public Privacy Policy (`docs/privacy.html`) now describes media delivery to the configured storage.
+
+---
+
+## ADR-025: TempFile.org Provider (0x0.st uploads disabled)
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Context
+0x0.st turned off uploads, so the ADR-024 provider can't currently be used. Instagram still needs an HTTPS media URL.
+
+### Decision
+Add `TempFileMediaStorage` (`MEDIA_STORAGE_PROVIDER=tempfile`) behind the same `MediaSourceProvider` interface. No Instagram changes. The media URL is built from a validated file id (`/<id>/download`) because the response's `url` is an HTML page. The id is treated as a secret because it also authorises unauthenticated deletion. 0x0.st and S3 stay implemented. URL-safety and local-file checks are now shared (`media_storage/base.py`).
+
+### Consequences
+- Real Instagram publishing works without a bucket (proven 2026-09-25), with public temporary exposure (default ≤ 1 h), a 100 MB limit, and the provider's terms (no bulk/automated uploads).
+- The public Privacy Policy lists TempFile.org.
+
+---
+
+## ADR-026: Size-Based Media Routing (`auto`)
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+`MediaStorageRouter` (a `MediaSourceProvider`) picks the first configured provider in `("tempfile", "s3")` whose declared `max_file_size` fits the file, minus a 1 MB margin. It is deterministic and capability-based, with no failure fallback. Each Instagram job keeps its own temporary object. Existing single-provider values keep their meaning; `auto` is opt-in.
+
+### Consequences
+- Users don't change `.env` per video size.
+- Small videos are publicly hosted for a short time, large ones privately. The plan says which before confirmation.
+- Large videos need S3 credentials; without them, the plan blocks them clearly.
+- One upload per Instagram account (no shared object): simpler and race-free, at the cost of extra uploads.
+

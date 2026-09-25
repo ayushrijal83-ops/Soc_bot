@@ -1,6 +1,7 @@
 """Platform publisher adapter tests. All HTTP goes through httpx.MockTransport — no real provider calls."""
 
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -195,8 +196,10 @@ class TestInstagramPublisher:
         pub = InstagramPublisher(client=Provider().client())
         media = MediaInfo(str(video), 1000, "video/mp4")
         assert pub.validate("ok", IG_OPTS, media) == []
-        assert any("https" in e for e in pub.validate("ok", {}, media))
         assert any("https" in e for e in pub.validate("ok", {"video_url": "file:///C:/x.mp4"}, media))
+        # Local file (no override) + no media storage configured -> clear configuration error
+        with patch("src.platforms.instagram.publisher.media_provider_problems", return_value=["Missing MEDIA_STORAGE_BUCKET"]):
+            assert any("temporary media storage is not configured" in e for e in pub.validate("ok", {}, media))
         assert any("2200" in e for e in pub.validate("x" * 2201, IG_OPTS, media))
         assert any("hashtags" in e for e in pub.validate("#a " * 31, IG_OPTS, media))
         assert any("300 MB" in e for e in pub.validate("ok", IG_OPTS, MediaInfo("v", 301 * MB, "video/mp4")))

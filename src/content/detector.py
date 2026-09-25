@@ -8,7 +8,6 @@ from src.content.models import (
     PARTIAL_SUFFIXES,
     TITLE_FILE,
     VIDEO_EXTENSIONS,
-    VIDEO_URL_FILE,
     ContentPackage,
 )
 
@@ -53,7 +52,7 @@ class ContentDetector:
                 captions.append(f)
             elif f.stem.lower() == "cover" and f.suffix.lower() in COVER_EXTENSIONS:
                 covers.append(f)
-            elif name in (TITLE_FILE, VIDEO_URL_FILE):
+            elif name == TITLE_FILE:
                 pass  # read by the validator
             else:
                 package.ignored_files.append(f.name)

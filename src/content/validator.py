@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from src.content.models import TITLE_FILE, VIDEO_URL_FILE, ContentPackage
+from src.content.models import TITLE_FILE, ContentPackage
 from src.core.validation import validate_video_file
 
 MAX_COVER_BYTES = 50 * 1024 * 1024  # generous generic ceiling; platforms apply their own limits
@@ -73,7 +73,7 @@ class ContentValidator:
                 warnings.append(f"{problem} The cover will not be used.")
                 package.cover_path = None
 
-        for filename, attr in ((TITLE_FILE, "title"), (VIDEO_URL_FILE, "video_url")):
+        for filename, attr in ((TITLE_FILE, "title"),):
             path = package.package_path / filename
             if path.is_file() and not path.is_symlink():
                 try:

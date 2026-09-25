@@ -70,6 +70,18 @@ Generate encryption key:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
+## Optional: cloudflared (Instagram videos over 99 MB)
+
+With `MEDIA_STORAGE_PROVIDER=auto`, Instagram videos too big for TempFile are served from this PC through a Cloudflare Quick Tunnel. No Cloudflare account, API key or domain is needed; Soc_bot never downloads the binary itself:
+
+```powershell
+winget install --id Cloudflare.cloudflared
+# new terminal:
+cloudflared --version
+```
+
+Optional `.env` overrides: `CLOUDFLARED_PATH` (full path if not on PATH), `CLOUDFLARE_TUNNEL_STARTUP_TIMEOUT_SECONDS=90`, `CLOUDFLARE_MEDIA_TOKEN_BYTES=16`, `CLOUDFLARE_MEDIA_HOST=127.0.0.1` (must stay loopback), `INSTAGRAM_MAX_POLL_MINUTES=15`. Quick Tunnels are a Cloudflare testing/development service with no uptime guarantee. Unit tests never find or start a real cloudflared (`tests/conftest.py` points `CLOUDFLARED_PATH` at a missing file).
+
 ## Database Setup
 
 ```bash

@@ -162,6 +162,41 @@
 - [ ] User: put the Instagram App ID/secret + `INSTAGRAM_REDIRECT_URI` in `.env`; register the redirect in Business login settings; add @nopex_12b to the app; push `docs/oauth/instagram-callback.html` (paste mode)
 - [ ] Real Instagram OAuth (Connected Accounts → Connect Instagram)
 
+### Instagram local media delivery — ✅ implemented, real run pending storage credentials (2026-09-25)
+- [x] Audit: the YouTube Data API exposes no direct media URL; watch/Shorts URLs are HTML pages and aren't valid Instagram `video_url`s; scraping/yt-dlp is prohibited
+- [x] `src/media_storage/`: `ObjectStorage` + `S3ObjectStorage` (boto3; S3/R2/MinIO), `MediaSourceProvider` + `ObjectStorageMediaProvider`, settings/factory
+- [x] `InstagramPublisher` takes the local file: upload → presigned HTTPS URL → container → poll → publish → delete (`finally`); fresh media per attempt; nothing secret persisted or logged
+- [x] Create Post no longer asks for a URL; content packages no longer use `video_url.txt`; dry-run makes no storage calls; Settings → Check Instagram media storage
+- [x] Bug fixed: re-used video rows kept a stale path (`Video file not found: video.mp4`), which broke real job 4
+- [x] Bug fixed: storage 4xx (AccessDenied) was treated as retryable
+- [x] 39 new tests; 466 total passing; YouTube/TikTok files untouched
+- [x] 0x0.st provider (`MEDIA_STORAGE_PROVIDER=0x0`): public temporary upload, token delete, 56 tests (522 total)
+- [x] TempFile.org provider (`MEDIA_STORAGE_PROVIDER=tempfile`), 52 tests; 0x0.st uploads are disabled by the service
+- [x] **Real Instagram publish ✅ (2026-09-25):** Create Post → local `videos/test_youtub.mp4` → TempFile → Reel on noxivra_01 (media id 17981564450901718, https://www.instagram.com/reel/DdttFw8CqnI/); TempFile copy deleted; no URL prompt; nothing stored in the DB
+- [x] Size-based routing `MEDIA_STORAGE_PROVIDER=auto` (TempFile ≤ 99 MB, S3 above; provider capabilities; no failure fallback), 28 tests; **602 passing**
+- [x] Real small-video test in auto mode: TempFile → Instagram published (job 7, media 18073405427476313), copy deleted
+- [ ] **Real large-video S3 → Instagram test: NOT DONE**, because S3 isn't configured (no `MEDIA_STORAGE_*` credentials). A valid 150 MB test MP4 is correctly routed away from TempFile and blocked until S3 is set up
+- [ ] **Real two-Instagram-account test: NOT DONE**, because only one Instagram account is connected
+- [ ] User: set `MEDIA_STORAGE_PROVIDER=auto` in `.env` (+ S3 settings for videos over 99 MB)
+
+### Cloudflare Quick Tunnel media provider: ✅ implemented, real tunnel test + real Instagram publish passed (2026-09-25)
+- [x] Free research: qurl.sh 413, temp.sh (GET = HTML page), file.io 405, Litterbox 500, Pixeldrain (hotlinking premium-only), Filebin (cookie wall), so none can host 131.9 MB
+- [x] `src/media_storage/cloudflare_tunnel.py`: 127.0.0.1 single-file server (random 128-bit route, GET/HEAD/Range, streamed, 404 elsewhere, no request logs) + `cloudflared tunnel --url` child process, URL parsing, startup timeout, public reachability wait, cleanup never raises
+- [x] `MEDIA_STORAGE_PROVIDER=cloudflare_tunnel`; AUTO = TempFile → Cloudflare Tunnel → S3 (0x0 never); plan/dry-run start nothing; Create Post notice
+- [x] Instagram polling window grows with size (131.9 MB → 9 min, cap `INSTAGRAM_MAX_POLL_MINUTES`=15)
+- [x] Real local check: 131,925,281-byte `videos/0612.mp4` served on 127.0.0.1, HEAD/GET 200 `video/mp4`, SHA-256 identical, 404 elsewhere, server gone after cleanup
+- [x] 62 new tests; **701 passing**
+- [x] **Real direct tunnel test ✅ (2026-09-25, cloudflared 2026.9.3):** `videos/0612.mp4` through a real Quick Tunnel. Public GET 200 `video/mp4`, Content-Length 131,925,281, SHA-256 identical (9a28387d…0b7d), Range 206, other paths 404, ~10.5 MB/s; after cleanup cloudflared is gone, the URL returns 502 and the source is unchanged
+- [x] Bugs found by the real run and fixed: the parser took `https://api.trycloudflare.com` (printed by cloudflared) as the tunnel URL; the readiness check used the local resolver, which cached "no such host" (trycloudflare.com negative TTL 60 s). Now: hyphenated names only, public DoH (2 resolvers), first lookup after 5 s, default timeout 90 s
+- [x] **Real Instagram publish through the tunnel ✅ (2026-09-25):** Create Post (AUTO) → `videos/0612.mp4` (131.9 MB) → Cloudflare Quick Tunnel → Reel on noxivra_01. Post 8 / job 9, media id 18155048788569324, https://www.instagram.com/reel/DduAxFSgaZt/, 84 s end to end. Link saved to `instagram.json`; no cloudflared left; tunnel URL in no log, DB or link file; source unchanged (same SHA-256)
+
+### Published-Link Library — ✅ implemented (2026-09-25)
+- [x] `content/published_links/{youtube,instagram,tiktok}.json`, atomic UTF-8 writes, malformed-file quarantine, account+provider_id dedupe, temporary-URL rejection
+- [x] YouTube watch URL from the video id; Instagram `permalink` fetched after publish; TikTok: no link (no documented URL)
+- [x] Main menu 6 "Published Links" (list / copy to clipboard / import from history); Settings = 7, Exit = 8
+- [x] Real verification (no new publish): import from history saved 3 YouTube + 3 Instagram links (real Graph permalinks), 0 TikTok; a second import added 0; clip.exe copy checked with Get-Clipboard
+- [x] 37 new tests; **639 passing**
+
 ### In Progress 🔄
 - Phase 5: Instagram / TikTok real verification (not configured)
 
@@ -216,7 +251,7 @@
 | `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- **425 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
+- **701 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
 
 ## Known Limitations
 - Real OAuth: NOT RUN for any platform (no credentials configured). Mocked tests are not provider verification.

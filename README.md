@@ -31,7 +31,7 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | OAuth authentication (Instagram, TikTok, YouTube) | ✅ **IMPLEMENTED**, mock-tested; real OAuth NOT RUN |
 | OAuth callback server (dynamic loopback port) & PKCE | ✅ **IMPLEMENTED** |
 | Job management & queue | ✅ **IMPLEMENTED** (mocked tests; real publishing NOT RUN) |
-| Instagram publishing adapter (Reels via public `video_url`) | ✅ **IMPLEMENTED**, mock-tested |
+| Instagram publishing adapter (Reels; the local file goes via temporary private storage + presigned URL) | ✅ **IMPLEMENTED**, mock-tested; needs `MEDIA_STORAGE_*` |
 | TikTok publishing adapter (Direct Post) | ✅ **IMPLEMENTED**, mock-tested |
 | YouTube publishing adapter (resumable upload) | ✅ **IMPLEMENTED**, mock-tested |
 | SQLite database layer | ✅ **IMPLEMENTED** |
@@ -141,7 +141,6 @@ content/incoming/post_001/
     caption.txt      # UTF-8 caption, sent as-is
     cover.jpg        # optional (YouTube thumbnail; TikTok/Instagram: not supported)
     title.txt        # optional YouTube title
-    video_url.txt    # optional public URL (needed for Instagram)
 ```
 
 1. **Settings → Create/Edit Publishing Profile** (once): choose accounts, privacy, cover, VERIFY/AUTO

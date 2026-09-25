@@ -15,6 +15,9 @@ cryptography>=42.0.0
 
 # HTTP
 httpx>=0.27.0
+
+# Temporary media storage for Instagram (S3-compatible: AWS S3, Cloudflare R2, MinIO)
+boto3>=1.34
 tenacity>=8.2.0
 
 # Media validation

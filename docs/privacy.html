@@ -28,10 +28,10 @@
   <nav><a href="index.html">Soc_bot</a> · <a href="terms.html">Terms of Service</a></nav>
 
   <h1>Privacy Policy</h1>
-  <p class="meta">Effective date: 25 September 2026</p>
+  <p class="meta">Effective date: 25 September 2026 (updated: Instagram media delivery)</p>
 
   <div class="summary">
-    <p><strong>In short:</strong> Soc_bot is a desktop application that runs on your own computer. It stores its data locally on that computer. It sends your content only to the platforms you choose to publish to, through their official APIs. The Soc_bot project runs no servers, receives none of your data, and does not sell data or use analytics or tracking.</p>
+    <p><strong>In short:</strong> Soc_bot is a desktop application that runs on your own computer. It stores its data locally on that computer. It sends your content to the platforms you choose to publish to, through their official APIs, and, for Instagram only, to the temporary media storage you configure (see section 4). The Soc_bot project runs no servers, receives none of your data, and does not sell data or use analytics or tracking.</p>
   </div>
 
   <h2>1. How Soc_bot works</h2>
@@ -58,6 +58,12 @@
     <li>the videos, captions, titles, privacy settings and (YouTube only) cover images you choose to publish;</li>
     <li>status checks for uploads, and read-only account queries such as TikTok's creator information, which lists the privacy options available to you.</li>
   </ul>
+  <p><strong>Instagram media delivery.</strong> Instagram only accepts videos it can download from a web address, so for Instagram Soc_bot first uploads the video to temporary storage that <em>you</em> configure, gives Instagram a temporary link, and deletes the copy after the publishing attempt. In automatic mode, Soc_bot chooses by file size (TempFile.org for smaller videos, your S3 bucket for larger ones) and shows which one it will use before you confirm:</p>
+  <ul>
+    <li><strong>Your own S3-compatible bucket</strong> (for example AWS S3 or Cloudflare R2): the bucket stays private and Instagram gets a link that expires (15 minutes by default).</li>
+    <li><strong>TempFile.org</strong> (optional): a <strong>public third-party file host</strong>. While the copy exists (by default at most 1 hour; Soc_bot deletes it after publishing), anyone who has its link can download it. TempFile.org processes the upload under its own <a href="https://tempfile.org/privacy">privacy policy</a>.</li>
+    <li><strong>0x0.st</strong> (optional): a <strong>public third-party file host</strong> run by an individual in Germany. While the copy exists (by default at most 1 hour), anyone who has its link can download it, and 0x0.st records the uploader's IP address and user agent under its own privacy policy. Only choose it if that is acceptable for your video.</li>
+  </ul>
   <p>Those platforms then process your data under their own privacy policies:
     <a href="https://www.tiktok.com/legal/privacy-policy">TikTok</a>,
     <a href="https://policies.google.com/privacy">Google/YouTube</a>
@@ -69,7 +75,7 @@
     <li>It does not sell, rent or share your data with anyone other than the platforms you publish to.</li>
     <li>It does not include analytics, advertising, telemetry or tracking.</li>
     <li>It does not intentionally collect personal information unrelated to publishing your content.</li>
-    <li>It does not send your data to the Soc_bot developers or to any other server.</li>
+    <li>It does not send your data to the Soc_bot developers, or to any server other than the platforms you publish to and the Instagram media storage you configure.</li>
   </ul>
 
   <h2>6. Disconnecting accounts and deleting data</h2>

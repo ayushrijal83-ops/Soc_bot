@@ -24,6 +24,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 _SECRET_PATTERNS = [
+    # Presigned storage URLs (SigV4 / R2 / MinIO): the whole URL is a bearer credential.
+    re.compile(r"https?://[^\s\"']*(?:X-Amz-Signature|X-Amz-Credential|Signature=)[^\s\"']*", re.IGNORECASE),
     re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer|oauth)\s+[^\s,;\"']+"),
     re.compile(r"(?i)\b(bearer|oauth)\s+[A-Za-z0-9._~+/=-]{8,}"),
     re.compile(r"(?i)(\b(?:access_token|refresh_token|client_secret|code|token)[\"']?\s*[=:]\s*[\"']?)[^&\s,;\"']+"),
@@ -155,6 +157,14 @@ class PlatformPublisher(ABC):
         have = set(granted)
         return [" or ".join(group) for group in cls.REQUIRED_SCOPES if not have.intersection(group)]
 
+    def published_url(self, platform_media_id: str | None, state: dict[str, Any]) -> str | None:
+        """Permanent public URL of a published item, from the publish result only. None = not known."""
+        return None
+
+    def delivery_notes(self, options: dict[str, Any], media: MediaInfo | None = None) -> list[str]:
+        """Human-readable notes about how media will reach the platform (plans / dry-run). No network."""
+        return []
+
     def preflight(self, ctx: PublishContext) -> tuple[list[str], list[str]]:
         """Read-only provider checks shown before the user confirms: (notes, errors).
 
@@ -222,10 +232,10 @@ class PlatformPublisher(ABC):
             raise PublishError("Malformed provider response", code="malformed_response", http_status=response.status_code)
         return data
 
-    def _poll(self, check: Callable[[], PublishOutcome]) -> PublishOutcome:
+    def _poll(self, check: Callable[[], PublishOutcome], attempts: int | None = None) -> PublishOutcome:
         """Poll ``check`` until it reports published, raises, or attempts run out ("processing")."""
         outcome = check()
-        for _ in range(self.POLL_ATTEMPTS - 1):
+        for _ in range((attempts or self.POLL_ATTEMPTS) - 1):
             if outcome.status != "processing":
                 return outcome
             self.sleep(self.POLL_INTERVAL)

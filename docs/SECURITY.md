@@ -235,3 +235,30 @@ If token compromise suspected:
 - No CCPA regulated data
 - Platform API terms of service apply
 - User responsible for content compliance
+
+## Temporary Media Storage (Instagram)
+
+- **Private bucket:** objects are uploaded without ACLs; Meta reads them only through a presigned **GET** URL for that one object (SigV4), HTTPS only, expiring after `MEDIA_STORAGE_PRESIGNED_URL_TTL` (default 900 s, max 7 days).
+- **Unguessable keys:** `instagram/temp/<192-bit random>/video.<ext>`, with no filename, local path, account or token in them.
+- **Presigned URLs are treated as secrets:** never logged, never stored in the database (provider state holds only the container ID), and stripped from error text by `redact()`.
+- **Credentials:** `MEDIA_STORAGE_*` live only in `.env`. Storage errors show only the error code and HTTP status (`_safe_error`), never URLs or keys. Use credentials scoped to this bucket.
+- **Cleanup:** each attempt deletes its object (`finally`/`ExitStack`, which also covers Ctrl+C). Cleanup is idempotent, and a failed delete is logged but doesn't fail the job. A bucket lifecycle rule on `instagram/temp/` catches crash leftovers. The local source video is only ever read.
+- **Residual risk:** while a URL is valid, anyone who obtains it can download that one video. Keep the TTL short.
+
+### 0x0.st provider (`MEDIA_STORAGE_PROVIDER=0x0`): public, not private
+- The video is uploaded to a third-party **public** host. Anyone with the (hard-to-guess, `secret`) URL can download it until Soc_bot deletes it or it expires (`expires` default 1 h). 0x0.st stores the uploader's IP and user agent.
+- The management token and the URL exist only in memory, are hidden from `repr`, and are never logged or stored in the database. Error messages carry only HTTP status codes.
+- The URL is accepted only if it is https, on the configured instance host, and not localhost or a private IP.
+- Use `s3` when privacy matters or when publishing unattended (AUTO): 0x0.st's Terms forbid automated mass uploads.
+
+### TempFile.org provider (`MEDIA_STORAGE_PROVIDER=tempfile`): public, not private
+- The video is uploaded to a public third-party host with **no authentication**. The file id alone allows downloading **and deleting** it, so Soc_bot keeps the id and URL only in memory (hidden from `repr`), never logs or stores them, and deletes the file after the attempt. `expiryHours` defaults to 1.
+- Instagram only receives a URL that Soc_bot builds from a validated id on `https://tempfile.org`; response URLs are checked (https, same host, not local or private) and never passed on as-is.
+- Provider error text is redacted and truncated; the local filename is never sent (`video.mp4`).
+- Use `s3` when privacy matters or for unattended runs.
+
+### Automatic routing (`MEDIA_STORAGE_PROVIDER=auto`)
+- Small videos (up to 99 MB by default) go to **TempFile.org, a PUBLIC host**; larger ones go to **S3, private** (no ACL, SigV4 presigned GET, TTL 900 s). The plan names the provider **before** the user confirms, and Create Post shows the public-host warning when TempFile will be used.
+- No failure fallback: a failed provider is reported, and the video is never re-sent to a different host.
+- Each Instagram job has its own temporary object and cleanup (in-memory handles only); nothing is persisted.
+

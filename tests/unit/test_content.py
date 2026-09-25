@@ -136,10 +136,16 @@ class TestDetector:
         assert image_problem(tmp_path / "b.webp") is None
         assert "empty" in image_problem(tmp_path / "c.jpg")
 
-    def test_optional_title_and_video_url(self, tmp_path):
-        make_package(tmp_path, extra={"title.txt": "My Title\n", "video_url.txt": "https://cdn/x.mp4\n"})
+    def test_optional_title(self, tmp_path):
+        make_package(tmp_path, extra={"title.txt": "My Title\n"})
         pkg = detect(tmp_path)
-        assert pkg.title == "My Title" and pkg.video_url == "https://cdn/x.mp4"
+        assert pkg.title == "My Title" and pkg.valid
+
+    def test_video_url_txt_is_no_longer_used(self, tmp_path):
+        """Instagram gets the local video via temporary storage; video_url.txt is just an ignored file."""
+        make_package(tmp_path, extra={"video_url.txt": "https://cdn/x.mp4\n"})
+        pkg = detect(tmp_path)
+        assert pkg.valid and any("video_url.txt" in w for w in pkg.validation_warnings)
 
     def test_partial_download_marks_copying(self, tmp_path):
         make_package(tmp_path, extra={"video2.mp4.crdownload": b"x"})
@@ -425,12 +431,25 @@ class TestIntakePublishing:
         assert result.outcome == "invalid" and (env[3] / "failed" / "post_001").is_dir()
         assert all(not p.calls for p in pubs.values())
 
-    def test_blocked_destination_blocks_package(self, env):
-        save_profile(env, platforms=("ig",))  # Instagram needs video_url.txt
+    def test_instagram_needs_no_url_from_the_package(self, env):
+        save_profile(env, platforms=("ig",))
         make_package(env[3])
-        (entry,) = intake_with(env, self.pubs()).scan()
+        pubs = self.pubs()
+        intake = intake_with(env, pubs)
+        (entry,) = intake.scan()
+        assert entry.status == "READY"
+        intake.publish(entry.package)
+        assert "video_url" not in pubs["instagram"].calls[0].options  # local file only
+
+    def test_instagram_blocked_when_media_storage_not_configured(self, env, monkeypatch):
+        for var in ("MEDIA_STORAGE_BUCKET", "MEDIA_STORAGE_ACCESS_KEY", "MEDIA_STORAGE_SECRET_KEY",
+                    "MEDIA_STORAGE_REGION", "MEDIA_STORAGE_ENDPOINT"):
+            monkeypatch.delenv(var, raising=False)
+        save_profile(env, platforms=("ig",))
+        make_package(env[3])
+        (entry,) = intake_with(env, {"instagram": InstagramPublisher()}).scan()
         assert entry.status == "BLOCKED"
-        assert any("video_url.txt" in e for d in entry.destinations for e in d.errors)
+        assert any("temporary media storage is not configured" in e for d in entry.destinations for e in d.errors)
 
     def test_no_profile(self, env):
         make_package(env[3])

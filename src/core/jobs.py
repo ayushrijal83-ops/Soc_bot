@@ -96,6 +96,10 @@ class JobStore:
                     raise JobError(f"Account {account_id} not found")
 
             video = session.query(Video).filter_by(checksum=checksum).first()
+            if video is not None:
+                # Same content seen before (maybe at a path that has since moved): publish from the
+                # file the user just chose, not the stale path.
+                video.path = media.path
             if video is None:
                 video = Video(
                     filename=media.path.replace("\\", "/").rsplit("/", 1)[-1],

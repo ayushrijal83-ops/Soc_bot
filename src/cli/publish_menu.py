@@ -59,7 +59,7 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
     destinations = []
     for account in chosen:
         label = f"{account.platform} / {account.display_name or account.username}"
-        options = _ask_options(account.platform, label, caption)
+        options = _ask_options(account.platform, label, caption, check.media.size_bytes)
         if options is None:
             return
         if engine.store.already_published(video_path, account.id) and not confirm(
@@ -90,11 +90,25 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
     _print_summary(result.jobs)
 
 
-def _ask_options(platform: str, label: str, caption: str) -> dict | None:
+def _ask_options(platform: str, label: str, caption: str, size: int | None = None) -> dict | None:
     print_info(f"Options for {label}:")
     if platform == "instagram":
-        url = prompt_text("  Public https:// URL of this video (Instagram downloads it from there)")
-        return None if url is None else {"video_url": url.strip()}
+        # No URL prompt: the local file is delivered through temporary media storage automatically.
+        from src.media_storage import delivery_provider, public_host_name
+
+        host = public_host_name(size)
+        if delivery_provider(size) == "cloudflare_tunnel":
+            print_warning("  Instagram: the video stays on this computer. After you confirm, Soc_bot opens a temporary "
+                          "Cloudflare Quick Tunnel (random public HTTPS URL for this one file) only while Instagram "
+                          "fetches it, then closes it. Quick Tunnels are a Cloudflare testing service (no uptime "
+                          "guarantee).")
+        elif host:
+            print_warning(f"  Instagram: the video will be temporarily uploaded to {host}, a PUBLIC third-party file "
+                          "host. Anyone with the generated URL may be able to download it until the file expires or "
+                          "Soc_bot deletes it after publishing.")
+        else:
+            print_info("  Instagram: the local video is delivered automatically (temporary private storage).")
+        return {}
     if platform == "tiktok":
         print_info("  TikTok requires you to choose the privacy level. Unaudited apps can only use SELF_ONLY.")
         choice = prompt_choice("  Privacy level", list(PRIVACY_LEVELS))

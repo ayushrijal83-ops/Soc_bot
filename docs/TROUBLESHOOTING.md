@@ -393,3 +393,89 @@ When new issues arise:
 2. Add to relevant section
 3. Link from `CLAUDE_HANDOFF.md` if critical
 4. Update `PROJECT_STATUS.md` known issues
+
+---
+
+### Problem: Instagram destination "BLOCKED: temporary media storage is not configured"
+
+**Cause:** Instagram fetches Reels from an HTTPS URL. Soc_bot needs a private S3-compatible bucket to hand it a temporary one.
+
+**Solution:** fill in `MEDIA_STORAGE_BUCKET`, `MEDIA_STORAGE_ACCESS_KEY` and `MEDIA_STORAGE_SECRET_KEY`, plus `MEDIA_STORAGE_REGION` (AWS) or `MEDIA_STORAGE_ENDPOINT` (R2/MinIO, https) in `.env`, restart, then run **Settings → Check Instagram media storage**.
+
+### Problem: "Instagram media preparation failed: Temporary media upload failed: AccessDenied (HTTP 403)"
+
+**Cause:** the credentials can't write to the bucket (or the bucket name, region or endpoint is wrong). This is not retried automatically.
+
+**Solution:** grant `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` (and `s3:ListBucket` for the health check) on that bucket; check the region or endpoint.
+
+### Problem: Instagram container status `ERROR` right after creation
+
+**Cause:** Meta couldn't download or process the media: URL expired (TTL too short), wrong format (Reels: MP4/MOV, H.264/HEVC, ≤ 300 MB, 3 s–15 min), or storage not reachable over HTTPS.
+
+**Solution:** keep TTL ≥ 900; check the video spec. A retry uploads fresh media automatically.
+
+### Problem: "Video file not found: video.mp4" for a file that exists
+
+**Cause (fixed 2026-09-25):** when you published the same video again, the job reused an old video row whose path had moved (e.g. an earlier content package).
+
+**Solution:** fixed in `JobStore.create_post`: a reused row now takes the path you just chose.
+
+### Problem: "Temporary media upload to 0x0.st refused (the user agent or IP may be blocked) (HTTP 418/403)"
+
+**Cause:** 0x0.st blocks clients it considers abusive (browser-like user agents, Tor exits, IPs that broke its Terms).
+
+**Solution:** Soc_bot already sends its own user agent. If the block persists, switch to `MEDIA_STORAGE_PROVIDER=s3` or contact the 0x0.st operator (see its FAQ). Not retried automatically.
+
+### Problem: "0x0.st returned no management token"
+
+**Cause:** an identical file was already on 0x0.st, and the service only returns a token for new files.
+
+**Effect:** Soc_bot can't delete it early; it expires on 0x0.st's own schedule (up to 30 days for small files). Nothing to fix; use `s3` if that matters.
+
+### Problem: TempFile.org "denied from this IP address (HTTP 403)" / "rate limited (HTTP 429)"
+
+**Cause:** the service blocks some IPs, and allows 200 uploads per hour.
+
+**Solution:** 403 is not retried; switch to `s3`. 429 is retried by the engine; the error names the reset time.
+
+### Problem: "TempFile.org accepts files up to 100 MB"
+
+**Solution:** use `s3` (Instagram itself allows up to 300 MB).
+
+### Problem: 0x0.st uploads fail
+
+0x0.st currently has uploads disabled (2026-09-25). Use `MEDIA_STORAGE_PROVIDER=tempfile` or `s3`.
+
+### Problem: Instagram "No media provider can take this N MB video"
+
+**Cause:** with `MEDIA_STORAGE_PROVIDER=auto`, videos over 99 MB need the Cloudflare Quick Tunnel (cloudflared) or S3, and neither is available.
+
+**Solution:** install cloudflared (`winget install --id Cloudflare.cloudflared`, then open a new terminal), or set `CLOUDFLARED_PATH` to the full path of `cloudflared.exe`. Or set `MEDIA_STORAGE_BUCKET`, `MEDIA_STORAGE_ACCESS_KEY` and `MEDIA_STORAGE_SECRET_KEY`, plus `MEDIA_STORAGE_REGION` (AWS) or `MEDIA_STORAGE_ENDPOINT` (R2/MinIO, https). Then run Settings → Check Instagram media storage.
+
+### Problem: "cloudflared not found"
+
+**Cause:** `cloudflared` isn't on `PATH`, or `CLOUDFLARED_PATH` is wrong. Soc_bot never downloads it.
+
+**Solution:** `winget install --id Cloudflare.cloudflared` (or download `cloudflared-windows-amd64.exe` from https://github.com/cloudflare/cloudflared/releases), open a new terminal, and check `cloudflared --version`. Or set `CLOUDFLARED_PATH=C:\full\path\cloudflared.exe`. Then run Settings → Check Instagram media storage.
+
+### Problem: "Cloudflare Quick Tunnel did not start within 90s" / "cloudflared exited before the tunnel was ready"
+
+**Cause:** there's no Internet access to Cloudflare, outbound port 7844 or QUIC is blocked, Cloudflare throttled quick-tunnel creation, or a `~/.cloudflared/config.yaml` interferes (Quick Tunnels refuse to start when a config file is present).
+
+**Solution:** retry (the error is retryable), raise `CLOUDFLARE_TUNNEL_STARTUP_TIMEOUT_SECONDS`, or temporarily rename `%USERPROFILE%\.cloudflared\config.yml`. Test manually with `cloudflared tunnel --url http://127.0.0.1:8000`.
+
+### Problem: "Tunnel URL not reachable within 90s"
+
+**Cause:** the new `*.trycloudflare.com` hostname didn't resolve or answer in time. Possible reasons: DNS propagation; a resolver caching "no such host" for 60 s (trycloudflare.com's negative TTL); `cloudflare-dns.com`/`dns.google` blocked; or a filter blocking trycloudflare.com. The check uses public DNS-over-HTTPS, so a stale answer from the PC's own resolver doesn't matter.
+
+**Solution:** retry; allow `trycloudflare.com` in DNS filters or ad blockers; raise `CLOUDFLARE_TUNNEL_STARTUP_TIMEOUT_SECONDS`.
+
+### Problem: Instagram `ERROR` / still `IN_PROGRESS` with a large tunnel video
+
+**Cause:** Meta fetches the file through your upload bandwidth. The PC must stay on and online, and the tunnel closes when the polling window ends.
+
+**Solution:** keep Soc_bot running until the job finishes; raise `INSTAGRAM_MAX_POLL_MINUTES` for slow connections. Quick Tunnels have no uptime guarantee; use S3 when reliability matters.
+
+### Note: "Tunnel cleanup warning: …"
+
+The Reel's status is unaffected. If a `cloudflared.exe` is still running afterwards, end it in Task Manager (the URL was random and is useless once the local server stopped).

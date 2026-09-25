@@ -14,7 +14,6 @@ COVER_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 CAPTION_FILE = "caption.txt"
 # Optional package files (single line each).
 TITLE_FILE = "title.txt"          # YouTube title; defaults to the caption's first line
-VIDEO_URL_FILE = "video_url.txt"  # public https URL of the same video, needed by Instagram
 # Files that mean "still being copied/downloaded".
 PARTIAL_SUFFIXES = (".part", ".partial", ".crdownload", ".download", ".tmp", ".!ut")
 
@@ -48,7 +47,6 @@ class ContentPackage:
     caption_text: str | None = None
     cover_path: Path | None = None
     title: str | None = None
-    video_url: str | None = None
     detected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     validation_status: str = "unchecked"   # unchecked | valid | invalid | copying
     validation_errors: list[str] = field(default_factory=list)

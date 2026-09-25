@@ -10,16 +10,33 @@ Verified against Meta docs on 2026-09-25 (content-publishing, ig-user/media refe
         -> {"id": ig_media_id}
 
 With Instagram Login, Meta documents video publishing only through ``video_url`` (a public URL
-Meta downloads). The rupload.facebook.com resumable upload is documented for Facebook Login
-only, so local-file upload is NOT implemented for Instagram.
+Meta downloads). The rupload.facebook.com resumable upload is documented for Facebook Login only.
+
+Local files therefore go through a MediaSourceProvider (src/media_storage): the file is uploaded to
+temporary private storage, Meta gets a short-lived presigned HTTPS URL, and the object is deleted
+when this publish attempt ends. The user never enters a URL. (An explicit ``video_url`` option is
+still honoured as an internal/debug override.)
 """
 
+import logging
+import math
+import os
+from collections.abc import Callable
+from contextlib import ExitStack
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
 from src.core.validation import MediaInfo
+from src.media_storage import (
+    MediaSourceProvider,
+    MediaStorageError,
+    create_media_provider,
+    delivery_provider,
+    media_delivery_description,
+    media_provider_problems,
+)
 from src.platforms.base import (
     PlatformPublisher,
     ProgressCallback,
@@ -27,6 +44,8 @@ from src.platforms.base import (
     PublishError,
     PublishOutcome,
 )
+
+log = logging.getLogger("soc_bot.instagram")
 
 
 class InstagramPublisher(PlatformPublisher):
@@ -37,6 +56,9 @@ class InstagramPublisher(PlatformPublisher):
     # Meta: "query a container's status once per minute, for no more than 5 minutes".
     POLL_INTERVAL = 60.0
     POLL_ATTEMPTS = 5
+    # Large files: one extra poll per 25 MB above 50 MB (Meta downloads them first), capped by
+    # INSTAGRAM_MAX_POLL_MINUTES. The media URL stays alive for the whole window.
+    DEFAULT_MAX_POLL_MINUTES = 15
 
     MAX_CAPTION_CHARS = 2200
     MAX_HASHTAGS = 30
@@ -54,12 +76,22 @@ class InstagramPublisher(PlatformPublisher):
         "and is only documented for Facebook Login); cover image skipped"
     )
 
+    def __init__(self, *args, media_provider: Callable[[], MediaSourceProvider] | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Factory, so an unconfigured provider only matters when a job actually needs media.
+        self._media_provider_factory = media_provider or create_media_provider
+
     def validate(self, caption: str, options: dict[str, Any], media: MediaInfo) -> list[str]:
         errors = []
-        url = options.get("video_url") or ""
-        parsed = urlparse(url)
-        if parsed.scheme != "https" or not parsed.netloc:
-            errors.append("Instagram needs a public https:// video_url that Meta can download (local upload is not supported with Instagram Login)")
+        if options.get("video_url"):  # internal/debug override
+            parsed = urlparse(options["video_url"])
+            if parsed.scheme != "https" or not parsed.netloc:
+                errors.append("video_url override must be an https:// URL")
+        else:
+            problems = self.media_problems(media.size_bytes)
+            if problems:
+                errors.append("Instagram temporary media storage is not configured: " + "; ".join(problems)
+                              + " (see docs/API_INTEGRATIONS.md > Instagram media delivery)")
         if media.mime_type not in ("video/mp4", "video/quicktime"):
             errors.append("Instagram Reels accept MP4 or MOV only")
         if len(caption) > self.MAX_CAPTION_CHARS:
@@ -76,7 +108,49 @@ class InstagramPublisher(PlatformPublisher):
             errors.append("Instagram Reels are limited to 1920 px width")
         return errors
 
+    def media_problems(self, size: int | None = None) -> list[str]:
+        """No-network check that this file can be delivered (with ``auto``, depends on its size)."""
+        return media_provider_problems(size) if self._media_provider_factory is create_media_provider else []
+
+    def delivery_notes(self, options: dict[str, Any], media: MediaInfo | None = None) -> list[str]:
+        if options.get("video_url"):
+            return ["media delivery: explicit video_url override"]
+        size = media.size_bytes if media is not None else None
+        when = ("tunnel started only after you confirm, stopped when Instagram is done"
+                if delivery_provider(size) == "cloudflare_tunnel" else "uploaded only when publishing")
+        return [f"media delivery: {media_delivery_description(size)} ({when})"]
+
+    def poll_attempts(self, size: int | None) -> int:
+        try:
+            cap = int(os.environ.get("INSTAGRAM_MAX_POLL_MINUTES") or self.DEFAULT_MAX_POLL_MINUTES)
+        except ValueError:
+            cap = self.DEFAULT_MAX_POLL_MINUTES
+        extra = math.ceil(max(0, (size or 0) - 50_000_000) / 25_000_000)
+        return max(self.POLL_ATTEMPTS, min(self.POLL_ATTEMPTS + extra, cap))
+
+    def _media_url(self, ctx: PublishContext, stack: ExitStack) -> str:
+        """Direct HTTPS URL for this attempt. Temporary media is cleaned up when ``stack`` closes."""
+        if ctx.options.get("video_url"):
+            return ctx.options["video_url"]
+        log.info("Preparing Instagram media.")
+        try:
+            provider = self._media_provider_factory()
+            handle = provider.prepare(ctx.video_path, ctx.media.mime_type)
+            stack.callback(provider.cleanup, handle)
+            return provider.get_public_url(handle)
+        except MediaStorageError as e:
+            # Storage outages are transient; configuration/permission problems are not.
+            raise PublishError(f"Instagram media preparation failed: {e}", code="media_storage",
+                               retryable=e.retryable) from e
+
     def publish(self, ctx: PublishContext, on_progress: ProgressCallback) -> PublishOutcome:
+        # The temporary media object lives until this attempt ends: through container creation,
+        # Meta's download/processing and media_publish. It is deleted on success, failure or Ctrl+C.
+        # A retry or resume that needs a new container uploads fresh media (URLs are never reused).
+        with ExitStack() as stack:
+            return self._publish(ctx, on_progress, stack)
+
+    def _publish(self, ctx: PublishContext, on_progress: ProgressCallback, stack: ExitStack) -> PublishOutcome:
         state = dict(ctx.state)
         container_id = state.get("container_id")
 
@@ -90,11 +164,14 @@ class InstagramPublisher(PlatformPublisher):
                 state = {}
 
         if not container_id:
-            container_id = self._create_container(ctx)
-            state = {"container_id": container_id}
+            container_id = self._create_container(ctx, self._media_url(ctx, stack))
+            log.info("Instagram media container created.")
+            state = {"container_id": container_id}  # never the media URL
             on_progress("processing", state)
+            log.info("Waiting for Instagram media processing.")
 
-        outcome = self._poll(lambda: self._processing_outcome(ctx, container_id, state))
+        size = ctx.media.size_bytes if ctx.media is not None else None
+        outcome = self._poll(lambda: self._processing_outcome(ctx, container_id, state), self.poll_attempts(size))
         if outcome.status == "processing":
             return outcome  # still IN_PROGRESS after the documented polling window
 
@@ -102,6 +179,7 @@ class InstagramPublisher(PlatformPublisher):
             return outcome
 
         # FINISHED: publish exactly once.
+        log.info("Publishing Instagram media.")
         state["publish_requested"] = True
         on_progress("processing", state)
         response = self._request(
@@ -116,10 +194,28 @@ class InstagramPublisher(PlatformPublisher):
             raise PublishError("Instagram media_publish returned no media id", code="malformed_response",
                                http_status=response.status_code)
         state["media_id"] = str(media_id)
+        permalink = self.fetch_permalink(ctx.access_token, str(media_id))
+        if permalink:
+            state["permalink"] = permalink  # permanent public URL (not a secret)
         return PublishOutcome("published", str(media_id), state)
 
-    def _create_container(self, ctx: PublishContext) -> str:
-        payload = {"media_type": "REELS", "video_url": ctx.options["video_url"], "caption": ctx.caption}
+    def fetch_permalink(self, access_token: str, media_id: str) -> str | None:
+        """IG Media ``permalink`` ("Permanent URL to the media"). Best effort: never fails a publish."""
+        try:
+            response = self._request("GET", f"{self.GRAPH_URL}/{media_id}", params={"fields": "permalink"},
+                                     headers={"Authorization": f"Bearer {access_token}"})
+            permalink = self._json(response).get("permalink") if response.status_code == 200 else None
+        except Exception:  # noqa: BLE001 - the Reel is already published; a missing link is only logged
+            log.warning("Could not read the Instagram permalink; the Reel is published but its link isn't saved.")
+            return None
+        return permalink if isinstance(permalink, str) and permalink.startswith("https://www.instagram.com/") else None
+
+    def published_url(self, platform_media_id: str | None, state: dict[str, Any]) -> str | None:
+        # Only the permalink Instagram returned; the media id alone can't be turned into a URL.
+        return state.get("permalink")
+
+    def _create_container(self, ctx: PublishContext, video_url: str) -> str:
+        payload = {"media_type": "REELS", "video_url": video_url, "caption": ctx.caption}
         if "share_to_feed" in ctx.options:
             payload["share_to_feed"] = "true" if ctx.options["share_to_feed"] else "false"
         response = self._request(

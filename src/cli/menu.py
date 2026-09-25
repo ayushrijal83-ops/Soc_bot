@@ -10,6 +10,7 @@ from src.cli.display import (
     print_menu,
     print_not_implemented,
 )
+from src.cli.links_menu import run_published_links
 from src.cli.prompts import prompt_menu_selection
 from src.cli.publish_menu import run_create_post, run_publishing_queue
 
@@ -29,6 +30,7 @@ class MenuHandler:
             "Publishing Queue",
             "History",
             "Content Inbox",
+            "Published Links",
             "Settings",
             "Exit",
         ]
@@ -51,8 +53,9 @@ class MenuHandler:
             3: self.handle_publishing_queue,
             4: self.handle_history,
             5: self.handle_content_inbox,
-            6: self.handle_settings,
-            7: self.handle_exit,
+            6: self.handle_published_links,
+            7: self.handle_settings,
+            8: self.handle_exit,
         }
 
         handler = handlers.get(choice)
@@ -103,6 +106,16 @@ class MenuHandler:
         else:
             run_content_inbox(self.intake)
         self._pause()
+        return True
+
+    def handle_published_links(self) -> bool:
+        """Handle Published Links option (per-platform JSON link library)."""
+        links = getattr(self.engine, "links", None)
+        if links is None:
+            print_not_implemented("Published Links")
+            self._pause()
+        else:
+            run_published_links(links, self.engine)
         return True
 
     def handle_settings(self) -> bool:

@@ -92,6 +92,21 @@ content/incoming/<package>/  ->  ContentDetector  ->  ContentValidator  ->  Publ
 - **intake.py**: `ContentIntake`: scan/inspect (read-only), plan, publish (one package), publish_ready (AUTO), history
 - No platform-specific code: per-platform options come from the profile, and cover handling comes from the adapter's capability methods. See [CONTENT_INTAKE.md](CONTENT_INTAKE.md).
 
+### 7c. Media Delivery (`src/media_storage/`): ✅ **IMPLEMENTED** (Instagram only; real run pending storage config)
+```
+InstagramPublisher ──► MediaSourceProvider (prepare / get_public_url / cleanup; max_file_size capability)
+                            ├─► MediaStorageRouter (MEDIA_STORAGE_PROVIDER=auto): picks TempFile or S3 by file size
+                            ├─► ObjectStorageMediaProvider ──► ObjectStorage ──► S3ObjectStorage (boto3; S3/R2/MinIO)   [MEDIA_STORAGE_PROVIDER=s3]
+                            ├─► TempFileMediaStorage (httpx; public TempFile.org upload + id delete)                   [MEDIA_STORAGE_PROVIDER=tempfile]
+                            ├─► CloudflareTunnelMediaProvider (127.0.0.1 single-file server + cloudflared Quick Tunnel) [MEDIA_STORAGE_PROVIDER=cloudflare_tunnel]
+                            └─► ZeroX0MediaStorage (httpx; public 0x0.st upload + token delete)                        [MEDIA_STORAGE_PROVIDER=0x0]
+```
+`create_media_provider()` picks the provider from `MEDIA_STORAGE_PROVIDER` (default `s3`; never falls back to a public host). AUTO order: TempFile → Cloudflare Quick Tunnel → S3 (0x0 is never in AUTO). The tunnel provider is not object storage: it serves the local file through a temporary `trycloudflare.com` URL while Instagram fetches it, and cleanup stops the tunnel (see API_INTEGRATIONS.md → Cloudflare Quick Tunnel).
+Temporary private object + presigned HTTPS URL for platforms that fetch media from a URL. The provider is created by the Instagram adapter via `create_media_provider()`; the engine only gets `delivery_notes()` text for plans. See API_INTEGRATIONS.md → Instagram Media Delivery.
+
+### 7d. Published-Link Library (`src/core/published_links.py`, `src/cli/links_menu.py`): ✅ **IMPLEMENTED**
+`PublisherEngine(links=PublishedLinks())` calls `_record_link` after the `published` transition, and `adapter.published_url(media_id, state)` gives the permanent URL (YouTube watch URL / Instagram permalink / TikTok `None`). Links go to per-platform JSON files under `content/published_links/`, not the DB. See CONTENT_INTAKE.md → Published Links.
+
 ### 8. Storage (`src/storage/`) — ✅ **IMPLEMENTED**
 - **database.py** — SQLite connection, migrations, ORM/models
 - **tokens.py** — Token encryption/decryption, secure storage

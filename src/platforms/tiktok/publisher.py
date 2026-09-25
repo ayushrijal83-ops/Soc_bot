@@ -62,6 +62,12 @@ class TikTokPublisher(PlatformPublisher):
     def supports_cover_timestamp(self) -> bool:
         return True
 
+    def published_url(self, platform_media_id: str | None, state: dict[str, Any]) -> str | None:
+        # The Content Posting API documents no post URL: publicaly_available_post_id is returned only
+        # for public, moderation-approved posts (never for SELF_ONLY), and no URL format is documented.
+        # No link is guessed.
+        return None
+
     def preflight(self, ctx: PublishContext) -> tuple[list[str], list[str]]:
         """Query creator_info (required before posting) and check the chosen options against it."""
         creator = self._post(ctx, "/post/publish/creator_info/query/", {}, "creator info query failed")

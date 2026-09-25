@@ -18,12 +18,25 @@ from src.cli.content_menu import (
 from src.cli.menu import run_menu
 from src.cli.publish_menu import print_plan
 from src.content.intake import ContentIntake
+from src.core.published_links import PublishedLinks
 from src.core.publisher import PublisherEngine
 from src.storage.database import get_database
 from src.storage.tokens import TokenEncryption
 
 # The project's .env, found relative to this file so it works from any working directory.
 ENV_FILE = Path(__file__).resolve().parent / ".env"
+
+
+def configure_logging() -> None:
+    """Show Soc_bot's own progress messages as "[INFO] ..." (third-party loggers stay quiet)."""
+    import logging
+
+    logger = logging.getLogger("soc_bot")
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
 
 
 def load_environment(env_file: Path | None = None) -> bool:
@@ -79,7 +92,9 @@ def initialize_services():
     encryption = TokenEncryption()
     account_manager = AccountManager(db, encryption)
     auth_manager = create_auth_manager(db, encryption, account_manager)
-    engine = PublisherEngine(db, account_manager, auth_manager)
+    links = PublishedLinks()
+    links.ensure_files()  # content/published_links/{youtube,instagram,tiktok}.json
+    engine = PublisherEngine(db, account_manager, auth_manager, links=links)
     intake = ContentIntake(db, account_manager, engine)  # creates content/ folders if missing
     return account_manager, auth_manager, engine, intake
 
@@ -127,6 +142,7 @@ def main() -> int:
     """Main entry point."""
     args = parse_args()
     load_environment()  # before anything reads DATABASE_URL, ENCRYPTION_KEY or platform credentials
+    configure_logging()
 
     try:
         if args.dry_run:

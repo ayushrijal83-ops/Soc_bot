@@ -1,0 +1,140 @@
+"""Published-link library: one JSON file per platform with the permanent URLs of published videos.
+
+    content/published_links/youtube.json | instagram.json | tiktok.json
+
+Written only after a platform confirmed a publication (the engine calls ``record`` from the
+"published" transition). Only permanent URLs on the platform's own website are accepted, so
+temporary media URLs (TempFile, 0x0, S3 presigned, upload sessions) can never end up here.
+Not stored in the database by design.
+"""
+
+import json
+import logging
+import os
+import subprocess
+import tempfile
+from collections.abc import Callable
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+from src.content.models import content_root
+
+log = logging.getLogger("soc_bot.links")
+
+PLATFORMS = ("youtube", "instagram", "tiktok")
+# Permanent public pages only. Anything else (tempfile.org, 0x0.st, *.amazonaws.com,
+# *.r2.cloudflarestorage.com, googleapis upload URLs, ...) is rejected.
+ALLOWED_HOSTS = {
+    "youtube": ("www.youtube.com", "youtube.com", "youtu.be"),
+    "instagram": ("www.instagram.com", "instagram.com"),
+    "tiktok": ("www.tiktok.com", "tiktok.com"),
+}
+
+
+class LinkError(ValueError):
+    pass
+
+
+def is_permanent_platform_url(platform: str, url: str) -> bool:
+    parsed = urlparse(url or "")
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        return False
+    if (parsed.hostname or "").lower() not in ALLOWED_HOSTS.get(platform, ()):
+        return False
+    # Signed/temporary URL markers never belong in a permanent link.
+    return not any(marker in (parsed.query or "") for marker in ("X-Amz-", "Signature=", "Expires=", "token="))
+
+
+class PublishedLinks:
+    def __init__(self, root: Path | None = None):
+        self.root = Path(root) if root else content_root() / "published_links"
+
+    def path(self, platform: str) -> Path:
+        if platform not in PLATFORMS:
+            raise LinkError(f"Unknown platform: {platform}")
+        return self.root / f"{platform}.json"
+
+    def ensure_files(self) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        for platform in PLATFORMS:
+            if not self.path(platform).exists():
+                self._write(platform, [])
+
+    def records(self, platform: str) -> list[dict]:
+        path = self.path(platform)
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            return self._quarantine(platform)
+        if not isinstance(data, list):
+            return self._quarantine(platform)
+        return [r for r in data if isinstance(r, dict) and r.get("url")]
+
+    def add(self, platform: str, video: str, account: str, url: str, provider_id: str,
+            published_at: datetime | None = None) -> bool:
+        """Append one record. Returns False if (account, provider_id) is already saved."""
+        if not is_permanent_platform_url(platform, url):
+            raise LinkError(f"Refusing to save a non-permanent {platform} URL")
+        if not provider_id:
+            raise LinkError("A provider id is required for duplicate protection")
+        records = self.records(platform)
+        if any(r.get("account") == account and r.get("provider_id") == provider_id for r in records):
+            return False
+        when = published_at or datetime.now(timezone.utc)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)  # stored timestamps are UTC
+        records.append({"video": video, "account": account, "url": url, "provider_id": provider_id,
+                        "published_at": when.isoformat(timespec="seconds")})
+        self._write(platform, records)
+        return True
+
+    # --- file safety ----------------------------------------------------------------------
+
+    def _write(self, platform: str, records: list[dict]) -> None:
+        """Atomic replace: write a temp file in the same folder, fsync, then os.replace."""
+        path = self.path(platform)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=f".{platform}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def _quarantine(self, platform: str) -> list[dict]:
+        """Malformed file: keep it aside (never deleted) and continue with an empty list."""
+        path = self.path(platform)
+        backup = path.with_name(f"{path.stem}.corrupt-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.json")
+        try:
+            os.replace(path, backup)
+            log.warning("%s was not valid JSON; kept it as %s and started a new list.", path.name, backup.name)
+        except OSError:
+            pass
+        return []
+
+
+def video_label(video_path: str) -> str:
+    """Human name for a video: the file name, or the content package folder for 'video.mp4'."""
+    p = Path(video_path)
+    return p.parent.name if p.stem.lower() == "video" and p.parent.name else p.stem
+
+
+def copy_to_clipboard(text: str, runner: Callable = subprocess.run) -> None:
+    """Copy to the Windows clipboard with the built-in clip.exe (no extra dependency)."""
+    if os.name != "nt":
+        raise OSError("Clipboard copy is only supported on Windows")
+    # Platform URLs are ASCII (non-ASCII is percent-encoded), which clip.exe copies verbatim.
+    if not text.isascii():
+        raise ValueError("Only ASCII links can be copied")
+    runner(["clip"], input=text.encode("ascii"), check=True)

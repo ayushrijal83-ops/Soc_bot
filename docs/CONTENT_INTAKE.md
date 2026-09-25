@@ -23,7 +23,6 @@ content/incoming/post_001/        # folder name = package ID
     caption.txt                   # exactly one caption file, UTF-8
     cover.jpg                     # optional, at most one: cover.jpg/.jpeg/.png/.webp
     title.txt                     # optional: YouTube title (default: first non-empty caption line)
-    video_url.txt                 # optional: public https URL of the same video (required for Instagram)
 ```
 
 - Multiple videos, multiple `caption*.txt` files, or multiple `cover.*` files make the package **invalid**. Soc_bot never guesses which one you meant.
@@ -68,7 +67,7 @@ The profile is checked before every publish. It can't be used if a referenced ac
 | `COPYING` | still being copied; try again shortly |
 | `INVALID` | package problems (missing/multiple files, empty or non-UTF-8 caption, bad video) |
 | `NO PROFILE` | create a profile under Settings |
-| `BLOCKED` | a profile problem or a destination fails validation (e.g. Instagram needs `video_url.txt`, YouTube title > 100 chars) |
+| `BLOCKED` | a profile problem or a destination fails validation (e.g. Instagram media storage not configured, YouTube title > 100 chars) |
 | `RESUME` | in `publishing/`: a previous run was interrupted; continuing never republishes finished destinations |
 | `FAILED` | in `failed/`: retrying runs **only** the failed destinations |
 | `PUBLISHED` | this video was already published (by content key); publishing again is refused |
@@ -103,9 +102,25 @@ A cover the platform would reject (e.g. `.webp` or > 50 MB for YouTube) is `skip
 ## History (main menu → History)
 Per content item: name, dates, status, every destination's video status, and every destination's cover status. It reads the existing job rows; there is no separate history table.
 
+## Published Links (main menu → 6)
+After a destination is confirmed **published**, its permanent public URL is appended to one JSON file per platform:
+
+    content/published_links/youtube.json | instagram.json | tiktok.json
+
+Record: `{"video", "account", "url", "provider_id", "published_at"}` (UTC). The files are created at startup and written atomically (temp file in the same folder, fsync, `os.replace`). A malformed file is renamed to `<platform>.corrupt-<timestamp>.json` and never deleted. Duplicates (same account + provider_id) are skipped, so the same video on two accounts gives two records. Failed jobs never produce a link, and a link problem never fails a job. Nothing is stored in the database.
+
+| Platform | URL | Source |
+|---|---|---|
+| YouTube | `https://www.youtube.com/watch?v=<id>` | video id returned by `videos.insert` |
+| Instagram | the IG Media `permalink` | `GET /{ig-media-id}?fields=permalink` right after `media_publish` (the container/media id is never turned into a URL) |
+| TikTok | **not saved** | the Content Posting API documents no post URL, and `publicaly_available_post_id` is only returned for public, moderation-approved posts (never for SELF_ONLY) |
+
+Only `https://` URLs on the platform's own site are accepted (`is_permanent_platform_url`). TempFile, 0x0, S3/R2 presigned and upload-session URLs are rejected, as are signed query strings.
+Menu: YouTube / Instagram / TikTok → List links / Copy link (Windows `clip.exe`, "✓ Link copied to clipboard."). **Import from publish history** backfills links for jobs published before this feature existed. It is idempotent.
+
 ## Limitations
 - No background watcher: scan from Content Inbox or `--scan`. `ContentIntake.scan()`/`publish_ready()` are the hooks a future watcher would call.
-- Instagram needs `video_url.txt` (public hosting isn't provided).
+- Instagram uses the package's local video automatically, through temporary private storage (`MEDIA_STORAGE_*`, see API_INTEGRATIONS.md). `video_url.txt` is no longer used.
 - TikTok: frame-based covers (`video_cover_timestamp_ms`) are not configurable yet.
 - One profile (`default`); the table is keyed by name for more later.
 - A YouTube thumbnail failure is not retried automatically.

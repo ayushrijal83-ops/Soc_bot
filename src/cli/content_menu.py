@@ -163,13 +163,54 @@ def run_settings(intake: ContentIntake, account_manager: AccountManager) -> None
     clear_screen()
     print_header("SETTINGS")
     choice = prompt_choice("Option", ["Create/Edit Publishing Profile", "View Publishing Profile",
-                                      "Reset Publishing Profile", "Back"], default=4)
+                                      "Reset Publishing Profile", "Check Instagram media storage", "Back"], default=5)
     if choice == 1:
         edit_profile(intake, account_manager)
     elif choice == 2:
         show_profile(intake, account_manager)
     elif choice == 3 and confirm("Delete the default publishing profile?", default=False):
         print_success("Profile reset." if intake.profiles.reset() else "There was no profile.")
+    elif choice == 4:
+        check_media_storage()
+
+
+def check_media_storage() -> bool:
+    """Validate MEDIA_STORAGE_* settings and run the provider's upload-free check."""
+    from src.media_storage import (
+        MediaStorageError,
+        StorageSettings,
+        create_media_provider,
+    )
+
+    settings = StorageSettings.from_env()
+    problems = settings.problems()
+    if problems:
+        print_error("Instagram temporary media storage is not configured.")
+        for problem in problems:
+            print_info(f"  {problem}")
+        return False
+    if settings.provider == "0x0":
+        print_warning(f"Provider: 0x0.st ({settings.zerox0_url}): a PUBLIC third-party file host. Videos leave this "
+                      f"computer; anyone with the link can download them until deleted (max {settings.zerox0_expires_hours} h).")
+    elif settings.provider == "auto":
+        print_info("Media storage mode: AUTO (by video size; no fallback between providers after a failure)")
+        print_warning("Small videos: TempFile.org, PUBLIC temporary hosting (anyone with the link can download "
+                      "until Soc_bot deletes it).")
+        print_info("Large videos: S3, PRIVATE temporary object storage; Instagram gets a presigned HTTPS URL.")
+    elif settings.provider == "tempfile":
+        print_warning("Provider: TempFile.org. Temporary PUBLIC hosting: enabled; no credentials required. Videos leave "
+                      "this computer; anyone with the link can download them until Soc_bot deletes them "
+                      f"(expiry {settings.tempfile_expiry_hours} h, max 100 MB).")
+    else:
+        print_info(f"Provider: {settings.provider}; bucket: {settings.bucket}; "
+                   f"endpoint: {settings.endpoint or 'AWS (' + settings.region + ')'}; URL lifetime: {settings.ttl}s")
+    try:
+        message = create_media_provider().health_check()
+    except MediaStorageError as e:
+        print_error(str(e))
+        return False
+    print_success(message)
+    return True
 
 
 def show_profile(intake: ContentIntake, account_manager: AccountManager, profile: Profile | None = None) -> None:

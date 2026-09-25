@@ -171,9 +171,7 @@ class ContentIntake:
                 if skip and account_id in skip:
                     continue
                 options: dict[str, Any] = {}
-                if platform == "instagram" and package.video_url:
-                    options["video_url"] = package.video_url
-                elif platform == "tiktok":
+                if platform == "tiktok":
                     options["privacy_level"] = profile.tiktok_privacy_level
                 elif platform == "youtube":
                     options["title"] = package.title or _first_line(package.caption_text)
@@ -209,8 +207,6 @@ class ContentIntake:
             errors = list(item.errors)
             if item.platform == "youtube" and any("title" in e for e in errors) and not package.title:
                 errors.append("Add a title.txt to the package (YouTube titles come from its first caption line otherwise).")
-            if item.platform == "instagram" and not package.video_url:
-                errors.append("Add video_url.txt with a public https URL of this video (Instagram downloads it).")
             plans.append(DestinationPlan(account_id, item.platform, item.account_label, errors, item.notes,
                                          cover_status, cover_reason))
         return plans

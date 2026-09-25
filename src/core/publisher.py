@@ -5,6 +5,7 @@ rolls back another. No platform HTTP lives here; adapters implement PlatformPubl
 """
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from src.platforms.base import PlatformPublisher, PublishContext, PublishError, 
 from src.storage.database import Database
 
 UpdateCallback = Callable[["JobResult"], None]
+log = logging.getLogger("soc_bot.engine")
 
 
 def granted_scopes(account) -> list[str] | None:
@@ -85,8 +87,10 @@ class PublisherEngine:
         sleep: Callable[[float], None] = time.sleep,
         retry_delays: tuple[float, ...] = (30, 60, 120),
         probe_media: bool = True,
+        links=None,
     ):
         self.store = JobStore(database)
+        self.links = links  # PublishedLinks or None (off)
         self.account_manager = account_manager
         self.auth_manager = auth_manager
         self._publishers = publishers
@@ -129,6 +133,7 @@ class PublisherEngine:
             errors.append(f"No publisher for platform {job.platform}")
         elif media is not None:
             errors.extend(adapter.validate(caption, job.options, media))
+            notes.extend(adapter.delivery_notes(job.options, media))
             account = self.account_manager.get_account(job.account_id)
             missing = adapter.missing_scopes(granted_scopes(account))
             if missing:
@@ -279,11 +284,59 @@ class PublisherEngine:
             if outcome.status == "published":
                 self.store.transition(job.id, "published", platform_media_id=outcome.platform_media_id,
                                       error_message=None, next_retry_at=None)
+                self._record_link(self.store.get_job(job.id), adapter, outcome.state, media.path)
             elif current != "processing":
                 self.store.transition(job.id, "processing")
             final = self.store.get_job(job.id)
             self._notify(on_update, final, final.status)
             return self._result(final)
+
+    def _record_link(self, job: JobInfo, adapter: PlatformPublisher, state: dict, video_path: str) -> bool:
+        """Save the permanent URL of a confirmed publication. Never raises: a link problem can't fail a job."""
+        if self.links is None or job.status != "published":
+            return False
+        try:
+            url = adapter.published_url(job.platform_media_id, state)
+            if not url:
+                return False
+            from src.core.published_links import video_label
+
+            return self.links.add(job.platform, video_label(video_path), job.account_label, url,
+                                  job.platform_media_id or url, self._published_at(job.id))
+        except Exception as e:  # noqa: BLE001 - bookkeeping only
+            log.warning("Could not save the published link for job %s (%s).", job.id, type(e).__name__)
+            return False
+
+    def _published_at(self, job_id: int):
+        from src.storage.database import PublishJob
+
+        with self.store.database.session() as session:
+            row = session.get(PublishJob, job_id)
+            return row.published_at if row else None
+
+    def import_published_links(self) -> dict[str, int]:
+        """Add links for jobs published before this feature existed (idempotent; duplicates skipped).
+
+        YouTube: from the stored video id. Instagram: the stored permalink, or the documented
+        IG Media ``permalink`` field for the stored media id. TikTok: none (no documented URL).
+        """
+        added = {"youtube": 0, "instagram": 0, "tiktok": 0}
+        if self.links is None:
+            return added
+        for job in self.store.recent_jobs(limit=10_000):
+            adapter = self.publishers.get(job.platform)
+            if job.status != "published" or adapter is None:
+                continue
+            state = dict(self.store.provider_state(job.id))
+            if job.platform == "instagram" and not state.get("permalink") and job.platform_media_id:
+                token, _ = self.account_manager.get_account_with_tokens(job.account_id)
+                permalink = adapter.fetch_permalink(token, job.platform_media_id)
+                if permalink:
+                    state["permalink"] = permalink
+            _, video = self.store.get_post(job.post_id)
+            if self._record_link(job, adapter, state, video.path):
+                added[job.platform] += 1
+        return added
 
     def _progress(self, job: JobInfo, attempt_id: int, on_update: UpdateCallback | None):
         def on_progress(status: str, provider_state: dict[str, Any]) -> None:
