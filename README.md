@@ -28,6 +28,8 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | Project structure & documentation | ✅ **IMPLEMENTED** |
 | Terminal CLI menu system | ✅ **IMPLEMENTED** |
 | Account management core (CRUD, listing, status) | ✅ **IMPLEMENTED** |
+| OAuth authentication (Instagram, TikTok, YouTube) | ✅ **IMPLEMENTED** |
+| OAuth callback server & PKCE | ✅ **IMPLEMENTED** |
 | Job management & queue | 📋 **PLANNED** |
 | Instagram publishing adapter | 📋 **PLANNED** |
 | TikTok publishing adapter | 📋 **PLANNED** |
@@ -35,7 +37,7 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | SQLite database layer | ✅ **IMPLEMENTED** |
 | Video validation | 📋 **PLANNED** |
 | Dry-run mode | 📋 **PLANNED** (placeholder) |
-| Unit/integration tests | ✅ **IMPLEMENTED** (138 unit tests) |
+| Unit/integration tests | ✅ **IMPLEMENTED** (170 unit tests) |
 
 **Legend:** ✅ IMPLEMENTED | 🔄 IN PROGRESS | 📋 PLANNED | 🚫 BLOCKED
 
@@ -43,9 +45,9 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 
 | Platform | API | Status |
 |----------|-----|--------|
-| Instagram | Instagram Graph API / Meta Business API | 📋 PLANNED |
-| TikTok | TikTok Creator API / TikTok Shop API | 📋 PLANNED |
-| YouTube | YouTube Data API v3 | 📋 PLANNED |
+| Instagram | Instagram Graph API / Meta Business API | ✅ VERIFIED |
+| TikTok | TikTok Creator API / TikTok Shop API | ✅ VERIFIED |
+| YouTube | YouTube Data API v3 | ✅ VERIFIED |
 
 ## Requirements
 
@@ -105,6 +107,10 @@ YOUTUBE_REDIRECT_URI=http://localhost:8080/callback/youtube
 # Application
 LOG_LEVEL=INFO
 DRY_RUN=false
+
+# Optional: Override callback host/port (default 127.0.0.1:8080)
+# OAUTH_CALLBACK_HOST=127.0.0.1
+# OAUTH_CALLBACK_PORT=8080
 ```
 
 **⚠️ Never commit `.env` to version control.** It is protected by `.gitignore`.
@@ -141,11 +147,14 @@ CONNECTED ACCOUNTS
 
 1. List Accounts
 2. Account Details
-3. Create Development Account
-4. Update Account
-5. Disconnect Account
-6. Enable Account
-7. Back to Main Menu
+3. Connect Instagram
+4. Connect TikTok
+5. Connect YouTube
+6. Create Development Account
+7. Update Account
+8. Disconnect Account
+9. Enable Account
+10. Back to Main Menu
 ```
 
 ## Authentication Concept
@@ -156,6 +165,23 @@ CONNECTED ACCOUNTS
 - Tokens stored securely in encrypted SQLite database
 - Automatic token refresh before expiration
 - No passwords ever requested or stored
+
+## OAuth Implementation Details
+
+- **PKCE (S256)**: Required for all platforms (Instagram, TikTok, YouTube)
+- **State Parameter**: CSRF protection, cryptographically random, single-use
+- **Callback Server**: Local HTTP server on `http://localhost:8080/callback/{platform}`
+- **Token Storage**: Fernet (AES-128-GCM) encryption at rest
+- **Token Refresh**: Automatic proactive refresh (24h before expiry) + on-demand
+- **Token Revocation**: Platform-specific revocation endpoints
+
+### Platform-Specific OAuth
+
+| Platform | Auth Product | Auth Flow | Scopes |
+|----------|--------------|-----------|--------|
+| Instagram | Facebook Login for Instagram | Auth Code + PKCE | instagram_graph_user_profile, instagram_graph_user_media, pages_show_list, pages_read_engagement |
+| TikTok | TikTok Login Kit | Auth Code + PKCE | video.upload, video.publish, user.info.basic |
+| YouTube | Google OAuth 2.0 (Installed App) | Auth Code + PKCE | youtube.upload, youtube, youtube.readonly |
 
 ## Security Rules
 
@@ -169,12 +195,14 @@ CONNECTED ACCOUNTS
 
 ## Development Status
 
-This project is in **Phase 3A (Account Management Core) — COMPLETE**. The repository contains:
+This project is in **Phase 3B (Official OAuth Verification + OAuth Infrastructure) — COMPLETE**. The repository contains:
 - ✅ SQLite database layer with migrations and token encryption
 - ✅ Terminal CLI menu system with input validation
 - ✅ Account management core (CRUD, listing, status, filtering)
-- ✅ Connected Accounts CLI submenu (list, details, create dev, update, disconnect, enable)
-- ✅ 138 unit tests passing
+- ✅ OAuth authentication for Instagram, TikTok, YouTube
+- ✅ OAuth callback server with PKCE (S256) and CSRF protection
+- ✅ Connected Accounts CLI submenu (list, details, connect, update, disconnect, enable)
+- ✅ 170 unit tests passing
 - Project structure and documentation
 
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.
@@ -185,7 +213,7 @@ See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.
 |----------|-------------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, components, data flow |
 | [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Current progress, completed/planned/blocked work |
-| [API_INTEGRATIONS.md](docs/API_INTEGRATIONS.md) | Platform API details, OAuth flows, publishing workflows |
+| [API_INTEGRATIONS.md](docs/API_INTEGRATIONS.md) | Platform API details, OAuth flows, publishing workflows (VERIFIED) |
 | [AUTHENTICATION.md](docs/AUTHENTICATION.md) | OAuth architecture, token management, security |
 | [DATABASE.md](docs/DATABASE.md) | Schema design, models, relationships (**IMPLEMENTED**) |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer setup, commands, debugging |

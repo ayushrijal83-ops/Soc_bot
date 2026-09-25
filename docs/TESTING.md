@@ -11,7 +11,7 @@
 
 ```
 tests/
-├── unit/                    # Fast, isolated unit tests (138 tests ✅)
+├── unit/                    # Fast, isolated unit tests (170 tests ✅)
 │   ├── test_tokens.py       # Token encryption (14 tests)
 │   ├── test_database.py     # Database layer (33 tests)
 │   ├── test_cli_display.py  # Display utilities (11 tests)
@@ -19,15 +19,18 @@ tests/
 │   ├── test_cli_menu.py     # Menu navigation (14 tests)
 │   ├── test_main.py         # Entry point (4 tests)
 │   ├── test_account_manager.py  # Account management (38 tests)
-│   ├── test_validation.py   # 📋 PLANNED
-│   ├── test_models.py       # 📋 PLANNED
+│   ├── test_auth_state.py       # OAuth state/PKCE (10 tests)
+│   ├── test_auth_callback.py    # OAuth callback server (7 tests)
+│   ├── test_platform_auth.py    # Platform auth adapters (9 tests)
+│   ├── test_validation.py       # 📋 PLANNED
+│   ├── test_models.py           # 📋 PLANNED
 │   ├── test_job_state_machine.py  # 📋 PLANNED
-│   └── test_cli_parsing.py  # 📋 PLANNED
+│   └── test_cli_parsing.py      # 📋 PLANNED
 ├── integration/             # Slower, cross-component tests
 │   ├── test_database.py     # 📋 PLANNED (uses temp DB)
 │   ├── test_account_manager.py  # 📋 PLANNED
 │   ├── test_publisher_engine.py  # 📋 PLANNED
-│   └── test_oauth_flows.py  # 📋 PLANNED
+│   └── test_oauth_flows.py   # 📋 PLANNED
 ├── platform/                # Platform-specific tests (mocked APIs)
 │   ├── test_instagram_adapter.py  # 📋 PLANNED
 │   ├── test_tiktok_adapter.py    # 📋 PLANNED
@@ -40,7 +43,7 @@ tests/
     └── test_accounts.json
 ```
 
-## Unit Tests (Implemented: 138)
+## Unit Tests (Implemented: 170)
 
 | Test Module | Tests | Coverage |
 |-------------|-------|----------|
@@ -51,6 +54,9 @@ tests/
 | `test_cli_menu.py` | 14 | Init, routing, handlers, run loop, edge cases |
 | `test_main.py` | 4 | Args parsing, dry-run, KeyboardInterrupt, exceptions |
 | `test_account_manager.py` | 38 | Account CRUD, listing, filtering, updates, disconnect, enable, dev accounts, security, edge cases |
+| `test_auth_state.py` | 10 | OAuth state, PKCE, expiration, cleanup |
+| `test_auth_callback.py` | 7 | OAuth callback server, success, error, missing code/state, invalid state |
+| `test_platform_auth.py` | 9 | Platform auth adapters (config, URLs, PKCE for all 3) |
 
 ### Token Encryption Tests (`test_tokens.py`)
 - Key generation produces valid URL-safe base64
@@ -119,6 +125,26 @@ tests/
 - **Error Hierarchy**: AccountError, AccountNotFoundError, DuplicateAccountError, InvalidPlatformError, InvalidStatusError
 - **Edge Cases**: expires_at updates, meta_json updates, case-sensitive platform/status validation, ordering verification
 
+### OAuth State Tests (`test_auth_state.py`)
+- **OAuthState**: creation, expiration checks, validity
+- **OAuthStateStore**: create, get, consume, cleanup, expiration
+- **PKCE**: verifier generation, challenge generation (S256), uniqueness
+
+### OAuth Callback Tests (`test_auth_callback.py`)
+- Server start/stop
+- Timeout handling
+- Successful callback integration (real HTTP request)
+- Error from provider (access_denied)
+- Missing code parameter
+- Missing state parameter
+- Invalid/expired state
+
+### Platform Auth Tests (`test_platform_auth.py`)
+- **InstagramAuth**: config creation, validation, PKCE, authorization URL
+- **TikTokAuth**: config creation, authorization URL
+- **YouTubeAuth**: config creation, authorization URL
+- PKCE pair generation for all platforms
+
 ## Integration Tests (Implemented: 0)
 
 | Test Module | Coverage Target |
@@ -126,6 +152,7 @@ tests/
 | `test_database.py` | CRUD, migrations, constraints (temp DB) |
 | `test_account_manager.py` | OAuth flow, token refresh, disconnect |
 | `test_publisher_engine.py` | Job creation, execution, dry-run |
+| `test_oauth_flows.py` | 📋 PLANNED |
 
 ## Platform Adapter Tests (Implemented: 0)
 
@@ -137,15 +164,16 @@ Each platform adapter tested against **mocked official API responses**:
 - Token refresh
 - Error handling (rate limit, auth expired, invalid media)
 
-## OAuth Tests (Implemented: 0)
+## OAuth Tests (Implemented: 7)
 
-- PKCE code generation/validation
-- Authorization URL construction
-- State parameter CSRF protection
-- Callback server handling
-- Token exchange
-- Token refresh
-- Revoked token detection
+- OAuth state creation and expiration
+- PKCE verifier/challenge generation and validation
+- Callback server start/stop, timeout
+- Successful callback with code + state
+- Provider error (access_denied)
+- Missing code parameter
+- Missing state parameter
+- Invalid/expired state
 
 ## Publishing Tests (Implemented: 0)
 
@@ -193,7 +221,7 @@ Each platform adapter tested against **mocked official API responses**:
 # All tests
 pytest
 
-# Unit only (fast) — 138 tests passing
+# Unit only (fast) — 170 tests passing
 pytest tests/unit -v
 
 # Integration (requires test DB)
@@ -234,6 +262,6 @@ jobs:
 ```
 
 ## Current Status
-✅ **Phase 1, 2 & 3A UNIT TESTS IMPLEMENTED** — 138 tests passing covering token encryption, database layer, CLI framework, and Account Management Core.
+✅ **Phase 1, 2, 3A & 3B UNIT TESTS IMPLEMENTED** — 170 tests passing covering token encryption, database layer, CLI framework, Account Management Core, and OAuth Infrastructure.
 
-Next: Integration tests for account manager and publisher engine (Phase 3B-4).
+Next: Integration tests for account manager and publisher engine (Phase 4).

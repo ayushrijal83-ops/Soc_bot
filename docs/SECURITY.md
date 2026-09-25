@@ -75,6 +75,72 @@ videos/
 | Access/Refresh Tokens | Encrypted DB (Fernet) | Auto via OAuth |
 | Database | File (SQLite) | N/A |
 
+## OAuth Security (IMPLEMENTED)
+
+### CSRF Protection
+- **State parameter** — Cryptographically random, single-use, expires
+- **State validation** — Required on every callback, mismatch = rejection
+- **State expiration** — 10 minutes default, cleaned up after use
+
+### PKCE (Proof Key for Code Exchange)
+- **Code verifier** — 32-128 char cryptographically random string
+- **Code challenge** — S256 (SHA-256) of verifier
+- **Verifier storage** — In-memory with authorization state, cleaned up after callback
+- **Platform support:** Required for Instagram, TikTok, YouTube (all verified)
+
+### Redirect URI Protection
+- **Exact match required** — Must match platform dashboard exactly
+- **Localhost only** — Binds to 127.0.0.1, not 0.0.0.0
+- **Path validation** — Only accepts configured callback paths
+
+### Token Handling
+```python
+# Encryption
+fernet = Fernet(key)
+encrypted = fernet.encrypt(token.encode())
+
+# Decryption
+decrypted = fernet.decrypt(encrypted).decode()
+```
+
+Implementation: `src/storage/tokens.py`
+- `TokenEncryption` class with `encrypt()`, `decrypt()`, `encrypt_optional()`, `decrypt_optional()`
+- `generate_key()` utility for key generation
+- Key loaded from `ENCRYPTION_KEY` environment variable
+- Never hardcoded, never in repo
+- Rotate key → re-encrypt all tokens (future feature)
+
+### Authorization State Management
+- **In-memory storage** — Single-use, expires after 10 minutes
+- **Auto-cleanup** — Removed after callback, timeout, or cancellation
+- **Never persisted** to database or disk
+- **Platform-specific** — Separate state per authorization attempt
+
+## .env Protection
+
+```
+# .gitignore entries
+.env
+.env.*
+*.env
+data/*.db
+logs/
+videos/
+```
+
+- `.env.example` committed (template only)
+- `.env` never committed
+- Pre-commit hook to detect accidental commits (future)
+
+## Secret Management
+
+| Secret | Storage | Rotation |
+|--------|---------|----------|
+| Platform App ID/Secret | .env | Platform dashboard |
+| Encryption Key | .env | Manual (re-encrypt DB) |
+| Access/Refresh Tokens | Encrypted DB (Fernet) | Auto via OAuth |
+| Database | File (SQLite) | N/A |
+
 ## Upload Validation
 
 Before any API call:

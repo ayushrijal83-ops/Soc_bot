@@ -7,6 +7,7 @@ import sys
 from src.storage.database import get_database
 from src.storage.tokens import TokenEncryption
 from src.accounts.manager import AccountManager
+from src.auth.manager import create_auth_manager
 from src.cli.menu import run_menu
 
 
@@ -36,11 +37,12 @@ Examples:
 
 
 def initialize_services():
-    """Initialize database, encryption, and account manager."""
+    """Initialize database, encryption, account manager, and auth manager."""
     db = get_database()
     encryption = TokenEncryption()
     account_manager = AccountManager(db, encryption)
-    return account_manager
+    auth_manager = create_auth_manager(db, encryption, account_manager)
+    return account_manager, auth_manager
 
 
 def main() -> int:
@@ -54,8 +56,8 @@ def main() -> int:
         return 0
 
     try:
-        account_manager = initialize_services()
-        run_menu(account_manager=account_manager)
+        account_manager, auth_manager = initialize_services()
+        run_menu(account_manager=account_manager, auth_manager=auth_manager)
         return 0
     except KeyboardInterrupt:
         print("\n\nInterrupted. Goodbye!")

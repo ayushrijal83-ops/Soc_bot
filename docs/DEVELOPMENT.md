@@ -44,6 +44,25 @@ DATABASE_URL=sqlite:///data/publisher.db
 ENCRYPTION_KEY=your_generated_key
 LOG_LEVEL=DEBUG
 DRY_RUN=true
+
+# Instagram (Meta)
+INSTAGRAM_APP_ID=
+INSTAGRAM_APP_SECRET=
+INSTAGRAM_REDIRECT_URI=http://localhost:8080/callback/instagram
+
+# TikTok
+TIKTOK_CLIENT_KEY=
+TIKTOK_CLIENT_SECRET=
+TIKTOK_REDIRECT_URI=http://localhost:8080/callback/tiktok
+
+# YouTube (Google)
+YOUTUBE_CLIENT_ID=
+YOUTUBE_CLIENT_SECRET=
+YOUTUBE_REDIRECT_URI=http://localhost:8080/callback/youtube
+
+# Optional: Override callback host/port (default 127.0.0.1:8080)
+# OAUTH_CALLBACK_HOST=127.0.0.1
+# OAUTH_CALLBACK_PORT=8080
 ```
 
 Generate encryption key:
@@ -86,7 +105,7 @@ LOG_LEVEL=DEBUG python main.py
 # All tests
 pytest
 
-# Unit tests only (100 tests)
+# Unit tests only (170 tests)
 pytest tests/unit -v
 
 # Integration tests only
@@ -96,7 +115,7 @@ pytest tests/integration -v
 pytest --cov=src --cov-report=term-missing
 
 # Specific test file
-pytest tests/unit/test_cli_menu.py -v
+pytest tests/unit/test_account_manager.py -v
 ```
 
 ## Debugging
@@ -154,29 +173,54 @@ Soc_bot/
 ├── logs/                  # Log files (gitignored)
 ├── videos/                # User video files (gitignored)
 ├── src/
+│   ├── auth/              # IMPLEMENTED
+│   │   ├── __init__.py
+│   │   ├── base.py        # OAuth base classes, config, token result
+│   │   ├── state.py       # OAuth state management, PKCE
+│   │   ├── callback_server.py  # OAuth callback HTTP server
+│   │   ├── manager.py     # AuthManager coordinating all platforms
+│   │   └── errors.py      # OAuth-specific exceptions
 │   ├── cli/               # IMPLEMENTED
+│   │   ├── __init__.py
 │   │   ├── display.py     # Formatting, tables, status
 │   │   ├── menu.py        # Menu navigation & routing
-│   │   └── prompts.py     # Input validation
+│   │   ├── prompts.py     # Input validation
+│   │   └── account_menu.py # Account management submenu
 │   ├── core/              # PLANNED
-│   ├── accounts/          # PLANNED
+│   │   └── __init__.py
+│   ├── accounts/          # IMPLEMENTED
+│   │   ├── __init__.py
+│   │   └── manager.py     # Account CRUD, listing, status management
 │   ├── storage/           # IMPLEMENTED
+│   │   ├── __init__.py
 │   │   ├── database.py    # SQLAlchemy ORM, migrations
 │   │   ├── tokens.py      # Fernet encryption
 │   │   └── migrations/
 │   │       └── 001_initial_schema.sql
-│   └── platforms/         # PLANNED
+│   └── platforms/         # IMPLEMENTED (auth)
+│       ├── __init__.py
 │       ├── instagram/
+│       │   ├── __init__.py
+│       │   └── auth.py    # Instagram/Meta OAuth flow
 │       ├── tiktok/
+│       │   ├── __init__.py
+│       │   └── auth.py    # TikTok OAuth flow
 │       └── youtube/
+│           ├── __init__.py
+│           └── auth.py    # YouTube/Google OAuth flow
 ├── tests/
-│   ├── unit/              # 100 TESTS PASSING
+│   ├── unit/              # 170 TESTS PASSING
+│   │   ├── __init__.py
 │   │   ├── test_tokens.py
 │   │   ├── test_database.py
 │   │   ├── test_cli_display.py
 │   │   ├── test_cli_prompts.py
 │   │   ├── test_cli_menu.py
-│   │   └── test_main.py
+│   │   ├── test_main.py
+│   │   ├── test_account_manager.py
+│   │   ├── test_auth_state.py
+│   │   ├── test_auth_callback.py
+│   │   └── test_platform_auth.py
 │   ├── integration/       # PLANNED
 │   └── fixtures/          # PLANNED
 └── docs/

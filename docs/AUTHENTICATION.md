@@ -35,7 +35,42 @@ Local HTTP server on `http://localhost:8080/callback/{platform}`:
 - Returns success/failure HTML to browser
 - Shuts down after receiving callback
 
-## Access Tokens
+## Platform-Specific OAuth Details
+
+### Instagram (Meta / Facebook Login for Instagram)
+- **Authorization URL:** `https://www.facebook.com/v22.0/dialog/oauth`
+- **Token URL:** `https://graph.facebook.com/v22.0/oauth/access_token`
+- **Scopes:** `instagram_graph_user_profile`, `instagram_graph_user_media`, `pages_show_list`, `pages_read_engagement`
+- **PKCE:** Required (S256)
+- **State:** Required (CSRF protection)
+- **Account Linking:** Instagram Business/Creator account must be linked to Facebook Page
+- **Access Token Lifetime:** 60 days (extendable via long-lived token exchange)
+- **Refresh:** Long-lived tokens can be refreshed before expiry
+
+### TikTok
+- **Authorization URL:** `https://www.tiktok.com/v2/auth/authorize/`
+- **Token URL:** `https://open.tiktokapis.com/v2/oauth/token/`
+- **Scopes:** `video.upload`, `video.publish`, `user.info.basic`
+- **PKCE:** Required (S256)
+- **State:** Required (CSRF protection)
+- **Access Token Lifetime:** 2 years (refreshable)
+- **Refresh Endpoint:** `https://open.tiktokapis.com/v2/oauth/token/`
+
+### YouTube (Google OAuth 2.0)
+- **Authorization URL:** `https://accounts.google.com/o/oauth2/v2/auth`
+- **Token URL:** `https://oauth2.googleapis.com/token`
+- **Scopes:** `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube`, `https://www.googleapis.com/auth/youtube.readonly`
+- **PKCE:** Required (S256)
+- **State:** Required (CSRF protection)
+- **Access Token Lifetime:** 1 hour
+- **Refresh Token:** Until revoked (offline access)
+- **Refresh Endpoint:** `https://oauth2.googleapis.com/token`
+- **Access Type:** `offline` (required for refresh token)
+- **Prompt:** `consent` (to ensure refresh token on first auth)
+
+## Token Storage
+
+### Access Tokens
 
 | Platform | Token Type | Typical Lifetime |
 |----------|------------|------------------|
@@ -45,11 +80,11 @@ Local HTTP server on `http://localhost:8080/callback/{platform}`:
 
 **Never log access tokens.** Store encrypted only.
 
-## Refresh Tokens
+### Refresh Tokens
 
 | Platform | Refresh Token Lifetime | Refresh Endpoint |
 |----------|------------------------|------------------|
-| Instagram | 60 days (with token refresh) | `https://graph.facebook.com/v21.0/oauth/access_token` |
+| Instagram | 60 days (with token refresh) | `https://graph.facebook.com/v22.0/oauth/access_token` |
 | TikTok | Long-lived (revocable) | `https://open.tiktokapis.com/v2/oauth/token/` |
 | YouTube | Until revoked | `https://oauth2.googleapis.com/token` |
 
@@ -72,17 +107,17 @@ def needs_refresh(expires_at: datetime) -> bool:
 
 ```
 API Call → 401 Unauthorized / Token Expired
-    |
-    v
+     |
+     v
 Refresh Token Request (with stored refresh_token)
-    |
-    v
+     |
+     v
 New Access Token + New Refresh Token (if rotated)
-    |
-    v
+     |
+     v
 Update Database (atomic)
-    |
-    v
+     |
+     v
 Retry Original API Call
 ```
 
@@ -138,6 +173,25 @@ decrypted = fernet.decrypt(encrypted).decode()
 ```env
 ENCRYPTION_KEY=base64_encoded_32_byte_key
 # Generated via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Instagram
+INSTAGRAM_APP_ID=
+INSTAGRAM_APP_SECRET=
+INSTAGRAM_REDIRECT_URI=http://localhost:8080/callback/instagram
+
+# TikTok
+TIKTOK_CLIENT_KEY=
+TIKTOK_CLIENT_SECRET=
+TIKTOK_REDIRECT_URI=http://localhost:8080/callback/tiktok
+
+# YouTube
+YOUTUBE_CLIENT_ID=
+YOUTUBE_CLIENT_SECRET=
+YOUTUBE_REDIRECT_URI=http://localhost:8080/callback/youtube
+
+# Callback Server
+OAUTH_CALLBACK_HOST=127.0.0.1
+OAUTH_CALLBACK_PORT=8080
 ```
 
 **Never commit encryption key.** Generate unique per deployment.

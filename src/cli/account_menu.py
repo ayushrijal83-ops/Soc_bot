@@ -1,5 +1,6 @@
 """Account management submenu for the CLI."""
 
+import asyncio
 from collections.abc import Callable
 
 from src.accounts.manager import (
@@ -31,12 +32,16 @@ from src.cli.prompts import (
 class AccountMenuHandler:
     """Handles account management submenu navigation and actions."""
 
-    def __init__(self, account_manager: AccountManager):
+    def __init__(self, account_manager: AccountManager, auth_manager=None):
         self.account_manager = account_manager
+        self.auth_manager = auth_manager
         self.running = True
         self.menu_options = [
             "List Accounts",
             "Account Details",
+            "Connect Instagram",
+            "Connect TikTok",
+            "Connect YouTube",
             "Create Development Account",
             "Update Account",
             "Disconnect Account",
@@ -59,11 +64,14 @@ class AccountMenuHandler:
         handlers: dict[int, Callable[[], bool]] = {
             1: self.handle_list_accounts,
             2: self.handle_account_details,
-            3: self.handle_create_development_account,
-            4: self.handle_update_account,
-            5: self.handle_disconnect_account,
-            6: self.handle_enable_account,
-            7: self.handle_back,
+            3: lambda: self.handle_connect_account("instagram"),
+            4: lambda: self.handle_connect_account("tiktok"),
+            5: lambda: self.handle_connect_account("youtube"),
+            6: self.handle_create_development_account,
+            7: self.handle_update_account,
+            8: self.handle_disconnect_account,
+            9: self.handle_enable_account,
+            10: self.handle_back,
         }
 
         handler = handlers.get(choice)
@@ -146,6 +154,56 @@ class AccountMenuHandler:
         except AccountError as e:
             print_error(f"Error: {e}")
             self._pause()
+        return True
+
+    def handle_connect_account(self, platform: str) -> bool:
+        """Handle Connect Account option for a specific platform."""
+        clear_screen()
+        platform_display = platform.title()
+        print_header(f"CONNECT {platform_display}")
+
+        if not self.auth_manager:
+            print_error("Auth manager not initialized")
+            self._pause()
+            return True
+
+        if not self.auth_manager.is_configured(platform):
+            print_warning(f"{platform_display} OAuth is not configured.")
+            print_info("Set the required environment variables in .env:")
+            if platform == "instagram":
+                print_info("  INSTAGRAM_APP_ID")
+                print_info("  INSTAGRAM_APP_SECRET")
+            elif platform == "tiktok":
+                print_info("  TIKTOK_CLIENT_KEY")
+                print_info("  TIKTOK_CLIENT_SECRET")
+            elif platform == "youtube":
+                print_info("  YOUTUBE_CLIENT_ID")
+                print_info("  YOUTUBE_CLIENT_SECRET")
+            print_info("Then restart the application.")
+            self._pause()
+            return True
+
+        print_info(f"Starting {platform_display} OAuth authorization...")
+        print_info("Your browser will open for authorization.")
+        print_info("Waiting for authorization...")
+
+        try:
+            # Run the async connect_account method
+            result = asyncio.run(self.auth_manager.connect_account(platform))
+
+            if result.get("success"):
+                account = result.get("account", {})
+                print_success(f"{platform_display} account connected successfully!")
+                print_info(f"Account ID: {account.get('id')}")
+                print_info(f"Username: {account.get('username')}")
+                print_info(f"Display Name: {account.get('display_name')}")
+            else:
+                print_error(f"Failed to connect {platform_display}: {result.get('error', 'Unknown error')}")
+
+        except Exception as e:
+            print_error(f"Error during OAuth: {e!s}")
+
+        self._pause()
         return True
 
     def handle_create_development_account(self) -> bool:
@@ -269,7 +327,17 @@ class AccountMenuHandler:
             if not confirm("Disconnect this account?", default=False):
                 return True
 
-            self.account_manager.disconnect_account(account_id)
+            # Use auth manager to properly disconnect (revoke tokens)
+            if self.auth_manager:
+                try:
+                    self.auth_manager.disconnect_account(account_id)
+                except Exception as e:
+                    print_warning(f"Token revocation warning: {e}")
+                    # Still disconnect locally
+                    self.account_manager.disconnect_account(account_id)
+            else:
+                self.account_manager.disconnect_account(account_id)
+
             print_success("Account disconnected successfully!")
             self._pause()
         except AccountNotFoundError:
@@ -333,7 +401,7 @@ class AccountMenuHandler:
             self.running = self.handle_choice(choice)
 
 
-def run_account_menu(account_manager: AccountManager) -> None:
+def run_account_menu(account_manager: AccountManager, auth_manager=None) -> None:
     """Entry point for running the account management menu."""
-    handler = AccountMenuHandler(account_manager)
+    handler = AccountMenuHandler(account_manager, auth_manager)
     handler.run()

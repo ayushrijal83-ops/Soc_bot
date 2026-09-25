@@ -9,18 +9,18 @@
                         |
            +------------+------------+
            |                         |
-     Account Manager            Job Manager
+    Account Manager            Job Manager
            |                         |
            +------------+------------+
                         |
                  Publisher Engine
                         |
-       +----------------+----------------+
-       |                |                |
-    Instagram         TikTok          YouTube
-     Adapter          Adapter          Adapter
-       |                |                |
-    Official API     Official API     Official API
+        +----------------+----------------+
+        |                |                |
+     Instagram         TikTok          YouTube
+      Adapter          Adapter          Adapter
+        |                |                |
+     Official API     Official API     Official API
 ```
 
 ## Core Components
@@ -41,27 +41,42 @@
 - Internal token access for publishing
 - Development/test account creation (explicitly labeled)
 
-### 3. Job Manager (`src/core/jobs.py`) — 📋 **PLANNED**
+### 3. Auth Manager (`src/auth/manager.py`) — ✅ **IMPLEMENTED**
+- Coordinates OAuth flows for all platforms
+- Manages platform configurations from environment
+- Orchestrates OAuth flows: browser launch, callback server, token exchange
+- Creates/updates accounts with encrypted token storage
+- Manages token refresh and revocation
+- Provides account selection for publishing
+
+### 4. Auth Infrastructure (`src/auth/`) — ✅ **IMPLEMENTED**
+- **base.py** — Base classes: OAuthConfig, OAuthTokenResult, PlatformAuth
+- **state.py** — OAuth state management, PKCE (S256) generation/validation
+- **callback_server.py** — Local HTTP callback server (port 8080) with timeout, CSRF protection
+- **errors.py** — OAuth-specific exception hierarchy
+- **manager.py** — AuthManager coordinating all platform adapters
+
+### 5. Job Manager (`src/core/jobs.py`) — 📋 **PLANNED**
 - Creates independent publishing jobs per destination (platform + account)
 - Manages job lifecycle: PENDING → UPLOADING → PROCESSING → PUBLISHED / FAILED
 - Retry logic with exponential backoff
 - Job queue persistence
 - Concurrency control (max parallel uploads)
 
-### 4. Publisher Engine (`src/core/publisher.py`) — 📋 **PLANNED**
+### 6. Publisher Engine (`src/core/publisher.py`) — 📋 **PLANNED**
 - Platform-agnostic orchestration layer
 - Coordinates validation, upload, and publishing per job
 - Calls platform adapters through a common interface
 - Aggregates results across all destinations
 - Dry-run simulation
 
-### 5. Platform Adapters (`src/platforms/{instagram,tiktok,youtube}/`) — 📋 **PLANNED**
+### 7. Platform Adapters (`src/platforms/{instagram,tiktok,youtube}/`) — 📋 **PLANNED** (auth ✅ IMPLEMENTED)
 Each adapter implements a common interface:
-- **auth.py** — Platform-specific OAuth flow, token exchange, refresh
+- **auth.py** — Platform-specific OAuth flow, token exchange, refresh ✅ **IMPLEMENTED**
 - **client.py** — API client wrapper, request/response handling, rate limiting
 - **publisher.py** — Media upload, post creation, status polling
 
-### 6. Storage (`src/storage/`) — ✅ **IMPLEMENTED**
+### 8. Storage (`src/storage/`) — ✅ **IMPLEMENTED**
 - **database.py** — SQLite connection, migrations, ORM/models
 - **tokens.py** — Token encryption/decryption, secure storage
 
@@ -102,7 +117,7 @@ Platform/Account Selection
 main.py
   └── CLI Menu (menu.py)
         ├── Create Post → prompts.py → validation.py → Job Manager
-        ├── Connected Accounts → account_menu.py → Account Manager
+        ├── Connected Accounts → account_menu.py → AuthManager → Account Manager
         ├── Publishing Queue → Job Manager → status display
         ├── History → Database queries → display.py
         ├── Settings → Configuration display/edit
@@ -121,6 +136,16 @@ Responsibilities:
 - Safe display (no tokens in output)
 - Internal token access for publishing
 - Development/test account creation (explicitly labeled)
+
+## Auth Manager — ✅ **IMPLEMENTED**
+
+Responsibilities:
+- Coordinate OAuth flows for all platforms
+- Manage platform configurations from environment
+- Orchestrate OAuth flows: browser launch, callback server, token exchange
+- Create/update accounts with encrypted token storage
+- Manage token refresh and revocation
+- Provide account selection for publishing
 
 ## Job Manager
 
@@ -152,19 +177,28 @@ class PublisherEngine:
     def dry_run(self, post: Post, destinations: list[Account]) -> DryRunPlan
 ```
 
-## Platform Adapters
+## Platform Adapters — Auth ✅ IMPLEMENTED
 
-Common Interface (Protocol):
-```python
-class PlatformAdapter(Protocol):
-    platform_name: str
-    
-    def validate_media(self, video_path: str) -> ValidationResult
-    def upload_media(self, video_path: str, caption: str, account: Account) -> UploadResult
-    def poll_status(self, upload_id: str, account: Account) -> ProcessingStatus
-    def publish(self, upload_id: str, account: Account) -> PublishResult
-    def refresh_tokens(self, account: Account) -> TokenSet
-```
+### Instagram (Meta / Facebook Login for Instagram)
+- **Authorization URL**: `https://www.facebook.com/v22.0/dialog/oauth`
+- **Token URL**: `https://graph.facebook.com/v22.0/oauth/access_token`
+- **Scopes**: `instagram_graph_user_profile`, `instagram_graph_user_media`, `pages_show_list`, `pages_read_engagement`
+- **PKCE**: Required (S256)
+- **Account Linking**: Instagram Business/Creator account linked to Facebook Page
+
+### TikTok
+- **Authorization URL**: `https://www.tiktok.com/v2/auth/authorize/`
+- **Token URL**: `https://open.tiktokapis.com/v2/oauth/token/`
+- **Scopes**: `video.upload`, `video.publish`, `user.info.basic`
+- **PKCE**: Required (S256)
+
+### YouTube (Google OAuth 2.0)
+- **Authorization URL**: `https://accounts.google.com/o/oauth2/v2/auth`
+- **Token URL**: `https://oauth2.googleapis.com/token`
+- **Scopes**: `youtube.upload`, `youtube`, `youtube.readonly`
+- **PKCE**: Required (S256)
+- **Access Type**: `offline` (for refresh token)
+- **Prompt**: `consent`
 
 ## Storage
 
@@ -180,9 +214,9 @@ Token encryption using Fernet (symmetric encryption) with key from environment.
 ## Authentication
 
 OAuth 2.0 / 2.1 flows per platform:
-- Instagram: Meta OAuth (Instagram Graph API)
-- TikTok: TikTok OAuth 2.0 (Creator API)
-- YouTube: Google OAuth 2.0 (YouTube Data API v3)
+- Instagram: Meta OAuth (Instagram Graph API) — **IMPLEMENTED**
+- TikTok: TikTok OAuth 2.0 (Creator API) — **IMPLEMENTED**
+- YouTube: Google OAuth 2.0 (YouTube Data API v3) — **IMPLEMENTED**
 
 Local callback server on `http://localhost:8080/callback/{platform}`.
 
