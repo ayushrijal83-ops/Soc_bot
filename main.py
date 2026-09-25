@@ -3,6 +3,9 @@
 
 import argparse
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from src.accounts.manager import AccountManager
 from src.auth.manager import create_auth_manager
@@ -11,6 +14,17 @@ from src.cli.publish_menu import print_plan
 from src.core.publisher import PublisherEngine
 from src.storage.database import get_database
 from src.storage.tokens import TokenEncryption
+
+# The project's .env, found relative to this file so it works from any working directory.
+ENV_FILE = Path(__file__).resolve().parent / ".env"
+
+
+def load_environment(env_file: Path | None = None) -> bool:
+    """Load .env into os.environ. Variables already set in the real environment win.
+
+    Returns True if the file existed. Values are never printed or logged.
+    """
+    return load_dotenv(env_file or ENV_FILE, override=False)
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +90,7 @@ def run_dry_run() -> int:
 def main() -> int:
     """Main entry point."""
     args = parse_args()
+    load_environment()  # before anything reads DATABASE_URL, ENCRYPTION_KEY or platform credentials
 
     try:
         if args.dry_run:

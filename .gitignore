@@ -5,6 +5,10 @@
 *.env
 !.env.example
 
+# Downloaded OAuth client files and other credentials
+secrets/
+client_secret*.json
+
 # Database
 data/*.db
 data/*.sqlite

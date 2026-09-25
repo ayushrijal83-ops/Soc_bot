@@ -398,6 +398,21 @@ Before fixes: 170 passed
 
 ---
 
+## Phase 5: Real Provider Verification (IN PROGRESS, started 2026-09-25)
+
+**YouTube configuration: done (real OAuth NOT RUN yet)**
+- [x] Google Cloud OAuth client (Desktop app) created by the user; `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` are in the project `.env` (values never printed or committed)
+- [x] `main.py` loads the project `.env` at startup (`load_environment()`, python-dotenv, `override=False`) before any configuration is read, so real environment variables take priority
+- [x] Verified without printing values: `.env` loaded, YouTube configured, the only configured platform, dynamic loopback redirect (`YOUTUBE_REDIRECT_URI` empty), callback 127.0.0.1:0
+- [x] `.gitignore` now also ignores `secrets/` and `client_secret*.json`. A downloaded `secrets/youtube_client.json` was untracked and not ignored.
+- [x] Tests: `.env` loading, real-env priority, missing file, YouTube configured from `.env`, loaded before services start (fake values only; tests never read the real `.env`)
+- [ ] **Blocker: `ENCRYPTION_KEY` is empty in `.env`.** Normal startup (`TokenEncryption()`) fails and OAuth tokens can't be stored until it's set. The user must generate one: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`, then put it in `.env` without sharing it.
+- [ ] Real YouTube OAuth (Connected Accounts → Connect YouTube): NOT RUN
+- [ ] Real private YouTube test upload: NOT RUN
+- Instagram / TikTok: not configured, untouched
+
+---
+
 ## Phase 4 Implementation Summary (2026-09-25, Claude Code)
 
 ### Files created
@@ -433,7 +448,6 @@ See ARCHITECTURE.md → "Publishing (Phase 4)" for the state machine, engine flo
 - No real-provider verification (OAuth or publishing)
 - No History / Settings menus
 - No structured logging (ADR-010)
-- No `.env` loading at startup
 - No TikTok creator-info export screen per TikTok UX guidelines
 - No Integration/E2E tests against real providers
 
@@ -588,7 +602,7 @@ Run: `pytest tests/unit/ -v`
 | TikTok unaudited app | Only `SELF_ONLY` posts | TikTok app audit |
 | YouTube unverified project | Uploads forced private | Google API project verification |
 | Instagram redirect URI: Meta may require HTTPS | Plain loopback callback may be rejected | Check the dashboard; use an HTTPS tunnel/redirect if required |
-| `main.py` does not call `load_dotenv()` | `.env` values are not picked up automatically | Export variables in the shell (or add `load_dotenv()`) |
+| `ENCRYPTION_KEY` empty in `.env` | App can't start normally; tokens can't be stored | User generates a Fernet key and sets it in `.env` |
 | TikTok `refresh_expires_in` not persisted | Can't warn before the refresh token expires | Add a column in a later migration |
 | No logging setup | No observability | Add in Phase 5 |
 | History / Settings menus | Show "not implemented" | Phase 6 |

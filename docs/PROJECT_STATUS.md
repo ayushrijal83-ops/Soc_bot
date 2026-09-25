@@ -119,8 +119,21 @@
 - [x] Bugs found and fixed (regression-tested): `main.py` crashed calling `run_menu(auth_manager=...)`; Connected Accounts never received the AuthManager; timestamp defaults were fixed at import time; the migration runner skipped comment-prefixed SQL statements
 - [x] 305 unit tests passing, Ruff clean
 
+### Phase 5: Real Provider Verification (IN PROGRESS, started 2026-09-25)
+
+**YouTube configuration: done (real OAuth NOT RUN yet)**
+- [x] Google Cloud OAuth client (Desktop app) created by the user; `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` are in the project `.env` (values never printed or committed)
+- [x] `main.py` loads the project `.env` at startup (`load_environment()`, python-dotenv, `override=False`) before any configuration is read, so real environment variables take priority
+- [x] Verified without printing values: `.env` loaded, YouTube configured, the only configured platform, dynamic loopback redirect (`YOUTUBE_REDIRECT_URI` empty), callback 127.0.0.1:0
+- [x] `.gitignore` now also ignores `secrets/` and `client_secret*.json`. A downloaded `secrets/youtube_client.json` was untracked and not ignored.
+- [x] Tests: `.env` loading, real-env priority, missing file, YouTube configured from `.env`, loaded before services start (fake values only; tests never read the real `.env`)
+- [ ] **Blocker: `ENCRYPTION_KEY` is empty in `.env`.** Normal startup (`TokenEncryption()`) fails and OAuth tokens can't be stored until it's set. The user must generate one: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`, then put it in `.env` without sharing it.
+- [ ] Real YouTube OAuth (Connected Accounts → Connect YouTube): NOT RUN
+- [ ] Real private YouTube test upload: NOT RUN
+- Instagram / TikTok: not configured, untouched
+
 ### In Progress 🔄
-- None
+- Phase 5: YouTube real OAuth verification (configuration done; `ENCRYPTION_KEY` must be set first)
 
 ### Planned 📋
 
@@ -128,7 +141,8 @@
 - [ ] Configure developer apps + credentials; run real OAuth for each platform
 - [ ] Real private test post per platform (TikTok `SELF_ONLY`, YouTube `private`, Instagram test account)
 - [ ] TikTok export screen per its UX guidelines (creator nickname, live privacy options, interaction toggles)
-- [ ] Load `.env` at startup; structured, sanitized logging (ADR-010)
+- [x] Load `.env` at startup
+- [ ] Structured, sanitized logging (ADR-010)
 - [ ] Handle a 401 mid-upload by refreshing and retrying once
 
 #### Phase 6: Integration & Polish
@@ -177,7 +191,7 @@
 ## Known Limitations
 - Real OAuth: NOT RUN for any platform (no credentials configured). Mocked tests are not provider verification.
 - Instagram needs a fixed, registered `INSTAGRAM_REDIRECT_URI`. Meta may require HTTPS for it, which a plain loopback server cannot serve; check before the first real login.
-- `main.py` does not load `.env` (python-dotenv is installed but not called), so variables must be set in the shell environment
+- `.env` loading: done in Phase 5 (`main.load_environment`, real environment wins)
 - TikTok `refresh_expires_in` is not persisted (no schema column)
 - Real publishing: NOT RUN for any platform. Mocked tests verified; real provider publishing NOT verified.
 - Instagram publishing needs a public https `video_url` (no local upload with Instagram Login; ADR-012)

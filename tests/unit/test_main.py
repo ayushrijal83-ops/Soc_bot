@@ -2,11 +2,12 @@
 
 import os
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from main import main, parse_args
+from main import load_environment, main, parse_args
 
 # Set ENCRYPTION_KEY for tests that need it
 os.environ["ENCRYPTION_KEY"] = "nZEJx1hxthoUa6wzoWYOVg0rNAsmhidhd9uASEPii5s="
@@ -14,8 +15,9 @@ os.environ["ENCRYPTION_KEY"] = "nZEJx1hxthoUa6wzoWYOVg0rNAsmhidhd9uASEPii5s="
 
 @pytest.fixture(autouse=True)
 def isolated_database(tmp_path, monkeypatch):
-    """Never touch the developer's data/publisher.db from tests."""
+    """Never touch the developer's data/publisher.db or real .env from tests."""
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'main.db'}")
+    monkeypatch.setattr("main.ENV_FILE", tmp_path / "no-such.env")
 
 
 class TestParseArgs:
@@ -110,3 +112,74 @@ class TestMain:
         assert result == 1
         captured = capsys.readouterr()
         assert "Unexpected error" in captured.out
+
+ENV_VARS = ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REDIRECT_URI",
+            "TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "INSTAGRAM_APP_ID", "INSTAGRAM_APP_SECRET")
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    """Remove platform variables for the test and restore them afterwards."""
+    for name in ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
+def write_env(path, **values):
+    path.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
+    return path
+
+
+class TestLoadEnvironment:
+    """.env loading (fake values only; the real .env is never read by tests)."""
+
+    def test_loads_values_from_env_file(self, tmp_path, clean_env):
+        env = write_env(tmp_path / ".env", YOUTUBE_CLIENT_ID="fake-id.apps.googleusercontent.com",
+                        YOUTUBE_CLIENT_SECRET="fake-secret")
+        assert load_environment(env) is True
+        assert os.environ["YOUTUBE_CLIENT_ID"] == "fake-id.apps.googleusercontent.com"
+        assert os.environ["YOUTUBE_CLIENT_SECRET"] == "fake-secret"
+
+    def test_real_environment_takes_priority(self, tmp_path, clean_env):
+        clean_env.setenv("YOUTUBE_CLIENT_ID", "from-real-environment")
+        env = write_env(tmp_path / ".env", YOUTUBE_CLIENT_ID="from-dotenv", YOUTUBE_CLIENT_SECRET="s")
+        load_environment(env)
+        assert os.environ["YOUTUBE_CLIENT_ID"] == "from-real-environment"
+        assert os.environ["YOUTUBE_CLIENT_SECRET"] == "s"
+
+    def test_missing_file_is_not_an_error(self, tmp_path, clean_env):
+        assert load_environment(tmp_path / "absent.env") is False
+        assert "YOUTUBE_CLIENT_ID" not in os.environ
+
+    def test_default_path_is_project_root_env(self, monkeypatch):
+        import main as main_module
+
+        monkeypatch.undo()  # drop the autouse redirect to inspect the real default (nothing is loaded)
+
+        assert main_module.ENV_FILE.name == ".env"
+        assert main_module.ENV_FILE.parent == Path(main_module.__file__).resolve().parent
+
+    def test_youtube_configured_from_env_file(self, tmp_path, clean_env):
+        """Credentials in .env reach create_auth_manager; only YouTube is configured."""
+        from src.auth.manager import create_auth_manager
+
+        load_environment(write_env(tmp_path / ".env", YOUTUBE_CLIENT_ID="fake-id", YOUTUBE_CLIENT_SECRET="fake-secret"))
+        auth = create_auth_manager(None, None, None)
+        assert auth.is_configured("youtube")
+        assert auth.get_configured_platforms() == ["youtube"]
+        assert auth.callback_port == 0 or "OAUTH_CALLBACK_PORT" in os.environ
+
+    def test_main_loads_env_before_services_start(self, tmp_path, clean_env, monkeypatch, capsys):
+        env = write_env(tmp_path / ".env", YOUTUBE_CLIENT_ID="fake-id", YOUTUBE_CLIENT_SECRET="fake-secret-value")
+        monkeypatch.setattr("main.ENV_FILE", env)
+        seen = {}
+
+        def fake_services():
+            seen["id"] = os.environ.get("YOUTUBE_CLIENT_ID")
+            raise KeyboardInterrupt
+
+        with patch("main.initialize_services", side_effect=fake_services), patch.object(sys, "argv", ["main.py"]):
+            assert main() == 0
+        assert seen["id"] == "fake-id"
+        out = capsys.readouterr()
+        assert "fake-secret-value" not in out.out + out.err
