@@ -11,9 +11,13 @@
 
 ```
 tests/
-├── unit/                    # Fast, isolated unit tests (47 tests ✅)
+├── unit/                    # Fast, isolated unit tests (100 tests ✅)
 │   ├── test_tokens.py       # Token encryption (14 tests)
 │   ├── test_database.py     # Database layer (33 tests)
+│   ├── test_cli_display.py  # Display utilities (11 tests)
+│   ├── test_cli_prompts.py  # Input validation (24 tests)
+│   ├── test_cli_menu.py     # Menu navigation (14 tests)
+│   ├── test_main.py         # Entry point (4 tests)
 │   ├── test_validation.py   # 📋 PLANNED
 │   ├── test_models.py       # 📋 PLANNED
 │   ├── test_job_state_machine.py  # 📋 PLANNED
@@ -35,12 +39,16 @@ tests/
     └── test_accounts.json
 ```
 
-## Unit Tests (Implemented: 47)
+## Unit Tests (Implemented: 100)
 
 | Test Module | Tests | Coverage |
 |-------------|-------|----------|
 | `test_tokens.py` | 14 | Encrypt/decrypt roundtrip, special chars, empty strings, wrong key, corrupted data, optional handling, env key |
 | `test_database.py` | 33 | Init, schema version, idempotency, migrations, health check, all model CRUD, constraints, relationships, indexes, encryption integration |
+| `test_cli_display.py` | 11 | Headers, menus, tables, status messages, empty tables |
+| `test_cli_prompts.py` | 24 | Text, int, choice, yes/no, menu selection, EOF, Ctrl+C |
+| `test_cli_menu.py` | 14 | Init, routing, handlers, run loop, edge cases |
+| `test_main.py` | 4 | Args parsing, dry-run, KeyboardInterrupt, exceptions |
 
 ### Token Encryption Tests (`test_tokens.py`)
 - Key generation produces valid URL-safe base64
@@ -66,6 +74,34 @@ tests/
 - Relationships: account→jobs, post→jobs, job→attempts (ordered)
 - Token encryption integration: persist/decrypt, wrong key fails
 - Indexes: all expected indexes exist
+
+### CLI Display Tests (`test_cli_display.py`)
+- Header rendering with borders
+- Menu rendering with numbered options
+- Info/Success/Warning/Error messages
+- Not implemented message
+- Table rendering with headers and rows
+- Empty table handling
+- Clear screen function
+
+### CLI Prompts Tests (`test_cli_prompts.py`)
+- Text input: required, optional, default, EOF handling
+- Integer input: valid, min/max bounds, invalid-then-valid, default, EOF
+- Choice selection: valid, out of range, default
+- Yes/No: yes, no, default yes, default no
+- Menu selection: valid, exit option, no exit, invalid-then-valid, EOF, Ctrl+C
+
+### CLI Menu Tests (`test_cli_menu.py`)
+- Handler initialization with 6 options
+- Main menu display
+- All 6 choice handlers (Create Post, Accounts, Queue, History, Settings, Exit)
+- Invalid choice handling
+- Run loop: exits on option 6, continues on 1-5
+- None choice handling (Ctrl+C/EOF)
+
+### Main Entry Point Tests (`test_main.py`)
+- Argument parsing: default, --dry-run, --help, --version
+- Main function: normal run, dry-run mode, KeyboardInterrupt, exceptions
 
 ## Integration Tests (Implemented: 0)
 
@@ -141,7 +177,7 @@ Each platform adapter tested against **mocked official API responses**:
 # All tests
 pytest
 
-# Unit only (fast) — 47 tests passing
+# Unit only (fast) — 100 tests passing
 pytest tests/unit -v
 
 # Integration (requires test DB)
@@ -182,6 +218,6 @@ jobs:
 ```
 
 ## Current Status
-✅ **Phase 1 UNIT TESTS IMPLEMENTED** — 47 tests passing covering token encryption and database layer.
+✅ **Phase 1 & 2 UNIT TESTS IMPLEMENTED** — 100 tests passing covering token encryption, database layer, and CLI framework.
 
 Next: Integration tests for account manager and publisher engine (Phase 3-4).

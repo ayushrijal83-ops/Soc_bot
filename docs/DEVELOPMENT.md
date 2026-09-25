@@ -2,6 +2,7 @@
 
 ## Supported Python Version
 - **Python 3.11+** (tested on 3.11, 3.12)
+- **Currently running on Python 3.10.11** (CI uses 3.11+)
 
 ## Virtual Environment
 
@@ -53,20 +54,23 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ## Database Setup
 
 ```bash
-# Run migrations (when implemented)
+# Initialize database (creates tables, runs migrations)
+python -m src.storage.database init
+
+# Run pending migrations only
 python -m src.storage.database migrate
 
-# Or initialize fresh
-python -m src.storage.database init
+# Health check
+python -m src.storage.database health
 ```
 
 ## Running the Application
 
 ```bash
-# Normal mode
+# Normal mode (interactive menu)
 python main.py
 
-# Dry-run mode
+# Dry-run mode (placeholder)
 python main.py --dry-run
 
 # Help
@@ -82,17 +86,17 @@ LOG_LEVEL=DEBUG python main.py
 # All tests
 pytest
 
-# Unit tests only
-pytest tests/unit
+# Unit tests only (100 tests)
+pytest tests/unit -v
 
 # Integration tests only
-pytest tests/integration
+pytest tests/integration -v
 
 # With coverage
 pytest --cov=src --cov-report=term-missing
 
 # Specific test file
-pytest tests/unit/test_validation.py -v
+pytest tests/unit/test_cli_menu.py -v
 ```
 
 ## Debugging
@@ -138,7 +142,7 @@ mypy src
 
 ```
 Soc_bot/
-├── main.py                 # Entry point
+├── main.py                 # Entry point (IMPLEMENTED)
 ├── requirements.txt        # Production deps
 ├── requirements-dev.txt    # Dev deps
 ├── .env.example           # Env template
@@ -150,18 +154,31 @@ Soc_bot/
 ├── logs/                  # Log files (gitignored)
 ├── videos/                # User video files (gitignored)
 ├── src/
-│   ├── cli/
-│   ├── core/
-│   ├── accounts/
-│   ├── storage/
-│   └── platforms/
+│   ├── cli/               # IMPLEMENTED
+│   │   ├── display.py     # Formatting, tables, status
+│   │   ├── menu.py        # Menu navigation & routing
+│   │   └── prompts.py     # Input validation
+│   ├── core/              # PLANNED
+│   ├── accounts/          # PLANNED
+│   ├── storage/           # IMPLEMENTED
+│   │   ├── database.py    # SQLAlchemy ORM, migrations
+│   │   ├── tokens.py      # Fernet encryption
+│   │   └── migrations/
+│   │       └── 001_initial_schema.sql
+│   └── platforms/         # PLANNED
 │       ├── instagram/
 │       ├── tiktok/
 │       └── youtube/
 ├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── fixtures/
+│   ├── unit/              # 100 TESTS PASSING
+│   │   ├── test_tokens.py
+│   │   ├── test_database.py
+│   │   ├── test_cli_display.py
+│   │   ├── test_cli_prompts.py
+│   │   ├── test_cli_menu.py
+│   │   └── test_main.py
+│   ├── integration/       # PLANNED
+│   └── fixtures/          # PLANNED
 └── docs/
     ├── ARCHITECTURE.md
     ├── PROJECT_STATUS.md

@@ -26,16 +26,16 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | Component | Status |
 |-----------|--------|
 | Project structure & documentation | ✅ **IMPLEMENTED** |
-| Terminal CLI menu system | 🔄 **PLANNED** |
-| Account management (OAuth) | 🔄 **PLANNED** |
-| Job management & queue | 🔄 **PLANNED** |
-| Instagram publishing adapter | 🔄 **PLANNED** |
-| TikTok publishing adapter | 🔄 **PLANNED** |
-| YouTube publishing adapter | 🔄 **PLANNED** |
-| SQLite database layer | 🔄 **PLANNED** |
-| Video validation | 🔄 **PLANNED** |
-| Dry-run mode | 🔄 **PLANNED** |
-| Unit/integration tests | 🔄 **PLANNED** |
+| Terminal CLI menu system | ✅ **IMPLEMENTED** |
+| Account management (OAuth) | 📋 **PLANNED** |
+| Job management & queue | 📋 **PLANNED** |
+| Instagram publishing adapter | 📋 **PLANNED** |
+| TikTok publishing adapter | 📋 **PLANNED** |
+| YouTube publishing adapter | 📋 **PLANNED** |
+| SQLite database layer | ✅ **IMPLEMENTED** |
+| Video validation | 📋 **PLANNED** |
+| Dry-run mode | 📋 **PLANNED** (placeholder) |
+| Unit/integration tests | ✅ **IMPLEMENTED** (100 unit tests) |
 
 **Legend:** ✅ IMPLEMENTED | 🔄 IN PROGRESS | 📋 PLANNED | 🚫 BLOCKED
 
@@ -164,9 +164,11 @@ SOCIAL PUBLISHER v1
 
 ## Development Status
 
-This project is in **early initialization phase**. The repository contains:
+This project is in **Phase 2 (CLI Framework) — COMPLETE**. The repository contains:
+- ✅ SQLite database layer with migrations and token encryption
+- ✅ Terminal CLI menu system with input validation
+- ✅ 100 unit tests passing
 - Project structure and documentation
-- No functional code yet
 
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.
 
@@ -178,7 +180,7 @@ See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.
 | [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Current progress, completed/planned/blocked work |
 | [API_INTEGRATIONS.md](docs/API_INTEGRATIONS.md) | Platform API details, OAuth flows, publishing workflows |
 | [AUTHENTICATION.md](docs/AUTHENTICATION.md) | OAuth architecture, token management, security |
-| [DATABASE.md](docs/DATABASE.md) | Schema design, models, relationships (PLANNED) |
+| [DATABASE.md](docs/DATABASE.md) | Schema design, models, relationships (**IMPLEMENTED**) |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer setup, commands, debugging |
 | [TESTING.md](docs/TESTING.md) | Test strategy, frameworks, test types |
 | [SECURITY.md](docs/SECURITY.md) | Security practices, threat model |

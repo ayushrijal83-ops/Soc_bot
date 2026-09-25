@@ -25,12 +25,12 @@
 
 ## Core Components
 
-### 1. Terminal CLI (`src/cli/`)
+### 1. Terminal CLI (`src/cli/`) — ✅ **IMPLEMENTED**
 - **menu.py** — Main menu loop, navigation, user input handling
 - **prompts.py** — Interactive prompts for video selection, caption entry, platform/account selection
 - **display.py** — Rich text formatting, tables, progress bars, status display
 
-### 2. Account Manager (`src/accounts/manager.py`)
+### 2. Account Manager (`src/accounts/manager.py`) — 📋 **PLANNED**
 - Manages connected accounts per platform
 - Handles OAuth authorization flows
 - Stores/retrieves account credentials from database
@@ -57,7 +57,7 @@ Each adapter implements a common interface:
 - **client.py** — API client wrapper, request/response handling, rate limiting
 - **publisher.py** — Media upload, post creation, status polling
 
-### 6. Storage (`src/storage/`)
+### 6. Storage (`src/storage/`) — ✅ **IMPLEMENTED**
 - **database.py** — SQLite connection, migrations, ORM/models
 - **tokens.py** — Token encryption/decryption, secure storage
 
@@ -92,7 +92,7 @@ Platform/Account Selection
    Aggregate Results → Display → Save History
 ```
 
-## CLI Layer
+## CLI Layer — ✅ **IMPLEMENTED**
 
 ```
 main.py
