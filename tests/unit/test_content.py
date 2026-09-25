@@ -600,3 +600,30 @@ class TestContentCli:
         assert (root / "incoming" / "post_001").is_dir()
         with db.session() as s:
             assert s.query(ContentItem).count() == 0
+
+
+def test_published_video_can_go_to_newly_added_account_only(env):
+    """Same video + same account never twice; an account added to the profile later still gets it."""
+    save_profile(env, platforms=("yt_a",))
+    make_package(env[3])
+    yt = FakeYouTube("youtube", ok("V1"))
+    tt = FakePublisher("tiktok", ok("T1"))
+    intake = intake_with(env, {"youtube": yt, "tiktok": tt, "instagram": FakePublisher("instagram")})
+    intake.publish(intake.scan()[0].package)
+    assert len(yt.calls) == 1
+
+    save_profile(env, platforms=("yt_a", "tt"))
+    make_package(env[3], name="same_video_for_tiktok")
+    (entry,) = [e for e in intake.scan() if e.package.content_id == "same_video_for_tiktok"]
+    assert entry.status == "READY" and [d.platform for d in entry.destinations] == ["tiktok"]
+    assert "only new profile destinations" in entry.notes[0]
+    result = intake.publish(entry.package)
+    assert result.outcome == "published"
+    assert len(yt.calls) == 1 and len(tt.calls) == 1  # YouTube not published again
+    assert sorted(j.platform for j in result.jobs) == ["tiktok", "youtube"]
+
+    # Both accounts now done -> reported as already published.
+    make_package(env[3], name="third_copy")
+    (entry,) = [e for e in intake.scan() if e.package.content_id == "third_copy"]
+    assert entry.status == "PUBLISHED"
+

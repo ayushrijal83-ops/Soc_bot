@@ -143,6 +143,25 @@ class PlatformPublisher(ABC):
         """Whether a job interrupted mid-upload (process crash) can safely be started again."""
         return self.RESTART_SAFE
 
+    # --- permissions -------------------------------------------------------------------
+    # Each inner tuple is "any one of these"; every group must be satisfied.
+    REQUIRED_SCOPES: tuple[tuple[str, ...], ...] = ()
+
+    @classmethod
+    def missing_scopes(cls, granted: list[str] | None) -> list[str]:
+        """Scope groups not covered by ``granted``. Unknown grants (None) are not judged."""
+        if granted is None:
+            return []
+        have = set(granted)
+        return [" or ".join(group) for group in cls.REQUIRED_SCOPES if not have.intersection(group)]
+
+    def preflight(self, ctx: PublishContext) -> tuple[list[str], list[str]]:
+        """Read-only provider checks shown before the user confirms: (notes, errors).
+
+        Default: nothing. Never uploads or publishes. Not called in dry-run.
+        """
+        return [], []
+
     # --- cover / thumbnail capability ----------------------------------------------
     # Each platform documents covers differently; adapters override these.
     COVER_UNSUPPORTED_REASON = "custom cover images are not supported for this platform"

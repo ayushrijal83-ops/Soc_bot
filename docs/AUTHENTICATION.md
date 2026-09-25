@@ -95,3 +95,10 @@ OAUTH_CALLBACK_PORT=0      # 0 = dynamic (default)
 ```
 
 A fixed `*_REDIRECT_URI` must have the form `http://<host>:<port>/callback/<platform>`. The callback server binds exactly that host and port.
+
+## Granted scopes (Phase 5B)
+
+`AuthManager` stores the scopes granted in the token response (`parse_scopes`: commas for TikTok/Instagram, spaces for Google) in `accounts.meta_json` as `{"scopes": [...]}`. Only scope names are stored, never tokens. Each publisher declares `REQUIRED_SCOPES` (TikTok `video.publish`; YouTube one of `youtube.upload` / `youtube` / `youtube.force-ssl`; Instagram `instagram_business_content_publish`). An account missing one is blocked in the plan and at publish time with the exact missing scope. Accounts connected before Phase 5B have no recorded scopes and aren't judged.
+
+TikTok requests only `user.info.basic,video.publish`. See API_INTEGRATIONS.md → TikTok Setup.
+

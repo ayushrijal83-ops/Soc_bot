@@ -241,7 +241,7 @@ class TestTikTokAuth:
         assert q["client_key"] == "test_client_key"
         assert q["redirect_uri"] == "http://127.0.0.1:8080/callback/tiktok"
         assert q["response_type"] == "code"
-        assert q["scope"] == "video.upload,video.publish,user.info.basic"
+        assert q["scope"] == "user.info.basic,video.publish"  # least privilege: Direct Post only
         assert q["state"] == "test_state"
         assert q["code_challenge"] == hashlib.sha256(verifier.encode()).hexdigest()
         assert q["code_challenge_method"] == "S256"
@@ -339,3 +339,39 @@ class TestExpiryModel:
 def test_adapters_share_platform_auth_base():
     for cls in (InstagramAuth, TikTokAuth, YouTubeAuth):
         assert issubclass(cls, PlatformAuth)
+
+
+class TestTikTokErrorEnvelope:
+    """Regression: TikTok v2 returns "error": {"code": "ok"} on success; that is not a failure."""
+
+    def test_user_info_success_with_ok_error_object(self):
+        from src.platforms.tiktok import auth as tiktok_auth
+
+        body = {"data": {"user": {"open_id": "o1", "display_name": "D"}},
+                "error": {"code": "ok", "message": "", "log_id": "L"}}
+
+        class Client:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *e):
+                return False
+
+            async def get(self, url, **kw):
+                return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+
+        a = _adapter(TikTokAuth, TikTokAuth.create_config("k", "s", "http://127.0.0.1:1/callback/tiktok"))
+        with patch.object(tiktok_auth.httpx, "AsyncClient", Client):
+            identity = asyncio.run(a.get_account_identity("T"))
+        assert identity["platform_account_id"] == "o1"
+
+    def test_error_helper(self):
+        from src.platforms.tiktok.auth import _tiktok_error
+
+        assert _tiktok_error({"error": {"code": "ok"}}) is None
+        assert _tiktok_error({}) is None
+        assert "access_token_invalid" in _tiktok_error({"error": {"code": "access_token_invalid", "message": "x"}})
+        assert _tiktok_error({"error": "invalid_grant", "error_description": "Code expired"}) == "Code expired"

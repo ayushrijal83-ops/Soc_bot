@@ -6,7 +6,30 @@
 
 ## Current Objective
 
-**Phase 5A complete (2026-09-25): Smart Content Intake + Publishing Profiles + Cover/Thumbnail Support.** Users drop `content/incoming/<package>/` (video + caption.txt [+ cover, title.txt, video_url.txt]), set a publishing profile once, and publish from **Content Inbox** with one confirmation (VERIFY) or none (AUTO), through the existing PublisherEngine. YouTube OAuth, publishing and custom thumbnails have been **run against the real API**. TikTok and Instagram are implemented but **not configured / never run for real**. 378 tests pass; Ruff is clean. Next: Phase 5B (real TikTok verification).
+**Phase 5B (real TikTok verification): code complete, real run BLOCKED on credentials (2026-09-25).** All TikTok code is verified against current docs and exercised end-to-end against a mocked TikTok API (402 tests, Ruff clean). The **real** TikTok OAuth + SELF_ONLY publish has **not** run: `.env` has no `TIKTOK_CLIENT_KEY/SECRET` and no TikTok account is connected. YouTube remains real-verified. Instagram is Phase 5C.
+
+---
+
+## Phase 5B Summary (read this first)
+
+**To finish Phase 5B** (the user must do steps 1–3; see API_INTEGRATIONS.md → TikTok Setup):
+1. Create the TikTok app: Login Kit (Desktop, redirect `http://127.0.0.1:*/callback/tiktok`) + Content Posting API (Direct Post); scopes `user.info.basic`, `video.publish`
+2. Put `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` in `.env`; set the test TikTok account to private
+3. `python main.py` → Connected Accounts → Connect TikTok (browser consent). Check that the granted scopes include `video.publish`
+4. Settings → profile: TikTok account, privacy SELF_ONLY, VERIFY (YouTube/Instagram off for the test)
+5. Content Inbox → `tiktok_test` (already in `content/incoming/`: a copy of `videos/test_youtub.mp4` plus a caption, no cover). It should show READY with only the TikTok destination; the VERIFY screen shows creator info; confirm once
+6. Record: init/upload/status result, publish_id (private posts have no public post ID), lifecycle → `published/`, History shows `VIDEO: PUBLISHED`
+
+**Changes in 5B:**
+- `src/platforms/tiktok/auth.py`: scopes `user.info.basic,video.publish`; `_tiktok_error()` fixes the `"error":{"code":"ok"}` false failure; requires `open_id`
+- `src/platforms/tiktok/publisher.py`: `REQUIRED_SCOPES`, `preflight()` (creator_info) with `_creator_checks()` shared with publish
+- `src/platforms/base.py`: `REQUIRED_SCOPES`, `missing_scopes()`, `preflight()` hook
+- `src/platforms/youtube|instagram/publisher.py`: `REQUIRED_SCOPES`
+- `src/auth/base.py` `parse_scopes`; `src/auth/manager.py` stores the scopes in `meta_json` and returns them
+- `src/core/publisher.py`: `granted_scopes()`, scope check in plan and publish, `preflight()`
+- `src/content/intake.py`: `plan(live=)`, `live_entry()`, per-account duplicate rule (`done_accounts`)
+- `src/cli/content_menu.py`: live VERIFY screen, History `VIDEO:` lines; `src/cli/account_menu.py`: connect messages, scopes, missing-scope warning
+- `.env.example`: TikTok setup notes; tests: `tests/unit/test_tiktok_5b.py` (+ regression tests in test_platform_auth/test_content)
 
 ---
 
@@ -39,7 +62,7 @@
 
 ## Current Project State
 
-- **Phase:** 5A (Content Intake + Profiles + Covers): **COMPLETE**; YouTube real-verified
+- **Phase:** 5B (TikTok): code complete, real run pending credentials; 5A complete; YouTube real-verified
 - **Repository:** https://github.com/ayushrijal83-ops/Soc_bot
 - **Branch:** main
 - **Last Commit:** 90312a5 (Initial commit with docs)
@@ -104,7 +127,7 @@ Soc_bot/
 │           └── auth.py     # YouTube/Google OAuth flow
 ├── tests/
 │   ├── __init__.py
-│   ├── unit/               # 378 TESTS PASSING
+│   ├── unit/               # 402 TESTS PASSING
 │   │   ├── __init__.py
 │   │   ├── test_tokens.py
 │   │   ├── test_database.py

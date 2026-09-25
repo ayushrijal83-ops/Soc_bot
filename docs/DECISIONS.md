@@ -369,3 +369,42 @@ A thumbnail failure never fails or re-uploads a published video. It is not retri
 ### Decision
 VERIFY shows the whole plan and asks once; `ContentIntake.publish()` then never prompts. AUTO publishes READY/RESUME packages without prompting but still runs full validation and moves INVALID/BLOCKED packages to `failed/`. Failed destinations are retried only when the user confirms retrying a FAILED package; AUTO never retries failed jobs, to avoid retry loops.
 
+---
+
+## ADR-019: Least-Privilege TikTok Scopes and Recorded Grants
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+Request `user.info.basic,video.publish` only (not `video.upload`). Store the granted scopes per account and check each publisher's `REQUIRED_SCOPES` before planning or publishing.
+
+### Rationale
+Requesting a scope the app doesn't have enabled can make TikTok authorization fail. Without recorded grants, a missing permission only showed up as a provider 401 mid-publish.
+
+---
+
+## ADR-020: Provider Preflight on the VERIFY Screen
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+`PlatformPublisher.preflight(ctx)` runs read-only provider checks that are shown before the single confirmation. TikTok implements it with creator_info (nickname, allowed privacy levels, max duration). It runs only on the VERIFY screen; the inbox list, `--scan` listing and dry-run never contact providers. Publishing re-checks creator_info as before.
+
+### Consequences
+Opening the VERIFY screen for a TikTok package makes one creator_info call and may renew an expiring token.
+
+---
+
+## ADR-021: Duplicate Rule Is Per Video + Account
+
+**Date:** 2026-09-25
+**Status:** Accepted (refines ADR-016)
+
+### Decision
+A published content item is `PUBLISHED` only if every profile account already has a job for it. Accounts added to the profile later (e.g. TikTok after YouTube) get new jobs for just those accounts; accounts that already have a job are never planned or published again.
+
+### Rationale
+The Phase 5A behaviour blocked a video published to YouTube from ever reaching TikTok. The intended rule was "same content + same account never twice".
+

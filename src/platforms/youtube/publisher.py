@@ -75,6 +75,13 @@ class YouTubePublisher(PlatformPublisher):
     def can_restart(self, state: dict[str, Any]) -> bool:
         return bool(state.get("video_id"))
 
+    # videos.insert accepts any of these (Google lets users un-tick scopes at consent).
+    REQUIRED_SCOPES = ((
+        "https://www.googleapis.com/auth/youtube.upload",
+        "https://www.googleapis.com/auth/youtube",
+        "https://www.googleapis.com/auth/youtube.force-ssl",
+    ),)
+
     def supports_cover_upload(self) -> bool:
         return True
 

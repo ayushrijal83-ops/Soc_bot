@@ -228,7 +228,8 @@ This project is in **Phase 5A (Content Intake + Profiles + Covers): COMPLETE (20
 - ✅ Publishing engine: independent per-destination jobs, retries, idempotent resume, dry-run
 - ✅ Instagram / TikTok / YouTube publishers (official APIs, docs verified 2026-09-25)
 - ✅ Content Inbox, publishing profile, VERIFY/AUTO, YouTube thumbnails (Phase 5A)
-- ✅ 378 unit tests passing; `ruff check .` clean
+- ✅ 402 unit tests passing; `ruff check .` clean
+- 🔄 TikTok (Phase 5B): code ready and verified against a mocked API; real run needs a TikTok developer app (see docs/API_INTEGRATIONS.md → TikTok Setup)
 - ✅ Real YouTube OAuth, publishing and thumbnail verified; ⚠️ TikTok/Instagram real runs NOT done
 - Project structure and documentation
 

@@ -62,6 +62,8 @@ def print_entry(entry: InboxEntry) -> None:
         print_warning(warning)
     for problem in entry.problems:
         print_error(problem)
+    for note in entry.notes:
+        print_info(note)
     if entry.destinations:
         print_header("DESTINATIONS")
         for platform in PLATFORMS:
@@ -133,6 +135,9 @@ def run_content_inbox(intake: ContentIntake) -> None:
 
 def verify_and_publish(intake: ContentIntake, entry: InboxEntry) -> PackageResult | None:
     """VERIFY mode: show the plan, ask ONE confirmation, then publish everything without asking again."""
+    if entry.publishable:
+        print_info("Checking destinations with the providers (read-only)...")
+        entry = intake.live_entry(entry)  # e.g. TikTok creator_info: real privacy options + limits
     print_entry(entry)
     if not entry.publishable:
         print_error(f"{entry.package.content_id} can't be published ({entry.status}).")
@@ -271,7 +276,10 @@ def run_history(intake: ContentIntake) -> None:
         if jobs:
             print("Destinations:")
             for j in jobs:
-                print(f"  {j.platform.title()} {j.account_label} — {j.status.upper()}")
+                line = f"  {j.platform.title()} {j.account_label} — VIDEO: {j.status.upper()}"
+                if j.platform_media_id:
+                    line += f" (id {j.platform_media_id})"
+                print(line)
             covers = [j for j in jobs if j.cover_status]
             if covers:
                 print("Cover:")

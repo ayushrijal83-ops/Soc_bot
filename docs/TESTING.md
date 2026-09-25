@@ -11,7 +11,7 @@
 
 ```
 tests/
-├── unit/                    # Fast, isolated unit tests (378 tests ✅)
+├── unit/                    # Fast, isolated unit tests (402 tests ✅)
 │   ├── test_tokens.py       # Token encryption (13 tests)
 │   ├── test_database.py     # Database layer + migrations (37 tests)
 │   ├── test_cli_display.py  # Display utilities (10 tests)
@@ -26,7 +26,8 @@ tests/
 │   ├── test_publishers.py       # Instagram/TikTok/YouTube publishers, httpx.MockTransport (45 tests)
 │   ├── test_publishing_engine.py  # Jobs, state machine, engine, retries, tokens, dry-run, validation (36 tests)
 │   ├── test_cli_publish.py      # Create Post / Publishing Queue CLI (5 tests)
-│   └── test_content.py          # Phase 5A content intake/profile/lifecycle/covers/CLI (56 tests)
+│   ├── test_content.py          # Phase 5A content intake/profile/lifecycle/covers/CLI (57 tests)
+│   └── test_tiktok_5b.py        # Phase 5B TikTok end-to-end with a mocked TikTok API (21 tests)
 ├── integration/             # Slower, cross-component tests
 │   ├── test_database.py     # 📋 PLANNED (uses temp DB)
 │   ├── test_account_manager.py  # 📋 PLANNED
@@ -44,7 +45,7 @@ tests/
     └── test_accounts.json
 ```
 
-## Unit Tests (Implemented: 378)
+## Unit Tests (Implemented: 402)
 
 | Test Module | Tests | Coverage |
 |-------------|-------|----------|
@@ -62,6 +63,7 @@ tests/
 | `test_publishers.py` | 53 | (+ Phase 5A: YouTube thumbnail after video, failure keeps video published, network error reported, resume never retries, no cover, oversize/unsupported not uploaded, state persisted; TikTok never sends a cover) | Instagram container/poll/publish, timeout stays processing, ERROR/EXPIRED, resume without re-publish, error mapping (190/10/transient/rate limit), malformed, timeout; TikTok creator info/init/chunked upload/status, private post id, rejected content, 401/scope/spam/429/5xx, privacy mismatch, upload failure, resume polls only; YouTube session/chunks/308 resume, network resume, uncertain final chunk, quota, 401, 4xx, 5xx, processing failure, resume without re-upload; secret redaction; token only in headers; foreign session URI rejected |
 | `test_publishing_engine.py` | 37 | (+ cover failure stored separately) | Job creation/dedup, state machine, atomic claim, success + provider ID persisted, **failure isolation (IG ok / TikTok fail / YT ok)**, unexpected exception isolation, bounded retries, non-retryable errors, resume from saved state, no re-publish, processing resume, crash recovery (safe vs unsafe), manual retry, validation failure, missing video, disconnected account, no tokens in attempts, token renewal (expiring / fresh / expired+unrenewable / Instagram early renewal), dry-run without network or mutation, end-to-end with real adapters + mocked HTTP |
 | `test_content.py` | 56 | Detector (package/video/caption/cover, missing, multiple, unsupported, empty, UTF-8, partial files, safe names), stability (changing vs stable vs old), manager (stage dirs, moves, suffix, outside-root refusal, CONTENT_ROOT), profile (create/load/update/reset, no tokens, invalid/wrong-platform account, disconnected, no destinations), intake (publish all + move, options from package/profile, partial failure → failed/, retry only failed, **crash resume without republish**, duplicate package, new profile account → one new job, invalid → failed/, blocked Instagram, no profile, copying, archive, AUTO, read-only scan, content key), cover capabilities (YouTube limits, TikTok/Instagram truthful), CLI (one confirmation, decline, inbox VERIFY, AUTO no prompt, profile setup, history, dry-run without side effects) |
+| `test_tiktok_5b.py` | 21 | Real OAuth plumbing (loopback callback, state, hex PKCE verifier/challenge, token exchange form, encrypted persistence, scopes recorded, no secrets in result), missing `video.publish` blocks, creator_info preflight (notes, privacy mismatch, malformed, provider error; never in scan/dry-run), SELF_ONLY publish via the real adapter + engine + intake (Content-Range/Length, no bearer on upload URL, signed URL never persisted), lifecycle + history, cover `not_supported`, already published, **crash after upload → resume polls only**, still processing ≠ failed, FAILED not retried, retry rules (429/5xx/timeout retried; 401/scope/privacy/spam not), VERIFY CLI one confirmation |
 | `test_cli_publish.py` | 5 | Create Post confirm → published, cancel → nothing, blocked plan → nothing, missing video, queue listing |
 
 ### Token Encryption Tests (`test_tokens.py`)
@@ -212,7 +214,7 @@ See `test_publishing_engine.py` and `test_cli_publish.py` above. **Mocked tests 
 # All tests
 pytest
 
-# Unit only (fast) — 378 tests passing
+# Unit only (fast) — 402 tests passing
 pytest tests/unit -v
 
 # Integration (requires test DB)
@@ -253,6 +255,6 @@ jobs:
 ```
 
 ## Current Status
-✅ **Phases 1–5A**: 378 unit tests passing; `ruff check .`: 0 errors; no skipped tests. OAuth and publishing are tested with mocks only. Real provider runs: YouTube OAuth + publishing + thumbnail ✅ (manual, 2026-09-25); TikTok/Instagram NOT RUN.
+✅ **Phases 1–5B**: 402 unit tests passing; `ruff check .`: 0 errors; no skipped tests. OAuth and publishing are tested with mocks only. Real provider runs: YouTube OAuth + publishing + thumbnail ✅ (manual, 2026-09-25); TikTok/Instagram NOT RUN.
 
 Next: real-provider verification (Phase 5).

@@ -59,6 +59,11 @@ class OAuthTokenResult:
         return expires_at_from(self.expires_in)
 
 
+def parse_scopes(scope: str | None) -> list[str]:
+    """Granted scopes from a token response: TikTok/Instagram use commas, Google uses spaces."""
+    return sorted({part for part in (scope or "").replace(",", " ").split() if part})
+
+
 def expires_at_from(expires_in: int | None, now: datetime | None = None) -> datetime | None:
     """Convert a provider ``expires_in`` (seconds) into an aware UTC datetime."""
     if expires_in is None:

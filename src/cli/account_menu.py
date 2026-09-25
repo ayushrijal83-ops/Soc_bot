@@ -183,8 +183,8 @@ class AccountMenuHandler:
             self._pause()
             return True
 
-        print_info(f"Starting {platform_display} OAuth authorization...")
-        print_info("Your browser will open for authorization.")
+        print_info(f"Connecting {platform_display}...")
+        print_info("Browser authorization required: your browser will open the official login page.")
         print_info("Waiting for authorization...")
 
         try:
@@ -193,10 +193,16 @@ class AccountMenuHandler:
 
             if result.get("success"):
                 account = result.get("account", {})
-                print_success(f"{platform_display} account connected successfully!")
+                print_success(f"{platform_display} account connected.")
                 print_info(f"Account ID: {account.get('id')}")
                 print_info(f"Username: {account.get('username')}")
                 print_info(f"Display Name: {account.get('display_name')}")
+                scopes = account.get("scopes") or []
+                print_info("Granted scopes: " + (", ".join(scopes) if scopes else "(not reported by provider)"))
+                missing = _missing_publish_scopes(platform, scopes)
+                if missing:
+                    print_warning("Missing permission needed for publishing: " + "; ".join(missing))
+                    print_warning("Publishing to this account will be blocked until you reconnect and grant it.")
             else:
                 print_error(f"Failed to connect {platform_display}: {result.get('error', 'Unknown error')}")
 
@@ -405,3 +411,14 @@ def run_account_menu(account_manager: AccountManager, auth_manager=None) -> None
     """Entry point for running the account management menu."""
     handler = AccountMenuHandler(account_manager, auth_manager)
     handler.run()
+
+
+def _missing_publish_scopes(platform: str, scopes: list[str]) -> list[str]:
+    """Publishing scopes the provider did not grant (unknown grants are not judged)."""
+    if not scopes:
+        return []
+    from src.core.publisher import default_publishers
+
+    adapter = default_publishers().get(platform)
+    return adapter.missing_scopes(scopes) if adapter else []
+

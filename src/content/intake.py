@@ -49,6 +49,9 @@ class InboxEntry:
     post_id: int | None = None
     destinations: list[DestinationPlan] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    # Accounts that already have a job for this content (never planned or published again).
+    done_accounts: set[int] = field(default_factory=set)
 
     @property
     def publishable(self) -> bool:
@@ -116,7 +119,7 @@ class ContentIntake:
                 entries.append(self.inspect(package, profile))
         return entries
 
-    def inspect(self, package: ContentPackage, profile: Profile | None) -> InboxEntry:
+    def inspect(self, package: ContentPackage, profile: Profile | None, live: bool = False) -> InboxEntry:
         self.validator.validate(package)
         if package.valid and package.stage == "incoming" and not is_stable(package.package_path, self.stability, self.sleep):
             package.validation_status = "copying"
@@ -131,8 +134,14 @@ class ContentIntake:
         if item is not None:
             entry.item_status, entry.post_id = item.status, item.post_id
         if item is not None and item.status == "published":
-            entry.status = "PUBLISHED"
-            return entry
+            # Same video + same account is never published twice. Accounts added to the profile
+            # since then (e.g. TikTok after YouTube) can still receive it.
+            entry.done_accounts = {j.account_id for j in self.engine.store.jobs_for_post(item.post_id)} if item.post_id else set()
+            new_accounts = [a for a in (profile.account_ids() if profile else []) if a not in entry.done_accounts]
+            if not new_accounts:
+                entry.status = "PUBLISHED"
+                return entry
+            entry.notes.append("Already published to the earlier destinations; only new profile destinations will be published.")
         if profile is None:
             entry.status = "NO PROFILE"
             entry.problems.append("No publishing profile yet: create one under Settings.")
@@ -140,7 +149,7 @@ class ContentIntake:
 
         entry.problems = self.profiles.check(profile)
         if not entry.problems:  # planning needs every referenced account to exist
-            entry.destinations = self.plan(package, profile)
+            entry.destinations = self.plan(package, profile, live=live, skip=entry.done_accounts)
         if entry.problems or not all(d.ready for d in entry.destinations):
             entry.status = "BLOCKED"
         elif package.stage == "publishing" or (item is not None and item.status == "publishing"):
@@ -151,13 +160,16 @@ class ContentIntake:
             entry.status = "READY"
         return entry
 
-    def destinations(self, package: ContentPackage, profile: Profile, video_dir: Path | None = None) -> list[tuple[int, dict]]:
+    def destinations(self, package: ContentPackage, profile: Profile, video_dir: Path | None = None,
+                     skip: set[int] | None = None) -> list[tuple[int, dict]]:
         """Profile -> (account_id, options) for the existing engine. ``video_dir`` = where the files will be."""
         base = video_dir or package.package_path
         result = []
         for platform, account_ids in profile.accounts.items():
             adapter = self.engine.publishers.get(platform)
             for account_id in account_ids:
+                if skip and account_id in skip:
+                    continue
                 options: dict[str, Any] = {}
                 if platform == "instagram" and package.video_url:
                     options["video_url"] = package.video_url
@@ -174,10 +186,22 @@ class ContentIntake:
                 result.append((account_id, options))
         return result
 
-    def plan(self, package: ContentPackage, profile: Profile) -> list[DestinationPlan]:
-        """Dry-run view of every destination: validation + cover handling. No network, no writes."""
-        dests = self.destinations(package, profile)
+    def plan(self, package: ContentPackage, profile: Profile, live: bool = False,
+             skip: set[int] | None = None) -> list[DestinationPlan]:
+        """Every destination: validation + cover handling. No writes.
+
+        live=False (inbox list, dry-run): no network at all. live=True (the VERIFY screen): also run each
+        adapter's read-only preflight (e.g. TikTok creator_info) so the user confirms against real limits.
+        """
+        dests = self.destinations(package, profile, skip=skip)
         items = self.engine.plan_destinations(str(package.video_path), package.caption_text or "", dests)
+        if live:
+            media = self._media(package)
+            for (account_id, options), item in zip(dests, items, strict=True):
+                if not item.errors:
+                    notes, errors = self.engine.preflight(account_id, options, media, package.caption_text or "")
+                    item.notes.extend(notes)
+                    item.errors.extend(errors)
         plans = []
         for (account_id, options), item in zip(dests, items, strict=True):
             adapter = self.engine.publishers.get(item.platform)
@@ -190,6 +214,16 @@ class ContentIntake:
             plans.append(DestinationPlan(account_id, item.platform, item.account_label, errors, item.notes,
                                          cover_status, cover_reason))
         return plans
+
+    def live_entry(self, entry: InboxEntry) -> InboxEntry:
+        """Re-inspect a package with provider preflight checks, for the verification screen."""
+        package = self.detector.detect(entry.package.package_path, entry.package.stage)
+        return self.inspect(package, self.profiles.load(), live=True)
+
+    def _media(self, package: ContentPackage):
+        from src.core.validation import validate_video_file
+
+        return validate_video_file(package.video_path, probe=self.validator.probe_media).media
 
     @staticmethod
     def _cover(package: ContentPackage, profile: Profile, adapter) -> tuple[str, str]:
@@ -242,8 +276,9 @@ class ContentIntake:
         if package.cover_path:
             package.cover_path = moved / package.cover_path.name
         item = self._save_item(key, package, moved, "publishing")
-        dests = self.destinations(package, profile, moved)
-        cover_by_account = {d.account_id: (d.cover_status, d.cover_reason) for d in self.plan(package, profile)}
+        dests = self.destinations(package, profile, moved, skip=entry.done_accounts)
+        cover_by_account = {d.account_id: (d.cover_status, d.cover_reason)
+                            for d in self.plan(package, profile, skip=entry.done_accounts)}
 
         if item.post_id is None:
             post_id = self.engine.store.create_post(str(package.video_path), package.caption_text or "", dests)

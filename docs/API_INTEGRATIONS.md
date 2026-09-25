@@ -81,6 +81,27 @@ OAuth and publishing implemented. **Mocked tests verified. Real provider OAuth a
 
 ## TikTok
 
+## TikTok Setup (Phase 5B)
+
+1. **Developer app** at https://developers.tiktok.com/ → Manage apps → create an app.
+2. **Products:**
+   - **Login Kit**, platform **Desktop**. Redirect URI: exactly `http://127.0.0.1:*/callback/tiktok` (wildcard port; Soc_bot picks a free port per login).
+   - **Content Posting API** with **Direct Post** enabled.
+3. **Scopes:** `user.info.basic`, `video.publish`. Soc_bot requests only these (least privilege; `video.upload` is the separate inbox/draft flow and isn't used).
+4. **Credentials:** put the Client key / Client secret in `.env` as `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET`. Leave `TIKTOK_REDIRECT_URI` blank.
+5. **Test account:** while the app is **unaudited**, TikTok restricts posts to private viewing (`SELF_ONLY`), and the posting account should itself be **private** (error `unaudited_client_can_only_post_to_private_accounts`). Add it as a target/test user if TikTok asks.
+6. **Connect:** `python main.py` → Connected Accounts → Connect TikTok. The browser opens TikTok's consent page. Afterwards Soc_bot shows the account ID, name and **granted scopes**, and warns if `video.publish` is missing.
+7. **Profile:** Settings → Create/Edit Publishing Profile → select the TikTok account, privacy `SELF_ONLY`, mode VERIFY.
+8. **Publish:** Content Inbox → pick the package → the verification screen queries **creator_info** (nickname, allowed privacy levels, max duration) → confirm once.
+
+Audit: to post publicly, TikTok must audit the app (content-sharing UX guidelines: show the creator's nickname and let the user pick from `privacy_level_options` with no default; Soc_bot's VERIFY screen shows the creator info and the chosen privacy). Until then only `SELF_ONLY` works.
+
+### Phase 5B findings (docs re-verified 2026-09-25)
+- The docs match the implementation: Login Kit for Desktop (hex S256 PKCE, comma-separated scopes, loopback redirect with wildcard port); Content Posting API creator_info → video/init (FILE_UPLOAD) → sequential PUT chunks (206/201) → status/fetch.
+- **Bug fixed:** v2 API responses always carry `"error": {"code": "ok", ...}` on success. The OAuth user-info lookup treated any `error` field as a failure, so **every real TikTok connection would have failed** after the token exchange. Fixed with `_tiktok_error()` (string errors from OAuth endpoints, object errors from v2 endpoints), plus a regression test.
+- **creator_info before confirmation:** the VERIFY screen now calls the read-only `preflight()` (TikTok: creator_info) and blocks the destination if the profile's privacy isn't in `privacy_level_options` or the video exceeds `max_video_post_duration_sec`. Dry-run and the inbox list make no calls.
+- **Granted scopes** are stored per account (`accounts.meta_json`). An account without `video.publish` is blocked with "missing required permission: video.publish".
+
 ### Official API
 - **Name:** TikTok Login Kit + Content Posting API
 - **Documentation:** https://developers.tiktok.com/doc/login-kit-desktop, https://developers.tiktok.com/doc/oauth-user-access-token-management
@@ -90,7 +111,7 @@ OAuth and publishing implemented. **Mocked tests verified. Real provider OAuth a
 ### OAuth Flow — docs verified 2026-09-25 · tested with mocks · real OAuth NOT RUN
 - **Product:** Login Kit for Desktop
 - **Authorization URL:** `https://www.tiktok.com/v2/auth/authorize/` (`client_key`, `scope`, `response_type=code`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method=S256`)
-- **Scopes (comma-separated):** `video.upload`, `video.publish`, `user.info.basic`
+- **Scopes (comma-separated):** `user.info.basic`, `video.publish` (Phase 5B: `video.upload` removed; Direct Post doesn't use it)
 - **PKCE differs from RFC 7636:** `code_challenge = hex(SHA256(code_verifier))`, a **hex** digest, not base64url. `code_challenge_method=S256`.
 - **Token URL:** `POST https://open.tiktokapis.com/v2/oauth/token/` → `open_id, scope, access_token, expires_in, refresh_token, refresh_expires_in, token_type`
 - **Lifetimes:** access token 24 h, refresh token 365 days. Soc_bot computes `expires_at` from the returned `expires_in` and does not hard-code 24 h.
@@ -198,7 +219,7 @@ OAuth and publishing implemented. **Mocked tests verified. Real provider OAuth a
 | Platform | OAuth product | Auth URL | Code exchange | Long-lived / refresh | Scopes | PKCE | Redirect | Account ID | Docs verified | Mock tests | Real OAuth |
 |----------|---------------|----------|---------------|----------------------|--------|------|----------|------------|---------------|------------|------------|
 | Instagram | Business Login for Instagram | instagram.com/oauth/authorize | api.instagram.com/oauth/access_token | ig_exchange_token / ig_refresh_token (graph.instagram.com) | instagram_business_basic, instagram_business_content_publish | Not documented, not sent | Fixed, registered | `/me` `user_id` | ✅ 2026-09-25 | ✅ | NOT RUN |
-| TikTok | Login Kit for Desktop | tiktok.com/v2/auth/authorize/ | open.tiktokapis.com/v2/oauth/token/ | refresh_token grant, rotation persisted | video.upload, video.publish, user.info.basic | S256, **hex** | 127.0.0.1, wildcard port | open_id | ✅ 2026-09-25 | ✅ | NOT RUN |
+| TikTok | Login Kit for Desktop | tiktok.com/v2/auth/authorize/ | open.tiktokapis.com/v2/oauth/token/ | refresh_token grant, rotation persisted | user.info.basic, video.publish | S256, **hex** | 127.0.0.1, wildcard port | open_id | ✅ 2026-09-25 | ✅ | NOT RUN |
 | YouTube | Google OAuth 2.0 (Desktop app) | accounts.google.com/o/oauth2/v2/auth | oauth2.googleapis.com/token | refresh_token grant | youtube.upload, youtube, youtube.readonly | S256, base64url | 127.0.0.1, dynamic port | channel id | ✅ 2026-09-25 | ✅ | NOT RUN |
 
 Publishing endpoints were verified 2026-09-25 (Phase 4). See each platform's Publishing section.
@@ -224,5 +245,5 @@ Publishing endpoints were verified 2026-09-25 (Phase 4). See each platform's Pub
 | Platform | Real OAuth | Real publishing | Real cover |
 |----------|------------|-----------------|------------|
 | YouTube | ✅ 2 channels | ✅ (user upload + Phase 5A private regression) | ✅ thumbnail published |
-| TikTok | NOT RUN | NOT RUN | n/a (not supported) |
+| TikTok | NOT RUN (developer app / credentials not yet configured) | NOT RUN | n/a (not supported) |
 | Instagram | NOT RUN | NOT RUN | n/a (not supported) |

@@ -4,6 +4,7 @@ Each destination is its own job and runs in isolation: one platform failing neve
 rolls back another. No platform HTTP lives here; adapters implement PlatformPublisher.
 """
 
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,6 +19,15 @@ from src.platforms.base import PlatformPublisher, PublishContext, PublishError, 
 from src.storage.database import Database
 
 UpdateCallback = Callable[["JobResult"], None]
+
+
+def granted_scopes(account) -> list[str] | None:
+    """Scopes recorded at connect time (account.meta_json), or None if never recorded."""
+    try:
+        scopes = json.loads(account.meta_json or "{}").get("scopes")
+    except (ValueError, AttributeError):
+        return None
+    return list(scopes) if isinstance(scopes, list) else None
 
 
 def default_publishers() -> dict[str, PlatformPublisher]:
@@ -120,6 +130,9 @@ class PublisherEngine:
         elif media is not None:
             errors.extend(adapter.validate(caption, job.options, media))
             account = self.account_manager.get_account(job.account_id)
+            missing = adapter.missing_scopes(granted_scopes(account))
+            if missing:
+                errors.append("Account is missing required permission: " + "; ".join(missing) + " (reconnect and grant it)")
             if is_token_expiring(account.expires_at, 0):
                 notes.append("access token expired: would try to renew before publishing")
             elif is_token_expiring(account.expires_at, adapter.TOKEN_REFRESH_MARGIN):
@@ -127,6 +140,25 @@ class PublisherEngine:
         if job.status not in ("pending", "retrying"):
             notes.append(f"job is {job.status}: would not be started again")
         return PlanItem(job.platform, job.account_label, job.account_status, job.status, errors, notes)
+
+    def preflight(self, account_id: int, options: dict, media: MediaInfo, caption: str) -> tuple[list[str], list[str]]:
+        """Read-only provider checks for one destination before confirmation (not used in dry-run).
+
+        May renew an expiring token (same rules as publishing). Returns (notes, errors); never raises.
+        """
+        account = self.account_manager.get_account(account_id)
+        adapter = self.publishers.get(account.platform)
+        if adapter is None:
+            return [], [f"No publisher for platform {account.platform}"]
+        job = JobInfo(0, 0, account.id, account.platform, account.display_name or account.username,
+                      account.status, "pending", 0, None, None, options)
+        try:
+            ctx = PublishContext(job_id=0, video_path=media.path, caption=caption, options=options,
+                                 access_token=self._access_token(job, adapter),
+                                 platform_account_id=account.platform_account_id, media=media)
+            return adapter.preflight(ctx)
+        except PublishError as e:
+            return [], [str(e)]
 
     # --- publishing ------------------------------------------------------------
 
@@ -269,6 +301,10 @@ class PublisherEngine:
         account = self.account_manager.get_account(job.account_id)
         if account.status != "active":
             raise PublishError(f"Account is {account.status}; reconnect it to publish", code="account_inactive")
+        missing = adapter.missing_scopes(granted_scopes(account))
+        if missing:
+            raise PublishError("Account is missing required permission: " + "; ".join(missing)
+                               + " (reconnect and grant it)", code="insufficient_scope")
         if is_token_expiring(account.expires_at, adapter.TOKEN_REFRESH_MARGIN):
             renewed = False
             if self.auth_manager is not None and self.auth_manager.is_configured(account.platform):

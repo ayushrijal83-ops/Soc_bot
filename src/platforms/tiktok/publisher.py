@@ -57,8 +57,39 @@ class TikTokPublisher(PlatformPublisher):
         "cover image skipped"
     )
 
+    REQUIRED_SCOPES = (("video.publish",),)
+
     def supports_cover_timestamp(self) -> bool:
         return True
+
+    def preflight(self, ctx: PublishContext) -> tuple[list[str], list[str]]:
+        """Query creator_info (required before posting) and check the chosen options against it."""
+        creator = self._post(ctx, "/post/publish/creator_info/query/", {}, "creator info query failed")
+        return self._creator_checks(creator, ctx)
+
+    @staticmethod
+    def _creator_checks(creator: dict[str, Any], ctx: PublishContext) -> tuple[list[str], list[str]]:
+        notes, errors = [], []
+        options = creator.get("privacy_level_options")
+        if not isinstance(options, list):
+            return notes, ["TikTok creator info has no privacy_level_options (malformed response)"]
+        name = creator.get("creator_nickname") or creator.get("creator_username") or "unknown"
+        notes.append(f"creator: {name}" + (f" (@{creator['creator_username']})" if creator.get("creator_username") else ""))
+        notes.append("allowed privacy: " + (", ".join(options) or "none"))
+        privacy = ctx.options.get("privacy_level")
+        if privacy not in options:
+            errors.append(f"TikTok privacy_level {privacy} is not allowed for this creator (allowed: {', '.join(options) or 'none'})")
+        else:
+            notes.append(f"privacy: {privacy}")
+        max_duration = creator.get("max_video_post_duration_sec")
+        if max_duration:
+            notes.append(f"max duration: {max_duration}s")
+            if ctx.media.duration_seconds and ctx.media.duration_seconds > max_duration:
+                errors.append(f"Video is longer than this creator's limit of {max_duration}s")
+        for flag, label in (("comment_disabled", "comments"), ("duet_disabled", "duets"), ("stitch_disabled", "stitches")):
+            if creator.get(flag):
+                notes.append(f"{label} are disabled in this creator's settings")
+        return notes, errors
 
     def validate(self, caption: str, options: dict[str, Any], media: MediaInfo) -> list[str]:
         errors = []
@@ -82,16 +113,11 @@ class TikTokPublisher(PlatformPublisher):
 
         # No upload, or an interrupted one: an unfinished upload never publishes, so start fresh.
         creator = self._post(ctx, "/post/publish/creator_info/query/", {}, "creator info query failed")
+        _, errors = self._creator_checks(creator, ctx)
+        if errors:
+            code = "privacy_level_option_mismatch" if "privacy_level" in errors[0] else "creator_constraint"
+            raise PublishError("; ".join(errors), code=code)
         privacy = ctx.options.get("privacy_level")
-        if privacy not in (creator.get("privacy_level_options") or []):
-            raise PublishError(
-                f"TikTok privacy_level {privacy} is not allowed for this creator "
-                f"(allowed: {', '.join(creator.get('privacy_level_options') or [])})",
-                code="privacy_level_option_mismatch",
-            )
-        max_duration = creator.get("max_video_post_duration_sec")
-        if max_duration and ctx.media.duration_seconds and ctx.media.duration_seconds > max_duration:
-            raise PublishError(f"Video is longer than this creator's limit of {max_duration}s", code="duration_exceeded")
 
         size = ctx.media.size_bytes
         chunk_size, chunk_count = chunk_plan(size, self.CHUNK_SIZE)

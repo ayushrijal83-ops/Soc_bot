@@ -1,17 +1,16 @@
 # Project Status
 
 ## Current Phase
-**Phase 5A: Smart Content Intake + Publishing Profiles + Cover/Thumbnail Support**: ✅ **COMPLETE, 2026-09-25**
+**Phase 5B: Real TikTok OAuth + SELF_ONLY Publishing Verification**: 🔄 **CODE READY; REAL TEST BLOCKED on TikTok developer credentials (2026-09-25)**
 
 | Claim | Status |
 |-------|--------|
-| OAuth + publishing implemented (Instagram, TikTok, YouTube) | ✅ |
-| Content intake, publishing profile, VERIFY/AUTO, lifecycle folders | ✅ (see CONTENT_INTAKE.md) |
-| Mocked tests | ✅ 378 passing, Ruff clean |
-| Real YouTube OAuth | ✅ RUN: 2 channels connected (by the user, 2026-09-25) |
-| Real YouTube publishing | ✅ RUN: user's first upload to both channels; Phase 5A regression private upload `rAGivy-c3DM` |
-| Real YouTube custom thumbnail | ✅ RUN: `thumbnails.set` succeeded on the regression upload |
-| Real Instagram / TikTok | ❌ NOT RUN (not configured) |
+| TikTok docs re-verified | ✅ 2026-09-25 |
+| TikTok OAuth / publishing tested with a mocked TikTok API | ✅ (402 tests, Ruff clean) |
+| Real TikTok OAuth | ❌ NOT RUN: `TIKTOK_CLIENT_KEY/SECRET` empty, no developer app yet |
+| Real TikTok SELF_ONLY publish | ❌ NOT RUN (depends on the above) |
+| Real YouTube OAuth / publishing / thumbnail | ✅ (Phase 5, 5A) |
+| Real Instagram | ❌ NOT RUN (Phase 5C) |
 
 ## Implementation State
 
@@ -144,6 +143,17 @@
 - [x] Bugs fixed: the main menu's prompt added a second, dead "Exit" option (regression test); a `.gitignore` `content/` pattern would have hidden `src/content/` (anchored to `/content/`)
 - [x] Real YouTube regression: private upload `rAGivy-c3DM` + custom thumbnail published; a second publish of the same package was refused
 
+### Phase 5B: Real TikTok Verification — 🔄 code complete, real run pending
+- [x] Docs re-verified; implementation matches (hex PKCE, scopes, loopback redirect, creator_info → init → chunked PUT → status)
+- [x] **Bug fixed:** TikTok v2 `"error": {"code": "ok"}` envelope made every real connection fail at identity lookup
+- [x] Least-privilege scopes `user.info.basic,video.publish`; granted scopes stored and checked (`REQUIRED_SCOPES`)
+- [x] creator_info preflight on the VERIFY screen (privacy options, max duration); never in dry-run
+- [x] Connect CLI: "Connecting TikTok... / Browser authorization required / TikTok account connected." + granted scopes + missing-scope warning
+- [x] Duplicate rule refined: an already-published video can go to newly added profile accounts only (ADR-021)
+- [x] Test package `content/incoming/tiktok_test/` (video + caption, no cover) prepared
+- [ ] User: create the TikTok app, fill `.env`, connect the account, save the profile (SELF_ONLY)
+- [ ] Real SELF_ONLY publish via Content Inbox, then record the result here
+
 ### In Progress 🔄
 - Phase 5: Instagram / TikTok real verification (not configured)
 
@@ -198,7 +208,7 @@
 | `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- **378 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
+- **402 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
 
 ## Known Limitations
 - Real OAuth: NOT RUN for any platform (no credentials configured). Mocked tests are not provider verification.

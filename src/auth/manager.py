@@ -1,13 +1,14 @@
 """OAuth authentication manager."""
 
 import asyncio
+import json
 import os
 import webbrowser
 from typing import Any
 from urllib.parse import urlparse
 
 from src.accounts.manager import AccountManager, AccountNotFoundError
-from src.auth.base import OAuthConfig
+from src.auth.base import OAuthConfig, parse_scopes
 from src.auth.callback_server import CALLBACK_PATH_PREFIX, OAuthCallbackServer
 from src.auth.errors import OAuthCallbackError, OAuthConfigurationError, OAuthStateError
 from src.auth.state import OAuthStateStore
@@ -192,6 +193,7 @@ class AuthManager:
                     "platform": platform,
                     "username": account.username,
                     "display_name": account.display_name,
+                    "scopes": parse_scopes(token_result.scope),
                 },
             }
         finally:
@@ -200,6 +202,9 @@ class AuthManager:
     def _store_account(self, platform: str, identity: dict[str, Any], token_result) -> Any:
         """Create the account, or update tokens/identity if it is already connected."""
         expires_at = token_result.expires_at
+        # Granted scopes (never tokens) so publishing can report a missing permission precisely.
+        scopes = parse_scopes(token_result.scope)
+        meta_json = json.dumps({"scopes": scopes}) if scopes else None
         try:
             existing = self.account_manager.find_account(platform, identity["platform_account_id"])
         except AccountNotFoundError:
@@ -212,6 +217,7 @@ class AuthManager:
                 expires_at=expires_at,
                 display_name=identity.get("display_name"),
                 status="active",
+                meta_json=meta_json,
             )
 
         return self.account_manager.update_account(
@@ -222,6 +228,7 @@ class AuthManager:
             access_token=token_result.access_token,
             refresh_token=token_result.refresh_token,
             expires_at=expires_at,
+            meta_json=meta_json,
         )
 
     def disconnect_account(self, account_id: int) -> bool:

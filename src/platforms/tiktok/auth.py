@@ -27,10 +27,12 @@ class TikTokAuth(PlatformAuth):
     USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 
     # Default scopes for TikTok publishing
+    # Only what Direct Post needs: identity + video.publish. (video.upload is the separate
+    # "upload to inbox/drafts" flow, which Soc_bot doesn't use; requesting a scope the app
+    # doesn't have enabled makes authorization fail.)
     DEFAULT_SCOPES = (
-        "video.upload",
-        "video.publish",
         "user.info.basic",
+        "video.publish",
     )
 
     def get_authorization_url(self, state: str, pkce_challenge: str | None = None) -> str:
@@ -82,9 +84,9 @@ class TikTokAuth(PlatformAuth):
         data = response.json()
 
         # Check for error in response
-        if data.get("error"):
+        if _tiktok_error(data):
             raise OAuthTokenExchangeError(
-                f"Token exchange failed: {data.get('error_description', data.get('error'))}",
+                f"Token exchange failed: {_tiktok_error(data)}",
                 platform=self.PLATFORM,
                 response_body=str(data),
             )
@@ -122,13 +124,16 @@ class TikTokAuth(PlatformAuth):
 
         data = response.json()
 
-        if data.get("error"):
+        # v2 always returns an "error" object; {"code": "ok"} means success.
+        if _tiktok_error(data):
             raise OAuthAccountIdentityError(
-                f"Failed to get account identity: {data.get('message', 'Unknown error')}",
+                f"Failed to get account identity: {_tiktok_error(data)}",
                 platform=self.PLATFORM,
             )
 
-        user_data = data.get("data", {}).get("user", {})
+        user_data = (data.get("data") or {}).get("user") or {}
+        if not (user_data.get("open_id") or user_data.get("union_id")):
+            raise OAuthAccountIdentityError("TikTok user info returned no open_id", platform=self.PLATFORM)
 
         return {
             "platform_account_id": user_data.get("open_id") or user_data.get("union_id"),
@@ -169,9 +174,9 @@ class TikTokAuth(PlatformAuth):
 
         data = response.json()
 
-        if data.get("error"):
+        if _tiktok_error(data):
             raise OAuthTokenExchangeError(
-                f"Token refresh failed: {data.get('error_description', data.get('error'))}",
+                f"Token refresh failed: {_tiktok_error(data)}",
                 platform=self.PLATFORM,
                 response_body=str(data),
             )
@@ -224,3 +229,21 @@ class TikTokAuth(PlatformAuth):
             token_url="https://open.tiktokapis.com/v2/oauth/token/",
             pkce_required=True,
         )
+
+
+def _tiktok_error(data: dict[str, Any]) -> str | None:
+    """Error text from a TikTok response, or None on success.
+
+    OAuth endpoints report failures as ``"error": "invalid_grant"`` (+ error_description); the v2 API
+    endpoints always include ``"error": {"code": "ok", ...}``, where anything but "ok" is a failure.
+    """
+    error = data.get("error")
+    if isinstance(error, dict):
+        code = error.get("code")
+        if code in (None, "", "ok"):
+            return None
+        return f"{code}: {error.get('message') or ''}".strip()
+    if error:
+        return str(data.get("error_description") or error)
+    return None
+

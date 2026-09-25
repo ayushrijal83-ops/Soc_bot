@@ -44,6 +44,7 @@ class InstagramPublisher(PlatformPublisher):
     MAX_SIZE_BYTES = 300 * 1024 * 1024
     MIN_DURATION, MAX_DURATION = 3, 15 * 60
     MAX_WIDTH = 1920
+    REQUIRED_SCOPES = (("instagram_business_content_publish",),)
 
     # Reels cover_url exists in the Facebook Login reference only and needs a *public* image URL;
     # the Instagram Login publishing docs don't document it. thumb_offset (a frame) is also
