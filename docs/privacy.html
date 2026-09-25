@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy · Soc_bot</title>
+<meta name="description" content="Privacy Policy for Soc_bot: what the desktop application stores on your computer and what it sends to the platforms you publish to.">
+<style>
+  :root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --link: #0b62d6; --card: #f6f8fa; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #30363d; --link: #58a6ff; --card: #151b23; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+  nav { margin-bottom: 24px; font-size: 0.95rem; }
+  h1 { font-size: 1.9rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 32px 0 8px; }
+  p.meta { color: var(--muted); margin: 0 0 24px; }
+  a { color: var(--link); }
+  li { margin: 4px 0; }
+  .summary { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 12px 16px; }
+  footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 16px; color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="index.html">Soc_bot</a> · <a href="terms.html">Terms of Service</a></nav>
+
+  <h1>Privacy Policy</h1>
+  <p class="meta">Effective date: 25 September 2026</p>
+
+  <div class="summary">
+    <p><strong>In short:</strong> Soc_bot is a desktop application that runs on your own computer. It stores its data locally on that computer. It sends your content only to the platforms you choose to publish to, through their official APIs. The Soc_bot project runs no servers, receives none of your data, and does not sell data or use analytics or tracking.</p>
+  </div>
+
+  <h2>1. How Soc_bot works</h2>
+  <p>Soc_bot is a desktop application that allows users to publish their own prepared content to connected social media accounts using official platform APIs. You install and run it yourself. Soc_bot has no user accounts of its own and no cloud service. The Soc_bot developers cannot see anything you do with it.</p>
+
+  <h2>2. Connecting accounts (OAuth)</h2>
+  <p>You connect TikTok, YouTube or Instagram accounts through each platform's official authorization page (OAuth), opened in your web browser. Soc_bot never asks for or stores your platform passwords. After you approve access, the platform gives Soc_bot an access token, and on TikTok and YouTube also a refresh token, so it can publish on your behalf.</p>
+  <p>Soc_bot only requests the permissions it needs to identify your account and publish videos, for example TikTok's <code>user.info.basic</code> and <code>video.publish</code>.</p>
+
+  <h2>3. What Soc_bot stores on your computer</h2>
+  <p>Soc_bot keeps its data in a local database file on your computer (by default <code>data/publisher.db</code> in the Soc_bot folder). It stores:</p>
+  <ul>
+    <li><strong>Account information needed for publishing:</strong> the platform, the account or channel ID the platform provides (for example TikTok's open_id), your username or display name, the permissions (scopes) you granted, and when the access token expires.</li>
+    <li><strong>OAuth tokens:</strong> access and refresh tokens are <strong>encrypted</strong> (Fernet symmetric encryption) with a key kept in your local configuration file (<code>.env</code>). The rest of the database is not encrypted.</li>
+    <li><strong>Publishing records:</strong> the location of your video file and of any cover image, the caption, the publishing options you chose (such as privacy level or title), the IDs the platforms return for uploaded posts, the status of each upload, and error messages. Soc_bot removes token-like text from error messages before storing them.</li>
+    <li><strong>Settings:</strong> your publishing profile (which of your connected accounts to publish to, and your options). It holds account references only, never tokens.</li>
+  </ul>
+  <p>Your videos, captions and cover images stay in the folders where you put them. Soc_bot reads them locally to publish them. It does not copy them to any server of its own, and it does not re-encode your videos.</p>
+
+  <h2>4. What Soc_bot sends to platforms</h2>
+  <p>Soc_bot only connects to the official services of the platforms you use: TikTok (tiktok.com, tiktokapis.com), Google/YouTube (accounts.google.com, googleapis.com) and Instagram (instagram.com). It sends them:</p>
+  <ul>
+    <li>the authorization requests and tokens needed to act on your connected account;</li>
+    <li>the videos, captions, titles, privacy settings and (YouTube only) cover images you choose to publish;</li>
+    <li>status checks for uploads, and read-only account queries such as TikTok's creator information, which lists the privacy options available to you.</li>
+  </ul>
+  <p>Those platforms then process your data under their own privacy policies:
+    <a href="https://www.tiktok.com/legal/privacy-policy">TikTok</a>,
+    <a href="https://policies.google.com/privacy">Google/YouTube</a>
+    (also the <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>) and
+    <a href="https://privacycenter.instagram.com/policy">Instagram/Meta</a>.</p>
+
+  <h2>5. What Soc_bot does not do</h2>
+  <ul>
+    <li>It does not sell, rent or share your data with anyone other than the platforms you publish to.</li>
+    <li>It does not include analytics, advertising, telemetry or tracking.</li>
+    <li>It does not intentionally collect personal information unrelated to publishing your content.</li>
+    <li>It does not send your data to the Soc_bot developers or to any other server.</li>
+  </ul>
+
+  <h2>6. Disconnecting accounts and deleting data</h2>
+  <ul>
+    <li><strong>Disconnect in Soc_bot:</strong> Connected Accounts → Disconnect Account marks the account as disconnected so it is no longer used for publishing. For TikTok and YouTube, Soc_bot also asks the platform to revoke its access. Instagram does not offer this through its API, so for Instagram remove access in Instagram's settings (Apps and websites).</li>
+    <li><strong>Stored tokens:</strong> disconnecting does not currently delete the encrypted tokens or the publishing history from the local database.</li>
+    <li><strong>Delete everything:</strong> to remove all stored data, including tokens and history, delete the Soc_bot database file (by default <code>data/publisher.db</code>). You can also revoke Soc_bot's access at any time in each platform's own account settings.</li>
+  </ul>
+  <p>Soc_bot does not delete data automatically. Your data stays on your computer until you remove it.</p>
+
+  <h2>7. Security</h2>
+  <p>OAuth tokens are encrypted in the database, and the encryption key is kept outside the database in your local configuration file. The authorization callback listens only on your own computer (127.0.0.1). However, the security of this data also depends on your computer: anyone with access to your user account and to both the database and the configuration file could read the stored tokens. Keep your computer and the Soc_bot folder secure, and do not share your <code>.env</code> file.</p>
+  <p>No software is perfectly secure. If you find a security problem, please report it privately to <a href="mailto:ayushruchal83@gmail.com">ayushruchal83@gmail.com</a> rather than in a public issue.</p>
+
+  <h2>8. Children</h2>
+  <p>Soc_bot is not directed at children. You must meet the minimum age requirements of each platform you connect.</p>
+
+  <h2>9. Changes to this policy</h2>
+  <p>This policy may be updated when Soc_bot changes. The effective date above shows when it last changed.</p>
+
+  <h2>10. Contact</h2>
+  <p>Privacy questions: <a href="mailto:ayushruchal83@gmail.com">ayushruchal83@gmail.com</a></p>
+
+  <footer>
+    <a href="index.html">Home</a> · <a href="terms.html">Terms of Service</a>
+  </footer>
+</main>
+</body>
+</html>

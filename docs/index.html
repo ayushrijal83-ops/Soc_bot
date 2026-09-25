@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soc_bot</title>
+<meta name="description" content="Soc_bot: a desktop application that allows users to publish their own prepared content to connected social media accounts using official platform APIs.">
+<style>
+  :root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --link: #0b62d6; --card: #f6f8fa; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #30363d; --link: #58a6ff; --card: #151b23; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 16px 64px; }
+  h1 { font-size: 2rem; margin: 0 0 8px; }
+  p.lead { font-size: 1.1rem; color: var(--muted); margin: 0 0 32px; }
+  a { color: var(--link); }
+  ul.links { list-style: none; padding: 0; margin: 0 0 32px; display: grid; gap: 12px; }
+  ul.links a { display: block; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); text-decoration: none; font-weight: 600; }
+  ul.links span { display: block; font-weight: 400; color: var(--muted); font-size: 0.95rem; }
+  footer { border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Soc_bot</h1>
+  <p class="lead">A desktop application that allows users to publish their own prepared content to connected social media accounts using official platform APIs.</p>
+
+  <p>Soc_bot runs on your own computer. You connect your accounts through each platform's official sign-in (OAuth), choose a video and caption you have prepared, and Soc_bot uploads them to the accounts you select. It does not create content, and it does not run any server of its own.</p>
+
+  <ul class="links">
+    <li><a href="terms.html">Terms of Service<span>The rules for using Soc_bot.</span></a></li>
+    <li><a href="privacy.html">Privacy Policy<span>What Soc_bot stores, where, and what it sends to platforms.</span></a></li>
+  </ul>
+
+  <footer>
+    Source code: <a href="https://github.com/ayushrijal83-ops/Soc_bot">github.com/ayushrijal83-ops/Soc_bot</a>
+  </footer>
+</main>
+</body>
+</html>
