@@ -252,3 +252,67 @@ Use structured JSON logging. Sanitize all log output: no tokens, secrets, file p
 - More verbose log format
 - Manual debugging requires correlation ID lookup
 - Must audit all log statements for secrets
+
+---
+
+## ADR-011: Jobs Run Sequentially, Not in Parallel (supersedes part of ADR-004)
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Context
+ADR-004 said jobs "execute in parallel". The Phase 4 engine is synchronous.
+
+### Decision
+Destinations are processed one after another in `publish_post`. Independence (ADR-004) is kept: every job has its own state, attempts, retries and error handling, and one job's failure (including an unexpected exception) never stops or rolls back another.
+
+### Rationale
+- Simple, deterministic, easy to test; no shared-connection or SQLite write contention
+- Provider rate limits (TikTok 6 inits/min, Instagram 100 posts/day) make parallel uploads of little value
+- Token renewal uses `asyncio.run` inside `AuthManager`, which is safe from synchronous code
+
+### Consequences
+- Total time is the sum of the jobs, including retry back-off sleeps
+- Upgrade path: a thread pool around `_run_job` (each job already uses its own DB sessions)
+
+---
+
+## ADR-012: Instagram Publishing Requires a Public `video_url`
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Context
+Meta documents two ways to supply Reels video: `video_url` (Meta downloads it) and a resumable upload to `rupload.facebook.com`. The content-publishing docs list rupload only for the **Facebook Login** product; the project uses **Instagram Login** (Phase 3B).
+
+### Decision
+Instagram jobs need an `https://` `video_url` option that the user supplies. Local files are not uploaded to Instagram.
+
+### Consequences
+- Users must host the video somewhere Meta can fetch it
+- If Meta documents rupload for Instagram Login later, add it as a second source in `InstagramPublisher`
+
+---
+
+## ADR-013: Provider IDs Persisted per Attempt for Idempotent Resume
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+Adapters report provider IDs (Instagram container ID, TikTok `publish_id`, YouTube `video_id`) through `on_progress` as soon as they exist. The engine stores them in `publish_attempts.response_json` before the next step. Retries and later runs pass them back so adapters resume rather than re-post. No new "provider state" table was added.
+
+### Consequences
+- Secrets such as the TikTok `upload_url` and the YouTube session URI are never stored. An interrupted upload restarts (TikTok) or fails as "uncertain" (YouTube)
+- Outcomes that can't be determined are marked `uncertain` and never auto-retried
+
+---
+
+## ADR-014: Schema Migration 002 and Migration Runner Fixes
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+Migration `002_publishing.sql` adds `publish_jobs.options_json` (per-destination options such as the TikTok privacy level or YouTube title) and a unique index on `(post_id, account_id)`. The runner now strips comment lines instead of skipping whole comment-prefixed statements (previously most of 001 was silently skipped), tolerates "duplicate column" when `create_all()` already created the column, and records the version with `merge`. `main.py` runs `create_all()` + `migrate()` at startup.
+

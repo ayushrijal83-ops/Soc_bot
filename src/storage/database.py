@@ -21,6 +21,7 @@ from sqlalchemy import (
     event,
     text,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import (
     DeclarativeBase,
     Session,
@@ -114,7 +115,7 @@ class Video(Base):
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
     checksum = Column(String(64), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         UniqueConstraint("checksum", name="uq_videos_checksum"),
@@ -132,7 +133,7 @@ class Post(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     video_id = Column(Integer, ForeignKey("videos.id", ondelete="CASCADE"), nullable=False)
     caption = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("idx_posts_video", "video_id"),
@@ -152,10 +153,12 @@ class PublishJob(Base):
     account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     status = Column(String(20), nullable=False, default="pending")
     platform_media_id = Column(String(100), nullable=True)
+    # Per-destination publish options (e.g. TikTok privacy_level, YouTube title). Never secrets.
+    options_json = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     retry_count = Column(Integer, nullable=False, default=0)
     next_retry_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     published_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
@@ -163,6 +166,8 @@ class PublishJob(Base):
         Index("idx_jobs_account", "account_id"),
         Index("idx_jobs_status", "status"),
         Index("idx_jobs_next_retry", "next_retry_at"),
+        # One job per destination per post: prevents accidental duplicate publishing jobs.
+        Index("uq_jobs_post_account", "post_id", "account_id", unique=True),
         CheckConstraint("status IN ('pending','uploading','processing','published','failed','retrying')", name="ck_jobs_status"),
     )
 
@@ -184,7 +189,7 @@ class PublishAttempt(Base):
     status = Column(String(20), nullable=False)
     response_json = Column(Text, nullable=True)
     error_json = Column(Text, nullable=True)
-    started_at = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
+    started_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
@@ -204,7 +209,7 @@ class SchemaVersion(Base):
     __tablename__ = "schema_version"
 
     version = Column(Integer, primary_key=True)
-    applied_at = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
+    applied_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     description = Column(String(200), nullable=True)
 
 
@@ -268,15 +273,23 @@ class Database:
         """Apply a single migration."""
         with self.session() as session:
             # Execute migration SQL - filter out comments and empty lines
-            for statement in sql.split(";"):
-                statement = statement.strip()
-                if statement and not statement.startswith("--"):
-                    session.execute(text(statement))
+            for chunk in sql.split(";"):
+                # Drop comment lines; a statement preceded by comments must still run.
+                statement = "\n".join(
+                    line for line in chunk.splitlines() if not line.strip().startswith("--")
+                ).strip()
+                if statement:
+                    try:
+                        session.execute(text(statement))
+                    except OperationalError as e:
+                        # create_all() already builds new columns on fresh databases.
+                        if "duplicate column name" not in str(e):
+                            raise
             # Record migration
-            session.add(SchemaVersion(version=version, description=description))
+            session.merge(SchemaVersion(version=version, description=description))
             session.commit()
 
-    def migrate(self, migrations_dir: str | None = None) -> None:
+    def migrate(self, migrations_dir: str | None = None, verbose: bool = True) -> None:
         """
         Run all pending migrations.
 
@@ -294,17 +307,21 @@ class Database:
             try:
                 version = int(migration_file.stem.split("_")[0])
             except (ValueError, IndexError):
-                print(f"Skipping invalid migration filename: {migration_file.name}")
+                if verbose:
+                    print(f"Skipping invalid migration filename: {migration_file.name}")
                 continue
 
             if version in applied:
-                print(f"Migration {version} already applied, skipping")
+                if verbose:
+                    print(f"Migration {version} already applied, skipping")
                 continue
 
-            print(f"Applying migration {version}: {migration_file.name}")
+            if verbose:
+                print(f"Applying migration {version}: {migration_file.name}")
             sql = migration_file.read_text()
             self.apply_migration(version, migration_file.stem, sql)
-            print(f"Migration {version} applied successfully")
+            if verbose:
+                print(f"Migration {version} applied successfully")
 
     def init(self) -> None:
         """Initialize database: create tables and run migrations."""

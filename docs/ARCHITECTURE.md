@@ -9,7 +9,7 @@
                         |
            +------------+------------+
            |                         |
-    Account Manager            Job Manager
+    Account Manager   JobStore (src/core/jobs.py)
            |                         |
            +------------+------------+
                         |
@@ -29,7 +29,8 @@
 - **menu.py** — Main menu loop, navigation, user input handling
 - **prompts.py** — Interactive prompts for video selection, caption entry, platform/account selection
 - **display.py** — Rich text formatting, tables, progress bars, status display
-- **account_menu.py** — Account management submenu (list, details, create dev, update, disconnect, enable)
+- **account_menu.py** — Account management submenu (list, details, connect, create dev, update, disconnect, enable)
+- **publish_menu.py** — Phase 4 minimal CLI: Create Post (plan → confirm → publish with live status) and Publishing Queue
 
 ### 2. Account Manager (`src/accounts/manager.py`) — ✅ **IMPLEMENTED**
 - Manages connected accounts per platform
@@ -56,25 +57,25 @@
 - **errors.py** — OAuth-specific exception hierarchy
 - **manager.py** — AuthManager coordinating all platform adapters
 
-### 5. Job Manager (`src/core/jobs.py`) — 📋 **PLANNED**
-- Creates independent publishing jobs per destination (platform + account)
-- Manages job lifecycle: PENDING → UPLOADING → PROCESSING → PUBLISHED / FAILED
-- Retry logic with exponential backoff
-- Job queue persistence
-- Concurrency control (max parallel uploads)
+### 5. Job Store (`src/core/jobs.py`): ✅ **IMPLEMENTED** (Phase 4)
+- Creates a post plus one `PublishJob` per destination account (the video is de-duplicated by SHA-256)
+- Enforces the job state machine with conditional UPDATEs (`transition`, atomic `claim`)
+- Records every provider attempt in `publish_attempts`: provider IDs only, never tokens
 
-### 6. Publisher Engine (`src/core/publisher.py`) — 📋 **PLANNED**
-- Platform-agnostic orchestration layer
-- Coordinates validation, upload, and publishing per job
-- Calls platform adapters through a common interface
-- Aggregates results across all destinations
-- Dry-run simulation
+### 6. Publisher Engine (`src/core/publisher.py`): ✅ **IMPLEMENTED** (Phase 4)
+- Platform-agnostic: no platform HTTP; calls `PlatformPublisher` adapters
+- Per job: validate, check the account, renew the token if needed, publish/resume, record the attempt, update state
+- Destinations are isolated: an error (even an unexpected exception) in one job never stops or rolls back another
+- Bounded retries for retryable errors; resumes processing jobs; dry-run plan without network
 
-### 7. Platform Adapters (`src/platforms/{instagram,tiktok,youtube}/`) — 📋 **PLANNED** (auth ✅ IMPLEMENTED)
-Each adapter implements a common interface:
-- **auth.py** — Platform-specific OAuth flow, token exchange, refresh ✅ **IMPLEMENTED**
-- **client.py** — API client wrapper, request/response handling, rate limiting
-- **publisher.py** — Media upload, post creation, status polling
+### 7. Platform Adapters (`src/platforms/`): ✅ **IMPLEMENTED** (mock-tested; real publishing NOT RUN)
+- **base.py**: `PlatformPublisher` interface, `PublishContext`, `PublishOutcome`, `PublishError` (retryable / uncertain), `redact()`
+- **`<platform>/auth.py`**: OAuth (Phase 3B)
+- **`<platform>/publisher.py`**: platform publishing and platform-specific validation
+
+### 7a. Media Validation (`src/core/validation.py`): ✅ **IMPLEMENTED**
+- Generic checks only: exists, regular file, readable, non-empty, MP4/MOV/WebM, size; ffprobe metadata when installed
+- Platform limits live in each adapter's `validate()`
 
 ### 8. Storage (`src/storage/`) — ✅ **IMPLEMENTED**
 - **database.py** — SQLite connection, migrations, ORM/models
@@ -95,7 +96,7 @@ Platform/Account Selection
     Job Creation (1 job per destination)
           |
           v
-    For Each Job (Parallel):
+    For Each Job (sequential, isolated; see ADR-011):
        Publisher Engine
              |
              v
@@ -108,7 +109,7 @@ Platform/Account Selection
        Result (Success/Failure)
           |
           v
-    Aggregate Results → Display → Save History
+    Aggregate Results → Display (job + attempt rows are the history)
 ```
 
 ## CLI Layer — ✅ **IMPLEMENTED**
@@ -116,11 +117,11 @@ Platform/Account Selection
 ```
 main.py
   └── CLI Menu (menu.py)
-        ├── Create Post → prompts.py → validation.py → Job Manager
+        ├── Create Post → publish_menu.py → validation.py → plan → JobStore → PublisherEngine
         ├── Connected Accounts → account_menu.py → AuthManager → Account Manager
-        ├── Publishing Queue → Job Manager → status display
-        ├── History → Database queries → display.py
-        ├── Settings → Configuration display/edit
+        ├── Publishing Queue → publish_menu.py → list jobs / continue open jobs / retry failed
+        ├── History → not implemented
+        ├── Settings → not implemented
         └── Exit
 ```
 
@@ -129,7 +130,6 @@ main.py
 Responsibilities:
 - List connected accounts per platform
 - Store/retrieve account credentials from database (encrypted)
-- Token refresh coordination (future)
 - Account status tracking (active, expired, revoked, disconnected)
 - Account listing with filtering (platform, status)
 - Account search by platform + platform_account_id
@@ -147,35 +147,81 @@ Responsibilities:
 - Manage token refresh and revocation
 - Provide account selection for publishing
 
-## Job Manager
+## Publishing (Phase 4)
 
-Job Lifecycle:
 ```
-PENDING
-    |
-    v (start)
-UPLOADING  ──→  PROCESSING  ──→  PUBLISHED
-    |              |
-    |              └──→ FAILED ──→ RETRYING (max 3) ──→ FAILED
-    └──→ FAILED ──→ RETRYING (max 3) ──→ FAILED
+Post #15 (video + caption)
+   +-- Job #101 -> Instagram account A   (independent)
+   +-- Job #102 -> TikTok account B      (independent)
+   +-- Job #103 -> YouTube channel C     (independent)
 ```
 
-Each job is independent:
-- Own status, error message, platform media ID
-- Own retry count and schedule
-- Failure of one job does not affect others
+### Job state machine (`publish_jobs.status`)
 
-## Publisher Engine
+```
+pending ──claim──► uploading ──► processing ──► published   (terminal)
+   │                  │   │           │  ▲
+   │                  │   └───────────┼──┘ (fast providers: uploading ──► published)
+   │                  ▼               ▼
+   └───(validation)─► failed ◄────────┘
+                        │ ▲
+      retryable error:  │ │ bounded (3), then failed
+   uploading/processing ──► retrying ──claim──► uploading
+                        └── manual retry: failed ──► retrying
+```
 
-Interface:
+Allowed transitions are listed in `src/core/jobs.TRANSITIONS`. `processing ──► processing` means "still working; checked again later". A job that is still processing when polling ends is **not** failed.
+
+### Engine flow
+
+```
+publish_post(post_id)
+  for each job (isolated, try/except per job):
+    published/failed     -> skip (never republish)
+    pending/retrying     -> generic + platform validation (failure = failed, no retry)
+                            claim (atomic pending|retrying -> uploading)
+    uploading (found on start = crashed process)
+                         -> resume only if adapter.can_restart(saved state), else failed "outcome unknown"
+    processing           -> resume (poll / finish with saved provider IDs)
+    attempt loop:
+      start attempt -> check account active -> renew token if expiring -> adapter.publish(ctx, on_progress)
+        on_progress: persists provider IDs to the attempt immediately + moves job to uploading/processing
+      PublishError retryable & retries left -> retrying, sleep(30/60/120 s), claim, next attempt
+      otherwise -> failed (safe error text)
+      success -> published (platform_media_id) or processing
+```
+
+### Adapter interface (`src/platforms/base.py`)
+
 ```python
-class PublisherEngine:
-    def validate_media(self, video_path: str, platforms: list) -> ValidationResult
-    def create_jobs(self, post: Post, destinations: list[Account]) -> list[Job]
-    def execute_job(self, job: Job) -> JobResult
-    def execute_all(self, jobs: list[Job]) -> list[JobResult]
-    def dry_run(self, post: Post, destinations: list[Account]) -> DryRunPlan
+class PlatformPublisher(ABC):
+    PLATFORM: str
+    TOKEN_REFRESH_MARGIN: int          # renew when the token expires within this many seconds
+    RESTART_SAFE: bool                 # may a crashed mid-upload job be started again?
+    def validate(caption, options, media) -> list[str]           # no network
+    def publish(ctx, on_progress) -> PublishOutcome              # resumes from ctx.state
+    def can_restart(state) -> bool
 ```
+
+`publish()` is resumable: given the provider IDs saved by earlier attempts, it continues instead of starting over. A separate `get_status()` isn't needed. `cancel()` was not implemented: none of the three APIs offers a cancel for an in-flight publish (deleting a published video is a different action).
+
+### Idempotency / duplicate protection
+
+| Layer | Mechanism |
+|-------|-----------|
+| Database | Unique index `(post_id, account_id)`: one job per destination per post |
+| Engine | Atomic claim; `published` is terminal; failed jobs only run again on explicit `retry_job` |
+| CLI | Warns before publishing the same file (checksum) to an account it was already published to |
+| Instagram | Container ID saved before polling. Resume checks `status_code`: `PUBLISHED` means done (no second `media_publish`); `FINISHED` means publish once; `ERROR`/`EXPIRED` means a new container (the old one can never publish) |
+| TikTok | `publish_id` saved before the upload, `upload_complete` after it. Resume after the upload only polls status. An interrupted upload is re-initialised; TikTok can't publish an incomplete upload |
+| YouTube | `video_id` saved as soon as the upload completes; resume only polls. The session URI is kept in memory only. If the final chunk's response is lost, the session is queried; if that also fails, the job is marked failed with `uncertain` and is **not** auto-retried (the video may exist) |
+
+Unavoidable uncertainty: a crash between the provider accepting a request and the local write of its ID. On Instagram and TikTok that leaves an orphan container or upload that never publishes. On YouTube a crash during the final chunk leaves the outcome unknown, so the job is failed as "outcome unknown; check the channel" rather than re-uploaded.
+
+Single-process assumption: a job found in `uploading` at the start of a run is treated as crashed. Two CLI instances publishing at once are not supported.
+
+### Token handling
+The engine loads the account (it must be `active`) and checks `expires_at` against the adapter's `TOKEN_REFRESH_MARGIN` (Instagram 7 days, others 5 min). If the token is expiring it calls `AuthManager.refresh_account_tokens`, which uses the platform's documented mechanism (Instagram `ig_refresh_token`, TikTok/YouTube refresh token, rotation persisted, Fernet-encrypted by AccountManager). If renewal fails and the token has already expired, the job fails with "reconnect the account"; if it is still valid, publishing continues. Tokens exist only in the adapter's `PublishContext` and request headers.
 
 ## Platform Adapters — Auth ✅ IMPLEMENTED
 
@@ -221,14 +267,14 @@ Local callback server on `http://127.0.0.1:<dynamic-port>/callback/{platform}` (
 
 - Platform API errors → mapped to common error types
 - Network errors → retry with backoff
-- Token expiry → auto-refresh → retry
+- Token expiry → renewed before publishing (not on a mid-request 401)
 - Validation errors → fail fast, no API call
-- All errors logged with context (job ID, account, platform)
+- Errors stored per job/attempt with `redact()` applied; no structured logging yet (ADR-010 still planned)
 
-## Retry Architecture
+## Retry Architecture (implemented)
 
-- Max 3 retries per job
-- Exponential backoff: 30s, 60s, 120s
-- Retryable errors: network timeout, 5xx, rate limit (429)
-- Non-retryable: 4xx (except 429), validation, auth revoked
-- Retry state persisted in database
+- Max 3 retries per job (`retry_delays = (30, 60, 120)` seconds), run in-process while the CLI waits
+- Retryable: network error/timeout, 5xx, 429, provider-flagged transient errors (Instagram `is_transient`), expired Instagram container, TikTok `rate_limit_exceeded`/`internal_error`
+- Non-retryable: validation, 401/invalid token, insufficient scope, permission denied, quota exceeded, rejected content, inactive account, **uncertain outcome**
+- `retry_count`, `next_retry_at`, `error_message` persisted on the job; each attempt's error in `publish_attempts.error_json`
+- Retries resume from saved provider IDs instead of starting over

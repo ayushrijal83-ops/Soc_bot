@@ -11,22 +11,21 @@
 
 ```
 tests/
-├── unit/                    # Fast, isolated unit tests (214 tests ✅)
+├── unit/                    # Fast, isolated unit tests (305 tests ✅)
 │   ├── test_tokens.py       # Token encryption (13 tests)
-│   ├── test_database.py     # Database layer (34 tests)
+│   ├── test_database.py     # Database layer + migrations (37 tests)
 │   ├── test_cli_display.py  # Display utilities (10 tests)
 │   ├── test_cli_prompts.py  # Input validation (22 tests)
 │   ├── test_cli_menu.py     # Menu navigation (13 tests)
-│   ├── test_main.py         # Entry point (8 tests)
+│   ├── test_main.py         # Entry point, dry-run (10 tests)
 │   ├── test_account_manager.py  # Account management (38 tests)
 │   ├── test_auth_state.py       # OAuth state/PKCE (23 tests)
 │   ├── test_auth_callback.py    # OAuth callback server (17 tests)
 │   ├── test_auth_manager.py     # AuthManager flow, dynamic port, persistence (11 tests)
 │   ├── test_platform_auth.py    # Platform auth adapters, mocked HTTP (25 tests)
-│   ├── test_validation.py       # 📋 PLANNED
-│   ├── test_models.py           # 📋 PLANNED
-│   ├── test_job_state_machine.py  # 📋 PLANNED
-│   └── test_cli_parsing.py      # 📋 PLANNED
+│   ├── test_publishers.py       # Instagram/TikTok/YouTube publishers, httpx.MockTransport (45 tests)
+│   ├── test_publishing_engine.py  # Jobs, state machine, engine, retries, tokens, dry-run, validation (36 tests)
+│   └── test_cli_publish.py      # Create Post / Publishing Queue CLI (5 tests)
 ├── integration/             # Slower, cross-component tests
 │   ├── test_database.py     # 📋 PLANNED (uses temp DB)
 │   ├── test_account_manager.py  # 📋 PLANNED
@@ -44,21 +43,24 @@ tests/
     └── test_accounts.json
 ```
 
-## Unit Tests (Implemented: 214)
+## Unit Tests (Implemented: 305)
 
 | Test Module | Tests | Coverage |
 |-------------|-------|----------|
 | `test_tokens.py` | 13 | Encrypt/decrypt roundtrip, special chars, empty strings, wrong key, corrupted data, optional handling, env key |
-| `test_database.py` | 34 | Init, schema version, idempotency, migrations, health check, all model CRUD, constraints, relationships, indexes, encryption integration |
+| `test_database.py` | 37 | Init, schema versions 1+2, v1→v2 upgrade, idempotency, health check, model CRUD, constraints, unique job per destination, per-row timestamps, relationships, indexes, encryption |
 | `test_cli_display.py` | 10 | Headers, menus, tables, status messages, empty tables |
 | `test_cli_prompts.py` | 22 | Text, int, choice, yes/no, menu selection, EOF, Ctrl+C |
 | `test_cli_menu.py` | 13 | Init, routing, handlers, run loop, edge cases |
-| `test_main.py` | 8 | Args parsing, dry-run, KeyboardInterrupt, exceptions |
+| `test_main.py` | 10 | Args parsing, dry-run (no network, plan shown, jobs untouched), services passed to menu, KeyboardInterrupt, exceptions; isolated temp DB |
 | `test_account_manager.py` | 38 | Account CRUD, listing, filtering, updates, disconnect, enable, dev accounts, security, edge cases |
 | `test_auth_state.py` | 23 | OAuth state, PKCE (base64url + hex), platform binding, single use, expiration, cleanup |
 | `test_auth_callback.py` | 17 | Callback server: dynamic port, bind failure, platform mismatch, single use, non-callback paths, escaping, no code echo |
 | `test_auth_manager.py` | 11 | End-to-end connect flow on a real loopback server with mocked providers; dynamic port; state/platform mismatch; TikTok rotation persisted; Instagram re-exchange; reconnect update; no secrets in logs |
 | `test_platform_auth.py` | 25 | Instagram Login endpoints/scopes/exchange/identity/revocation, TikTok hex PKCE/expiry/rotation, YouTube base64url PKCE, expiry model |
+| `test_publishers.py` | 45 | Instagram container/poll/publish, timeout stays processing, ERROR/EXPIRED, resume without re-publish, error mapping (190/10/transient/rate limit), malformed, timeout; TikTok creator info/init/chunked upload/status, private post id, rejected content, 401/scope/spam/429/5xx, privacy mismatch, upload failure, resume polls only; YouTube session/chunks/308 resume, network resume, uncertain final chunk, quota, 401, 4xx, 5xx, processing failure, resume without re-upload; secret redaction; token only in headers; foreign session URI rejected |
+| `test_publishing_engine.py` | 36 | Job creation/dedup, state machine, atomic claim, success + provider ID persisted, **failure isolation (IG ok / TikTok fail / YT ok)**, unexpected exception isolation, bounded retries, non-retryable errors, resume from saved state, no re-publish, processing resume, crash recovery (safe vs unsafe), manual retry, validation failure, missing video, disconnected account, no tokens in attempts, token renewal (expiring / fresh / expired+unrenewable / Instagram early renewal), dry-run without network or mutation, end-to-end with real adapters + mocked HTTP |
+| `test_cli_publish.py` | 5 | Create Post confirm → published, cancel → nothing, blocked plan → nothing, missing video, queue listing |
 
 ### Token Encryption Tests (`test_tokens.py`)
 - Key generation produces valid URL-safe base64
@@ -173,15 +175,9 @@ Real provider OAuth is **not** exercised by any automated test. Real OAuth test:
 | `test_publisher_engine.py` | Job creation, execution, dry-run |
 | `test_oauth_flows.py` | 📋 PLANNED |
 
-## Platform Adapter Tests (Implemented: 0)
+## Platform Adapter Tests (Implemented: 45, in `test_publishers.py`)
 
-Each platform adapter tested against **mocked official API responses**:
-- Media validation
-- Upload initiation
-- Status polling
-- Publishing
-- Token refresh
-- Error handling (rate limit, auth expired, invalid media)
+All provider HTTP goes through `httpx.MockTransport` (built into httpx; no extra dependency). The tests check the exact requests sent (URLs, methods, headers, bodies, Content-Range) and the handling of each documented response.
 
 ## OAuth Tests (Implemented: 7)
 
@@ -194,45 +190,19 @@ Each platform adapter tested against **mocked official API responses**:
 - Missing state parameter
 - Invalid/expired state
 
-## Publishing Tests (Implemented: 0)
+## Publishing Tests (Implemented: 36 engine + 5 CLI)
 
-- Single destination publish
-- Multi-destination publish (independent jobs)
-- Partial failure handling
-- Retry logic
-- Dry-run accuracy
+See `test_publishing_engine.py` and `test_cli_publish.py` above. **Mocked tests verified. Real provider publishing NOT verified (NOT RUN).**
 
-## Failure Tests (Implemented: 0)
+## Failure / Retry / Dry-run / Selection Coverage (Phase 4)
 
-- Network timeout
-- Platform API errors (4xx, 5xx)
-- Invalid media format/size
-- Expired tokens
-- Revoked permissions
-- Rate limiting (429)
-- Quota exceeded
-
-## Retry Tests (Implemented: 0)
-
-- Retry on transient failure
-- No retry on permanent failure
-- Exponential backoff timing
-- Max retry limit
-- Retry state persistence
-
-## Dry-run Tests (Implemented: 0)
-
-- Plan matches actual execution
-- No API calls made
-- All destinations listed
-- Validation still runs
-
-## Account Selection Tests (Implemented: 0)
-
-- Select subset of connected accounts
-- Deselect all → no jobs created
-- Platform filter
-- Account status filter (only active)
+| Area | Where |
+|------|-------|
+| Timeout, network error, 4xx, 5xx, 401, 403, 429, quota, malformed response | `test_publishers.py` (per platform) |
+| Invalid media, missing video, disconnected account, expired/unrenewable token | `test_publishing_engine.py` |
+| Retry on transient failure, no retry on permanent failure, max 3 retries, retry state persisted, back-off delays | `test_publishing_engine.py::TestEngine` |
+| Dry-run: no provider calls, no token renewal, no job/attempt changes, problems reported | `test_publishing_engine.py::TestDryRun`, `test_main.py` |
+| Account selection / cancel / blocked plan | `test_cli_publish.py` |
 
 ## Running Tests
 
@@ -240,7 +210,7 @@ Each platform adapter tested against **mocked official API responses**:
 # All tests
 pytest
 
-# Unit only (fast) — 214 tests passing
+# Unit only (fast) — 305 tests passing
 pytest tests/unit -v
 
 # Integration (requires test DB)
@@ -281,6 +251,6 @@ jobs:
 ```
 
 ## Current Status
-✅ **Phase 1, 2, 3A & 3B (incl. 2026-09-25 audit fixes)**: 214 unit tests passing; `ruff check .`: 0 errors. OAuth is tested with mocks only. Real provider OAuth: NOT RUN.
+✅ **Phases 1–4**: 305 unit tests passing; `ruff check .`: 0 errors; no skipped tests. OAuth and publishing are tested with mocks only. Real provider OAuth: NOT RUN. Real provider publishing: NOT RUN.
 
-Next: Integration tests for account manager and publisher engine (Phase 4).
+Next: real-provider verification (Phase 5).

@@ -12,7 +12,8 @@ Status terms used here are separate claims:
 | OAuth implemented | Code exists in `src/platforms/<platform>/auth.py` |
 | Tested with mocks | Automated tests with mocked HTTP (no provider contact) |
 | Real OAuth tested | A human completed the flow against the real provider with real credentials |
-| Publishing implemented | Phase 4, not started |
+| Publishing implemented | Phase 4: implemented, mocked tests only |
+| Real publishing tested | Content actually posted to a real account: NOT RUN |
 
 ---
 
@@ -47,34 +48,34 @@ Status terms used here are separate claims:
 | Instagram App Secret | Same page |
 | Redirect URI | Business login settings → OAuth redirect URIs |
 
-### Publishing Workflow (not re-verified; Phase 4)
-1. **Container Creation:** POST `/{IG_USER_ID}/media` with `media_type=VIDEO`/`REELS`, `video_url` (publicly accessible URL), `caption`
-2. **Status Polling:** GET `/{CONTAINER_ID}?fields=status_code` until `FINISHED`
-3. **Publish:** POST `/{IG_USER_ID}/media_publish` with `creation_id=<CONTAINER_ID>`
-4. **Result:** Returns the media ID on success
+### Publishing (Reels): VERIFIED 2026-09-25 · implemented · mocked tests only · real publishing NOT RUN
 
-### Media Requirements
-| Property | Requirement |
-|----------|-------------|
-| Format | MP4, MOV |
-| Codec | H.264 |
-| Max File Size | 4 GB |
-| Max Duration | 60 minutes (Reels: 90 seconds) |
-| Aspect Ratio | 9:16 (Reels), 4:5, 1:1, 1.91:1 |
-| Frame Rate | ≤ 30 fps |
-| Audio | AAC |
+Sources: https://developers.facebook.com/docs/instagram-platform/content-publishing and the IG User `/media` reference.
 
-### Rate Limits
-- 200 calls/hour per user (Graph API)
-- Media publish: ~25/day per account (estimated)
+| Step | Endpoint | Method | Request | Response |
+|------|----------|--------|---------|----------|
+| 1. Create container | `graph.instagram.com/v25.0/{ig_user_id}/media` | POST | `media_type=REELS`, `video_url` (public URL Meta downloads), `caption`, optional `share_to_feed` | `{"id": container_id}` |
+| 2. Processing status | `graph.instagram.com/v25.0/{container_id}?fields=status_code` | GET | none | `status_code`: `IN_PROGRESS`, `FINISHED`, `ERROR`, `EXPIRED`, `PUBLISHED` |
+| 3. Publish | `graph.instagram.com/v25.0/{ig_user_id}/media_publish` | POST | `creation_id=container_id` | `{"id": ig_media_id}` |
+
+- **Auth:** Instagram user access token (Instagram Login) with `instagram_business_basic` + `instagram_business_content_publish`. Sent as `Authorization: Bearer`, never in the URL.
+- **Account types:** Instagram professional (Business or Creator) accounts. An account connected to a Page that requires Page Publishing Authorization can't be published to until PPA is complete.
+- **Upload method:** with Instagram Login, video publishing is documented only via `video_url`. Meta's docs list the resumable `rupload.facebook.com` upload for **Facebook Login only**. Soc_bot therefore needs a public `https://` URL for the video and **cannot upload a local file to Instagram**. NOT VERIFIED: whether rupload works with Instagram Login tokens, so it isn't used.
+- **Polling:** Meta recommends checking status "once per minute, for no more than 5 minutes". Soc_bot polls every 60 s, 5 times. If the container is still `IN_PROGRESS`, the job stays `processing` and is re-checked later; this is not a failure.
+- **Containers** expire after 24 h (`EXPIRED`). Soc_bot then creates a new container on the next attempt.
+- **Rate limit:** 100 API-published posts per account per 24-hour moving window (`GET /{ig_user_id}/content_publishing_limit` shows usage; not called by Soc_bot).
+- **Caption:** max 2,200 characters, 30 hashtags, 20 @ tags.
+- **Reels video spec:** MOV or MP4; HEVC or H.264; 23–60 FPS; max 1920 px wide; aspect ratio 0.01:1 to 10:1 (9:16 recommended); 3 s to 15 min; ≤ 300 MB; AAC audio ≤ 48 kHz. Soc_bot checks size, container and caption locally; it checks duration and width only when ffprobe is installed.
+- **Errors:** Graph error JSON `{"error": {"message", "code", "is_transient", "fbtrace_id"}}`. Soc_bot maps `is_transient`, 429 and 5xx to retryable; code 190 / 401 to `unauthorized`; codes 10 and 200 / 403 to `permission_denied`; codes 4, 9, 17, 32 and 613 to `rate_limited` (retryable).
+- **Token:** a long-lived token (~60 days) renewed with `ig_refresh_token`. The engine renews it when it expires within 7 days, and continues if renewal is refused but the token is still valid.
 
 ### Known Limitations
-- Requires a publicly accessible video URL (no direct upload)
-- Personal Instagram accounts not supported (Business/Creator only)
-- Reels vs Feed post distinction via media_type
+- Needs a publicly reachable `video_url`. Soc_bot does not host files.
+- Personal Instagram accounts are not supported (Business/Creator only)
+- Only Reels are implemented (no images, carousels or stories)
 
 ### Current Implementation Status
-OAuth implemented and tested with mocks. Real OAuth: NOT RUN. Publishing: NOT IMPLEMENTED.
+OAuth and publishing implemented. **Mocked tests verified. Real provider OAuth and publishing NOT verified (NOT RUN).**
 
 ---
 
@@ -105,36 +106,34 @@ OAuth implemented and tested with mocks. Real OAuth: NOT RUN. Publishing: NOT IM
 | Client Secret | TikTok Developer Portal → App Details |
 | Redirect URI | Configured in TikTok Developer Portal (Login Kit → Desktop) |
 
-### Publishing Workflow (Content Posting API; not re-verified, Phase 4)
-1. **Initialize Upload:** POST `/v2/post/publish/video/init/` with `source_info` → returns `upload_url`
-2. **Upload Video:** PUT the video binary to `upload_url`
-3. **Publish:** POST `/v2/post/publish/video/create/` with `video_id`, `caption`, `privacy_level`
-4. **Status Polling:** GET `/v2/post/publish/status/fetch/` with `publish_id`
+### Publishing (Direct Post, FILE_UPLOAD): VERIFIED 2026-09-25 · implemented · mocked tests only · real publishing NOT RUN
 
-### Media Requirements
-| Property | Requirement |
-|----------|-------------|
-| Format | MP4, MOV, MPEG, 3GP, AVI |
-| Codec | H.264, H.265 |
-| Max File Size | 4 GB |
-| Max Duration | 10 minutes (up to 60 min for some accounts) |
-| Aspect Ratio | 9:16 (vertical), 1:1, 16:9 |
-| Resolution | Min 720x1280, Max 1080x1920 |
-| Frame Rate | ≤ 60 fps |
-| Audio | AAC, MP3 |
+Sources: content-posting-api-reference-direct-post, -query-creator-info, -get-video-status, content-posting-api-media-transfer-guide.
 
-### Rate Limits
-- 1000 requests/day per app (Creator API)
-- Video upload: varies by account tier
+| Step | Endpoint | Method | Request | Response |
+|------|----------|--------|---------|----------|
+| 1. Creator info | `open.tiktokapis.com/v2/post/publish/creator_info/query/` | POST | none | `privacy_level_options`, `max_video_post_duration_sec`, `comment_disabled`, `duet_disabled`, `stitch_disabled`, `creator_nickname` |
+| 2. Init | `open.tiktokapis.com/v2/post/publish/video/init/` | POST (JSON) | `post_info{title, privacy_level, disable_*, is_aigc}`, `source_info{source: FILE_UPLOAD, video_size, chunk_size, total_chunk_count}` | `publish_id`, `upload_url` (valid 1 h) |
+| 3. Upload | `upload_url` | PUT per chunk | `Content-Type`, `Content-Range: bytes a-b/total`, sequential | `206` per chunk, `201` when complete |
+| 4. Status | `open.tiktokapis.com/v2/post/publish/status/fetch/` | POST | `{"publish_id"}` | `status`: `PROCESSING_UPLOAD`, `PROCESSING_DOWNLOAD`, `SEND_TO_USER_INBOX`, `PUBLISH_COMPLETE`, `FAILED`; `fail_reason`; `publicaly_available_post_id` (sic) |
+
+- **Auth:** `Authorization: Bearer` user token with scope `video.publish`. OAuth success does **not** grant posting rights: the app needs Content Posting API access. **Unaudited clients can only post to private accounts / `SELF_ONLY`.**
+- **Privacy:** `privacy_level` is required, and must be one of the creator's `privacy_level_options`. TikTok's UX rules require the user to choose it (no default). Soc_bot asks the user and checks it against creator info before init.
+- **Chunks:** 5–64 MB per chunk (last chunk ≤ 128 MB), files < 5 MB go in one chunk, max 1000 chunks, `total_chunk_count = floor(video_size / chunk_size)`. Soc_bot uses 10 MB chunks and reads one chunk at a time.
+- **Video:** MP4 (recommended), WebM, MOV; H.264/H.265/VP8/VP9; 23–60 FPS; 360–4096 px; ≤ 10 min via API (the per-creator max may be lower); ≤ 4 GB.
+- **Caption (`title`):** ≤ 2,200 UTF-16 code units.
+- **Rate limits:** init 6 requests/min per token; status fetch 30 requests/min per token (Soc_bot polls every 5 s).
+- **Errors:** envelope `{"data":{}, "error":{"code","message","log_id"}}`. `access_token_invalid` becomes `unauthorized` and `scope_not_authorized` becomes `insufficient_scope` (both non-retryable); `spam_risk_*`, `privacy_level_option_mismatch` and `unaudited_client_can_only_post_to_private_accounts` are non-retryable; `rate_limit_exceeded`, `internal_error` and 5xx are retryable.
+- **Post ID:** `publicaly_available_post_id` appears only for public posts after moderation; otherwise Soc_bot records the `publish_id`.
+- NOT VERIFIED: what `SEND_TO_USER_INBOX` means for Direct Post (it belongs to the inbox/draft flow). Soc_bot treats it as still processing.
 
 ### Known Limitations
-- Content Posting API access requires approval (not automatic)
-- Personal accounts may have limited API access
-- Draft vs Direct post options
-- Commercial Content Library restrictions
+- Unaudited apps: private (`SELF_ONLY`) posts only
+- Soc_bot shows the privacy options as a fixed list and checks them against creator info at publish time. It does not yet render the full creator-info screen that TikTok's app review expects (nickname, per-creator options, interaction toggles).
+- Upload URL expires after 1 hour. An interrupted upload is restarted with a new init; the unfinished one never publishes.
 
 ### Current Implementation Status
-OAuth implemented and tested with mocks. Real OAuth: NOT RUN. Publishing: NOT IMPLEMENTED.
+OAuth and publishing implemented. **Mocked tests verified. Real provider OAuth and publishing NOT verified (NOT RUN).**
 
 ---
 
@@ -164,38 +163,33 @@ OAuth implemented and tested with mocks. Real OAuth: NOT RUN. Publishing: NOT IM
 | Client Secret | Same |
 | Redirect URI | Not needed for Desktop-app clients (dynamic loopback) |
 
-### Publishing Workflow (not re-verified; Phase 4)
-1. **Resumable Upload Init:** POST `/upload/youtube/v3/videos?part=snippet,status` with metadata → returns `upload_url`
-2. **Upload Video:** PUT the video binary to `upload_url` (resumable, chunked)
-3. **Status Polling:** Poll the upload URL until complete
-4. **Result:** Returns the video ID on success
+### Publishing (resumable upload): VERIFIED 2026-09-25 · implemented · mocked tests only · real publishing NOT RUN
 
-### Media Requirements
-| Property | Requirement |
-|----------|-------------|
-| Format | MP4, MOV, MPEG, AVI, WMV, FLV, 3GP, WebM |
-| Codec | H.264, H.265, VP9, AV1 |
-| Max File Size | 256 GB (or 12 hours) |
-| Max Duration | 12 hours |
-| Aspect Ratio | Any (16:9 recommended) |
-| Resolution | Up to 8K (7680x4320) |
-| Frame Rate | ≤ 60 fps |
-| Audio | AAC, MP3, FLAC |
+Sources: https://developers.google.com/youtube/v3/docs/videos/insert, /guides/using_resumable_upload_protocol, /docs/videos (resource).
 
-### Rate Limits
-- 10,000 units/day per project (default quota)
-- Video insert: ~1,600 units per upload
-- ~6 uploads/day default (quota increase request possible)
+| Step | Endpoint | Method | Request | Response |
+|------|----------|--------|---------|----------|
+| 1. Start session | `www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status` | POST | JSON `{snippet{title, description, categoryId?}, status{privacyStatus, selfDeclaredMadeForKids?}}`, `X-Upload-Content-Length`, `X-Upload-Content-Type` | `200` + `Location` (session URI) |
+| 2. Upload | session URI | PUT per chunk | `Content-Range: bytes a-b/total`, chunks a multiple of 256 KiB | `308` + `Range` while incomplete; `200/201` + video resource |
+| 2b. Resume | session URI | PUT | `Content-Range: bytes */total`, empty body | `308` + `Range: bytes=0-N`, or `200/201` if complete |
+| 3. Processing | `www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=…` | GET | none | `status.uploadStatus`: `uploaded`, `processed`, `failed`, `rejected`, `deleted` |
+
+- **Auth:** `Authorization: Bearer` with `youtube.upload` (or `youtube`, `youtubepartner`, `youtube.force-ssl`).
+- **Metadata:** title ≤ 100 characters, description ≤ 5,000 bytes, neither may contain `<` or `>`; `privacyStatus` is `private`, `unlisted` or `public`. Soc_bot requires a title, defaults privacy to `private`, and asks about `selfDeclaredMadeForKids`. NOT VERIFIED: whether `categoryId` is mandatory. Soc_bot sends it only if the job's `category_id` option is set (the CLI never sets it).
+- **Unverified API projects** (created after 2020-07-28) have uploads **forced to private**.
+- **Quota:** `videos.insert` costs 1 unit in the Video Uploads bucket, limited to 100 calls/day. `videos.list` (processing polling) costs 1 unit per call, and Soc_bot polls at most 20 times.
+- **Retries:** Google says to retry 500, 502, 503 and 504 with exponential backoff. Soc_bot resumes from the server's reported offset (at most 3 times per attempt), then leaves further retries to the engine.
+- **Errors:** `{"error": {"code", "message", "errors": [{"reason"}]}}`. `quotaExceeded` and `uploadLimitExceeded` become `quota_exceeded` (non-retryable); 401 becomes `unauthorized`; other 4xx are non-retryable; 5xx and 429 are retryable.
+- **Limits:** ≤ 256 GB; `video/*` or `application/octet-stream`.
+- **Token:** access tokens last about 1 h and are refreshed with the refresh token before publishing. A single upload that runs longer than the token's life will get a 401 (not handled).
 
 ### Known Limitations
-- Requires Google Cloud Project setup
-- OAuth consent screen may need verification for sensitive scopes
-- Quota limits restrict daily uploads
-- Resumable upload required for large files
-- Processing time after upload (minutes to hours)
+- Unverified Google Cloud projects: videos are private
+- Daily upload quota
+- Processing can take longer than the polling window; the job then stays `processing` and is re-checked from the Publishing Queue
 
 ### Current Implementation Status
-OAuth implemented and tested with mocks. Real OAuth: NOT RUN. Publishing: NOT IMPLEMENTED.
+OAuth and publishing implemented. **Mocked tests verified. Real provider OAuth and publishing NOT verified (NOT RUN).**
 
 ---
 
@@ -207,4 +201,12 @@ OAuth implemented and tested with mocks. Real OAuth: NOT RUN. Publishing: NOT IM
 | TikTok | Login Kit for Desktop | tiktok.com/v2/auth/authorize/ | open.tiktokapis.com/v2/oauth/token/ | refresh_token grant, rotation persisted | video.upload, video.publish, user.info.basic | S256, **hex** | 127.0.0.1, wildcard port | open_id | ✅ 2026-09-25 | ✅ | NOT RUN |
 | YouTube | Google OAuth 2.0 (Desktop app) | accounts.google.com/o/oauth2/v2/auth | oauth2.googleapis.com/token | refresh_token grant | youtube.upload, youtube, youtube.readonly | S256, base64url | 127.0.0.1, dynamic port | channel id | ✅ 2026-09-25 | ✅ | NOT RUN |
 
-Publishing workflows, media requirements and rate limits in this file were **not** re-verified in this pass; that is Phase 4 work.
+Publishing endpoints were verified 2026-09-25 (Phase 4). See each platform's Publishing section.
+
+## Publishing Verification Status (2026-09-25)
+
+| Platform | Flow | Docs verified | Implemented | Mock tests | Real publishing |
+|----------|------|---------------|-------------|------------|-----------------|
+| Instagram | Reels: container (`video_url`) → status → `media_publish` | ✅ | ✅ | ✅ | NOT RUN |
+| TikTok | Direct Post: creator_info → init → chunked PUT → status | ✅ | ✅ | ✅ | NOT RUN |
+| YouTube | Resumable `videos.insert` → chunked PUT → `videos.list` status | ✅ | ✅ | ✅ | NOT RUN |

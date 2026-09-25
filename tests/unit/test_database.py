@@ -80,10 +80,10 @@ class TestDatabaseInitialization:
     def test_init_creates_schema_version_table(self, database):
         """Test that schema_version table records migration."""
         with database.session() as session:
-            versions = session.query(SchemaVersion).all()
-            assert len(versions) == 1
-            assert versions[0].version == 1
+            versions = session.query(SchemaVersion).order_by(SchemaVersion.version).all()
+            assert [v.version for v in versions] == [1, 2]
             assert versions[0].description == "001_initial_schema"
+            assert versions[1].description == "002_publishing"
 
     def test_init_is_idempotent(self, database, temp_db_path):
         """Test that running init twice doesn't destroy data."""
@@ -717,11 +717,12 @@ class TestRelationships:
             session.commit()
 
             post = Post(video_id=video.id, caption="Test")
-            session.add(post)
+            post2 = Post(video_id=video.id, caption="Test 2")
+            session.add_all([post, post2])
             session.commit()
 
             job1 = PublishJob(post_id=post.id, account_id=account.id, status="pending")
-            job2 = PublishJob(post_id=post.id, account_id=account.id, status="pending")
+            job2 = PublishJob(post_id=post2.id, account_id=account.id, status="pending")
             session.add_all([job1, job2])
             session.commit()
 
@@ -739,7 +740,14 @@ class TestRelationships:
                 access_token="token",
                 _encryption=encryption,
             )
-            session.add(account)
+            account2 = Account(
+                platform="tiktok",
+                platform_account_id="tt_123",
+                username="user2",
+                access_token="token",
+                _encryption=encryption,
+            )
+            session.add_all([account, account2])
             session.commit()
 
             video = Video(filename="test.mp4", path="/videos/test.mp4", size_bytes=1000)
@@ -751,13 +759,46 @@ class TestRelationships:
             session.commit()
 
             job1 = PublishJob(post_id=post.id, account_id=account.id, status="pending")
-            job2 = PublishJob(post_id=post.id, account_id=account.id, status="pending")
+            job2 = PublishJob(post_id=post.id, account_id=account2.id, status="pending")
             session.add_all([job1, job2])
             session.commit()
 
         with database.session() as session:
             post = session.query(Post).filter_by(id=post.id).first()
             assert len(post.publish_jobs) == 2
+
+    def test_duplicate_job_for_same_destination_rejected(self, database, encryption):
+        """One job per (post, account): duplicate publishing jobs are rejected by the DB."""
+        with database.session() as session:
+            account = Account(
+                platform="instagram", platform_account_id="ig_1", username="u",
+                access_token="token", _encryption=encryption,
+            )
+            video = Video(filename="t.mp4", path="/videos/t.mp4", size_bytes=10)
+            session.add_all([account, video])
+            session.commit()
+            post = Post(video_id=video.id, caption="c")
+            session.add(post)
+            session.commit()
+            session.add(PublishJob(post_id=post.id, account_id=account.id))
+            session.commit()
+            session.add(PublishJob(post_id=post.id, account_id=account.id))
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+    def test_created_at_defaults_are_per_row(self, database):
+        """Regression: created_at defaults were evaluated once at import time."""
+        import time
+
+        with database.session() as session:
+            v1 = Video(filename="a.mp4", path="/a.mp4", size_bytes=1)
+            session.add(v1)
+            session.commit()
+            time.sleep(0.01)
+            v2 = Video(filename="b.mp4", path="/b.mp4", size_bytes=1)
+            session.add(v2)
+            session.commit()
+            assert v2.created_at > v1.created_at
 
     def test_job_to_attempts_relationship(self, database, encryption):
         """Test job -> attempts relationship with ordering."""
@@ -901,3 +942,28 @@ class TestIndexes:
         unique_constraints = inspector.get_unique_constraints("publish_attempts")
         unique_constraint_names = {uc["name"] for uc in unique_constraints}
         assert "uq_attempts_job_number" in unique_constraint_names
+
+class TestMigrationUpgrade:
+    """Regression: SQL chunks starting with comments were skipped; 002 must upgrade a v1 database."""
+
+    def test_v1_database_upgrades_to_v2(self, temp_db_path, encryption):
+        from pathlib import Path
+
+        from sqlalchemy import text
+
+        db = Database(f"sqlite:///{temp_db_path}", encryption=encryption)
+        migrations = Path(__file__).resolve().parents[2] / "src" / "storage" / "migrations"
+        # Build the schema from migration 001 alone (no create_all), like a pre-Phase-4 database.
+        db.apply_migration(1, "001_initial_schema", (migrations / "001_initial_schema.sql").read_text())
+        with db.session() as session:
+            cols = {r[1] for r in session.execute(text("PRAGMA table_info(publish_jobs)"))}
+        assert "status" in cols and "options_json" not in cols
+
+        db.migrate()
+        with db.session() as session:
+            cols = {r[1] for r in session.execute(text("PRAGMA table_info(publish_jobs)"))}
+            indexes = {r[1] for r in session.execute(text("PRAGMA index_list(publish_jobs)"))}
+        assert "options_json" in cols
+        assert "uq_jobs_post_account" in indexes
+        assert db.get_applied_migrations() == [1, 2]
+        db.engine.dispose()

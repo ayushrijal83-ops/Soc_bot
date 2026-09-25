@@ -10,14 +10,17 @@ from src.cli.display import (
     print_not_implemented,
 )
 from src.cli.prompts import prompt_menu_selection
+from src.cli.publish_menu import run_create_post, run_publishing_queue
 
 
 class MenuHandler:
     """Handles menu navigation and routing."""
 
-    def __init__(self, account_manager=None):
+    def __init__(self, account_manager=None, auth_manager=None, engine=None):
         self.running = True
         self.account_manager = account_manager
+        self.auth_manager = auth_manager
+        self.engine = engine
         self.menu_options = [
             "Create Post",
             "Connected Accounts",
@@ -55,7 +58,10 @@ class MenuHandler:
 
     def handle_create_post(self) -> bool:
         """Handle Create Post option."""
-        print_not_implemented("Create Post")
+        if self.engine is None or self.account_manager is None:
+            print_not_implemented("Create Post")
+        else:
+            run_create_post(self.account_manager, self.engine)
         self._pause()
         return True
 
@@ -65,12 +71,15 @@ class MenuHandler:
             print_not_implemented("Account management (AccountManager not initialized)")
             self._pause()
             return True
-        run_account_menu(self.account_manager)
+        run_account_menu(self.account_manager, self.auth_manager)
         return True
 
     def handle_publishing_queue(self) -> bool:
         """Handle Publishing Queue option."""
-        print_not_implemented("Publishing queue")
+        if self.engine is None:
+            print_not_implemented("Publishing queue")
+        else:
+            run_publishing_queue(self.engine)
         self._pause()
         return True
 
@@ -110,7 +119,7 @@ class MenuHandler:
             self.running = self.handle_choice(choice)
 
 
-def run_menu(account_manager=None) -> None:
+def run_menu(account_manager=None, auth_manager=None, engine=None) -> None:
     """Entry point for running the menu system."""
-    handler = MenuHandler(account_manager=account_manager)
+    handler = MenuHandler(account_manager=account_manager, auth_manager=auth_manager, engine=engine)
     handler.run()

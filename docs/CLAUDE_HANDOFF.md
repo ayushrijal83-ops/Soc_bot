@@ -6,13 +6,13 @@
 
 ## Current Objective
 
-**Phase 3B complete, audit fixes applied 2026-09-25.** OAuth for Instagram (Instagram Login), TikTok (Login Kit for Desktop) and YouTube (Google installed-app loopback) is implemented, checked against current official docs, and tested with mocks. **Real provider OAuth has NOT been run** (no credentials). Publishing is not implemented. Next: Phase 4.
+**Phase 4 (Publishing Engine) complete at code/test level, 2026-09-25.** Publishing to Instagram (Reels via `video_url`), TikTok (Direct Post) and YouTube (resumable upload) is implemented behind a platform-independent engine, checked against current official docs, and tested with mocks (305 tests, Ruff clean). **Mocked tests verified. Real provider OAuth and publishing NOT verified (never run: no credentials).** Next: Phase 5, real-provider verification.
 
 ---
 
 ## Current Project State
 
-- **Phase:** 3B (Official OAuth Verification + OAuth Infrastructure) — **COMPLETE**
+- **Phase:** 4 (Publishing Engine): **COMPLETE** (mocked tests only; real publishing NOT RUN)
 - **Repository:** https://github.com/ayushrijal83-ops/Soc_bot
 - **Branch:** main
 - **Last Commit:** 90312a5 (Initial commit with docs)
@@ -77,7 +77,7 @@ Soc_bot/
 │           └── auth.py     # YouTube/Google OAuth flow
 ├── tests/
 │   ├── __init__.py
-│   ├── unit/               # 214 TESTS PASSING
+│   ├── unit/               # 305 TESTS PASSING
 │   │   ├── __init__.py
 │   │   ├── test_tokens.py
 │   │   ├── test_database.py
@@ -398,20 +398,50 @@ Before fixes: 170 passed
 
 ---
 
+## Phase 4 Implementation Summary (2026-09-25, Claude Code)
+
+### Files created
+- `src/platforms/base.py`: `PlatformPublisher` ABC, `PublishContext`, `PublishOutcome`, `PublishError(retryable, uncertain)`, `redact()`, shared HTTP/poll helpers; forces the httpx logger to WARNING
+- `src/core/validation.py`: generic media validation (exists/readable/non-empty/MP4-MOV-WebM/size, optional ffprobe), streamed SHA-256
+- `src/core/jobs.py`: `JobStore`: post + jobs creation, `TRANSITIONS` state machine, atomic `claim`, attempt records, provider-state lookup
+- `src/core/publisher.py`: `PublisherEngine`: `publish_post`, `resume_open_jobs`, `retry_job`, `plan_post` / `plan_destinations` (dry-run)
+- `src/platforms/instagram/publisher.py`, `src/platforms/tiktok/publisher.py`, `src/platforms/youtube/publisher.py`
+- `src/cli/publish_menu.py`: Create Post and Publishing Queue
+- `src/storage/migrations/002_publishing.sql`: `publish_jobs.options_json`, unique `(post_id, account_id)`
+- Tests: `test_publishers.py` (45), `test_publishing_engine.py` (36), `test_cli_publish.py` (5)
+
+### Files modified
+- `main.py`: migrates the DB at startup, builds the engine, real `--dry-run` (plan only, no network)
+- `src/cli/menu.py`: wires Create Post / Publishing Queue; passes AuthManager to Connected Accounts
+- `src/storage/database.py`: per-row timestamp defaults, `options_json`, unique job index, migration runner fixes, quiet `migrate(verbose=False)`
+- Tests updated where behaviour intentionally changed: two relationship tests used duplicate (post, account) jobs; the schema-version test now expects [1, 2]; the dry-run test previously asserted "not implemented"
+
+### Bugs found and fixed (each has a regression test)
+1. `main.py` called `run_menu(auth_manager=...)` but `run_menu` didn't accept it, so the app crashed on normal start (hidden because tests mocked `run_menu`)
+2. Connected Accounts was opened without the AuthManager, so "Connect" always said "Auth manager not initialized"
+3. `created_at`/`started_at` defaults were `datetime.now()` evaluated once at import, so every row had the same timestamp
+4. The migration runner skipped any SQL chunk starting with a comment, so most of 001 never ran (masked by `create_all`)
+
+### How it works
+See ARCHITECTURE.md → "Publishing (Phase 4)" for the state machine, engine flow, idempotency table and token handling; API_INTEGRATIONS.md for verified endpoints; DECISIONS.md ADR-011..014.
+
+---
+
 ## What Has NOT Been Implemented ❌
 
-### Code (Phase 4+)
-- **No Job Manager** (`src/core/jobs.py`)
-- **No Publisher Engine** (`src/core/publisher.py`)
-- **No Validation** (`src/core/validation.py`)
-- **No Platform Adapters** (publishing logic for all three platforms)
-- **No Integration/E2E Tests**
+### Code (Phase 5+)
+- No real-provider verification (OAuth or publishing)
+- No History / Settings menus
+- No structured logging (ADR-010)
+- No `.env` loading at startup
+- No TikTok creator-info export screen per TikTok UX guidelines
+- No Integration/E2E tests against real providers
 
 ### Infrastructure
 - No OAuth credentials configured (requires developer setup)
 - No platform developer accounts set up
 - No logging setup
-- Publishing features are placeholders only
+- Publishing implemented but never run against a real provider
 
 ---
 
@@ -429,6 +459,7 @@ Before fixes: 170 passed
 | 2026-09-25 | **Phase 3A: Account Management Core implemented** |
 | 2026-09-25 | **Phase 3B: OAuth Verification + Infrastructure implemented** |
 | 2026-09-25 | **Phase 3B audit fixes** (TikTok hex PKCE + rotation, Instagram Login migration, dynamic loopback port, state/platform binding, expiry model, Ruff 0) |
+| 2026-09-25 | **Phase 4: Publishing engine** (engine, job state machine, 3 publishers, retries, idempotent resume, dry-run, minimal CLI; 305 tests) |
 
 ---
 
@@ -476,11 +507,13 @@ main.py → Terminal CLI → Account Manager + Job Manager → Publisher Engine 
 | `src/platforms/instagram/auth.py` | Instagram OAuth | ✅ IMPLEMENTED |
 | `src/platforms/tiktok/auth.py` | TikTok OAuth | ✅ IMPLEMENTED |
 | `src/platforms/youtube/auth.py` | YouTube OAuth | ✅ IMPLEMENTED |
-| `src/core/jobs.py` | Job lifecycle, retry | 📋 PLANNED |
-| `src/core/publisher.py` | Orchestration engine | 📋 PLANNED |
-| `src/core/validation.py` | Media validation | 📋 PLANNED |
+| `src/core/jobs.py` | Job store, state machine, attempts | ✅ IMPLEMENTED |
+| `src/core/publisher.py` | Publishing engine | ✅ IMPLEMENTED |
+| `src/core/validation.py` | Media validation | ✅ IMPLEMENTED |
+| `src/platforms/base.py` | Publisher interface | ✅ IMPLEMENTED |
+| `src/cli/publish_menu.py` | Create Post / Queue CLI | ✅ IMPLEMENTED |
 | `src/platforms/*/auth.py` | Platform OAuth flows | ✅ IMPLEMENTED |
-| `src/platforms/*/publisher.py` | Platform publishing | 📋 PLANNED |
+| `src/platforms/*/publisher.py` | Platform publishing | ✅ IMPLEMENTED (mock-tested) |
 | `data/publisher.db` | SQLite database | ✅ CREATED |
 | `.env` | Runtime config | 🔧 CONFIGURED |
 
@@ -516,14 +549,14 @@ Migration system: versioned SQL files in `src/storage/migrations/`
 **OAuth implemented for all three platforms; mock-tested; real OAuth NOT RUN.** Design in AUTHENTICATION.md:
 - State (single-use, platform-bound) for all platforms; PKCE for YouTube (base64url) and TikTok (hex)
 - Loopback callback server on `http://127.0.0.1:<dynamic-port>/callback/{platform}` (Instagram: fixed registered `INSTAGRAM_REDIRECT_URI`)
-- `expires_at` from provider `expires_in`; `is_token_expiring()` helper; renewal via `AuthManager.refresh_account_tokens()` (not scheduled yet; Phase 4)
+- `expires_at` from provider `expires_in`; `is_token_expiring()` helper; renewal via `AuthManager.refresh_account_tokens()`, called by the publishing engine before each job
 - Encrypted storage via Fernet
 
 ---
 
 ## API Integration State
 
-**OAuth endpoints verified against official documentation on 2026-09-25.** Publishing endpoints were not re-verified (Phase 4).
+**OAuth and publishing endpoints verified against official documentation on 2026-09-25.** Real provider behaviour NOT verified.
 
 | Platform | OAuth product | Docs verified | Mock tests | Real OAuth |
 |----------|---------------|---------------|------------|------------|
@@ -535,7 +568,7 @@ Migration system: versioned SQL files in `src/storage/migrations/`
 
 ## Tests
 
-**214 unit tests passing; Ruff clean.** TESTING.md defines strategy:
+**305 unit tests passing; Ruff clean; 0 skipped.** TESTING.md defines strategy:
 - Unit: validation, models, encryption, state machine, CLI parsing
 - Integration: database, account manager, publisher engine
 - Platform: mocked API tests per adapter
@@ -550,11 +583,15 @@ Run: `pytest tests/unit/ -v`
 | Issue | Impact | Workaround |
 |-------|--------|------------|
 | Real OAuth not run on any platform | Provider behaviour unconfirmed | Configure dev apps + credentials, connect each platform once |
+| Real publishing not run on any platform | Upload/publish behaviour unconfirmed | One private test post per platform (Phase 5) |
+| Instagram needs a public https `video_url` | Local files can't go to Instagram | Host the file (ADR-012) |
+| TikTok unaudited app | Only `SELF_ONLY` posts | TikTok app audit |
+| YouTube unverified project | Uploads forced private | Google API project verification |
 | Instagram redirect URI: Meta may require HTTPS | Plain loopback callback may be rejected | Check the dashboard; use an HTTPS tunnel/redirect if required |
 | `main.py` does not call `load_dotenv()` | `.env` values are not picked up automatically | Export variables in the shell (or add `load_dotenv()`) |
 | TikTok `refresh_expires_in` not persisted | Can't warn before the refresh token expires | Add a column in a later migration |
-| No logging setup | No observability | Add in Phase 4 |
-| Publishing features placeholders | Menu shows "not implemented" | Implement in Phase 4-5 |
+| No logging setup | No observability | Add in Phase 5 |
+| History / Settings menus | Show "not implemented" | Phase 6 |
 
 ---
 
@@ -571,33 +608,19 @@ Run: `pytest tests/unit/ -v`
 
 ## Current Blockers
 
-**None for Phase 4 code.** Real OAuth verification still needs credentials.
+**None for code.** Real OAuth and publishing verification need developer credentials (Phase 5).
 
 ---
 
 ## Next Recommended Task
 
-### Phase 4: Publishing Engine
+### Phase 5: Real Provider Verification & Hardening
 
-**Priority:** HIGH
-
-**Files to Create:**
-1. `src/core/jobs.py` — Job lifecycle, retry logic, queue management
-2. `src/core/publisher.py` — Orchestration engine, dry-run simulation
-3. `src/core/validation.py` — Media validation (ffprobe, size, format)
-4. `src/platforms/base.py` — PlatformAdapter protocol
-5. `src/platforms/instagram/publisher.py` — Instagram publishing
-6. `src/platforms/tiktok/publisher.py` — TikTok publishing
-7. `src/platforms/youtube/publisher.py` — YouTube publishing
-
-**Verification:**
-- Job creation from post + accounts
-- Dry-run shows plan without API calls
-- Job queue with status tracking
-- Retry logic with exponential backoff
-- Parallel job execution
-
-**Estimated Effort:** 8-12 hours
+1. Configure developer apps (Meta Instagram Login app, TikTok Login Kit for Desktop + Content Posting API, Google Desktop OAuth client) and export credentials
+2. Connect one test account per platform (real OAuth)
+3. Publish one private test post per platform: TikTok `SELF_ONLY`, YouTube `private`, Instagram test account with a hosted `video_url`
+4. Fix anything real providers reveal; record the results in API_INTEGRATIONS.md
+5. Then: TikTok export-screen UX, `.env` loading, sanitized logging, History menu
 
 ---
 
@@ -605,10 +628,10 @@ Run: `pytest tests/unit/ -v`
 
 1. **Read PROJECT_STATUS.md** — Current progress tracker
 2. **Read ARCHITECTURE.md** — Understand component boundaries
-3. **Read API_INTEGRATIONS.md**: OAuth verified 2026-09-25; re-verify publishing endpoints before Phase 4
+3. **Read API_INTEGRATIONS.md**: OAuth + publishing verified against docs 2026-09-25; real provider runs still pending
 4. **Verify `.env`** has ENCRYPTION_KEY set
 5. **Run tests** to confirm baseline: `pytest tests/unit/ -v`
-6. **Implement Publishing Engine** (Phase 4 above)
+6. **Do Phase 5** (above). Don't claim real publishing works until it has actually been run
 7. **Run tests** after each component
 8. **Update PROJECT_STATUS.md** and **this file** after each meaningful change
 

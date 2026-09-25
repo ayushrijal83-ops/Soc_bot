@@ -30,14 +30,14 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | Account management core (CRUD, listing, status) | ✅ **IMPLEMENTED** |
 | OAuth authentication (Instagram, TikTok, YouTube) | ✅ **IMPLEMENTED**, mock-tested; real OAuth NOT RUN |
 | OAuth callback server (dynamic loopback port) & PKCE | ✅ **IMPLEMENTED** |
-| Job management & queue | 📋 **PLANNED** |
-| Instagram publishing adapter | 📋 **PLANNED** |
-| TikTok publishing adapter | 📋 **PLANNED** |
-| YouTube publishing adapter | 📋 **PLANNED** |
+| Job management & queue | ✅ **IMPLEMENTED** (mocked tests; real publishing NOT RUN) |
+| Instagram publishing adapter (Reels via public `video_url`) | ✅ **IMPLEMENTED**, mock-tested |
+| TikTok publishing adapter (Direct Post) | ✅ **IMPLEMENTED**, mock-tested |
+| YouTube publishing adapter (resumable upload) | ✅ **IMPLEMENTED**, mock-tested |
 | SQLite database layer | ✅ **IMPLEMENTED** |
-| Video validation | 📋 **PLANNED** |
-| Dry-run mode | 📋 **PLANNED** (placeholder) |
-| Unit/integration tests | ✅ **IMPLEMENTED** (214 unit tests, Ruff clean) |
+| Video validation | ✅ **IMPLEMENTED** |
+| Dry-run mode | ✅ **IMPLEMENTED** (plan only, no API calls) |
+| Unit/integration tests | ✅ **IMPLEMENTED** (305 unit tests, Ruff clean) |
 
 **Legend:** ✅ IMPLEMENTED | 🔄 IN PROGRESS | 📋 PLANNED | 🚫 BLOCKED
 
@@ -123,7 +123,7 @@ Note: `main.py` does not load `.env` automatically yet. Export these variables i
 # Normal mode
 python main.py
 
-# Dry-run mode (shows plan without publishing)
+# Dry-run: validate unpublished posts and show the plan (never contacts a platform)
 python main.py --dry-run
 
 # Help
@@ -165,7 +165,7 @@ CONNECTED ACCOUNTS
 - User authorizes via platform's official login page
 - Application receives access tokens, plus refresh tokens where the platform issues them (TikTok, YouTube). Instagram issues long-lived access tokens that are re-exchanged instead.
 - Tokens stored securely in encrypted SQLite database
-- Token expiry recorded from the provider's `expires_in`; a renewal method exists, but automatic scheduling is not implemented yet (Phase 4)
+- Token expiry recorded from the provider's `expires_in`; the publishing engine renews expiring tokens before each job
 - No passwords ever requested or stored
 
 ## OAuth Implementation Details
@@ -197,14 +197,17 @@ CONNECTED ACCOUNTS
 
 ## Development Status
 
-This project is in **Phase 3B (Official OAuth Verification + OAuth Infrastructure): COMPLETE, audit fixes applied 2026-09-25**. Real provider OAuth has not been run yet (no credentials). The repository contains:
+This project is in **Phase 4 (Publishing Engine): COMPLETE at code/test level (2026-09-25)**. Real provider OAuth and publishing have not been run yet (no credentials). The repository contains:
 - ✅ SQLite database layer with migrations and token encryption
 - ✅ Terminal CLI menu system with input validation
 - ✅ Account management core (CRUD, listing, status, filtering)
 - ✅ OAuth authentication for Instagram, TikTok, YouTube
 - ✅ OAuth callback server (dynamic loopback port) with platform-specific PKCE and platform-bound state
 - ✅ Connected Accounts CLI submenu (list, details, connect, update, disconnect, enable)
-- ✅ 214 unit tests passing; `ruff check .` clean
+- ✅ Publishing engine: independent per-destination jobs, retries, idempotent resume, dry-run
+- ✅ Instagram / TikTok / YouTube publishers (official APIs, docs verified 2026-09-25)
+- ✅ 305 unit tests passing; `ruff check .` clean
+- ⚠️ **Mocked tests verified. Real provider OAuth and publishing NOT verified.**
 - Project structure and documentation
 
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.

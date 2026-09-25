@@ -78,6 +78,7 @@ Individual publishing job per destination (platform + account).
 | account_id | INTEGER | NOT NULL, FK → accounts(id) ON DELETE CASCADE | Destination account |
 | status | TEXT | NOT NULL, DEFAULT 'pending', CHECK(status IN ('pending','uploading','processing','published','failed','retrying')) | Job status |
 | platform_media_id | TEXT | | Platform's media/post ID after publish |
+| options_json | TEXT | | Per-destination publish options, e.g. `{"privacy_level": "SELF_ONLY"}`, `{"title": …, "privacy_status": …}`, `{"video_url": …}`; never secrets (migration 002) |
 | error_message | TEXT | | Last error if failed |
 | retry_count | INTEGER | NOT NULL, DEFAULT 0 | Number of retries attempted |
 | next_retry_at | TIMESTAMP | | Scheduled retry time |
@@ -89,6 +90,7 @@ Individual publishing job per destination (platform + account).
 - `idx_jobs_account` ON (account_id)
 - `idx_jobs_status` ON (status)
 - `idx_jobs_next_retry` ON (next_retry_at)
+- `uq_jobs_post_account` UNIQUE ON (post_id, account_id): one job per destination per post (migration 002)
 
 **Check Constraints:**
 - `ck_jobs_status`: status IN ('pending','uploading','processing','published','failed','retrying')
@@ -231,3 +233,11 @@ with db.session() as session:
     account = session.query(Account).filter_by(username="my_user").first()
     access_token = account.get_access_token(encryption)
 ```
+
+## Publishing Usage (Phase 4)
+
+- `publish_attempts.response_json` = `{"provider_state": {...}}`: provider IDs (Instagram `container_id`/`media_id`, TikTok `publish_id`/`upload_complete`, YouTube `video_id`) saved as soon as they exist, so retries resume instead of re-posting
+- `publish_attempts.error_json` = `{"code", "message", "http_status", "retryable", "uncertain"}` with secrets redacted
+- Attempt status: `started` → `uploading` / `processing` → `success` / `failed` (`processing` + `completed_at` = provider still working when polling ended)
+- Never stored: access/refresh tokens, client secrets, auth codes, TikTok `upload_url`, YouTube session URI
+- Migrations: `001_initial_schema.sql`, `002_publishing.sql`; `main.py` runs `create_all()` + `migrate()` on startup
