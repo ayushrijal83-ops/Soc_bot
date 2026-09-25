@@ -6,13 +6,40 @@
 
 ## Current Objective
 
-**Phase 4 (Publishing Engine) complete at code/test level, 2026-09-25.** Publishing to Instagram (Reels via `video_url`), TikTok (Direct Post) and YouTube (resumable upload) is implemented behind a platform-independent engine, checked against current official docs, and tested with mocks (305 tests, Ruff clean). **Mocked tests verified. Real provider OAuth and publishing NOT verified (never run: no credentials).** Next: Phase 5, real-provider verification.
+**Phase 5A complete (2026-09-25): Smart Content Intake + Publishing Profiles + Cover/Thumbnail Support.** Users drop `content/incoming/<package>/` (video + caption.txt [+ cover, title.txt, video_url.txt]), set a publishing profile once, and publish from **Content Inbox** with one confirmation (VERIFY) or none (AUTO), through the existing PublisherEngine. YouTube OAuth, publishing and custom thumbnails have been **run against the real API**. TikTok and Instagram are implemented but **not configured / never run for real**. 378 tests pass; Ruff is clean. Next: Phase 5B (real TikTok verification).
+
+---
+
+## Phase 5A Summary (read this first)
+
+**Guide:** docs/CONTENT_INTAKE.md (folder format, statuses, lifecycle, modes, covers, limitations). Architecture: ARCHITECTURE.md §7b; decisions ADR-015..018.
+
+**Files added:** `src/content/{__init__,models,detector,validator,manager,profile,intake}.py`, `src/cli/content_menu.py`, `src/storage/migrations/003_content_intake.sql`, `tests/unit/test_content.py`, `docs/CONTENT_INTAKE.md`.
+
+**Files modified:**
+- `src/platforms/base.py`: cover capability methods, `PublishOutcome.cover_status/cover_error`
+- `src/platforms/youtube/publisher.py`: `thumbnails.set` after the upload (once, recorded in provider state; failure reported, never raised)
+- `src/platforms/tiktok/publisher.py`, `src/platforms/instagram/publisher.py`: truthful `not_supported` reasons
+- `src/core/publisher.py`: stores the cover result
+- `src/core/jobs.py`: `set_cover_status`, `add_missing_jobs`, `update_video_path`, `JobInfo.cover_*`
+- `src/storage/database.py`: `ContentItem`, `PublishingProfile`, job cover columns
+- `src/cli/menu.py`: Content Inbox=5, Settings=6 (profile), History=4 (content history), Exit=7; fixed a dead duplicate "Exit"
+- `main.py`: builds `ContentIntake`, adds `--scan`, `--dry-run` also previews content
+- `.gitignore`: `/content/` (anchored; unanchored would hide `src/content/`)
+
+**Exact current state (verified 2026-09-25):**
+- Real DB (`data/publisher.db`, schema v3): 2 YouTube accounts (#1 YushaCyber, #2 AI.Nepal69), both active. Posts #1 (user's upload to both channels) and #2 (Phase 5A regression, private video `rAGivy-c3DM` on AI.Nepal69 with a custom thumbnail, cover_status=published). content_items: `regression_5a` = published. **No publishing profile saved** (the temporary test profile was reset, so the user creates theirs under Settings).
+- `content/published/regression_5a/` holds the regression package (test video copy, caption, generated cover).
+- `.env`: ENCRYPTION_KEY set; YouTube client configured; Instagram/TikTok empty. `secrets/` is git-ignored.
+- Token refresh was **not** exercised in the regression: the token was still valid (expires 08:13 UTC, run at ~07:35 UTC).
+
+**Not done / limitations:** no background watcher; Instagram needs `video_url.txt`; TikTok frame covers not configurable; a thumbnail failure is not auto-retried; one profile only.
 
 ---
 
 ## Current Project State
 
-- **Phase:** 4 (Publishing Engine): **COMPLETE** (mocked tests only; real publishing NOT RUN)
+- **Phase:** 5A (Content Intake + Profiles + Covers): **COMPLETE**; YouTube real-verified
 - **Repository:** https://github.com/ayushrijal83-ops/Soc_bot
 - **Branch:** main
 - **Last Commit:** 90312a5 (Initial commit with docs)
@@ -77,7 +104,7 @@ Soc_bot/
 │           └── auth.py     # YouTube/Google OAuth flow
 ├── tests/
 │   ├── __init__.py
-│   ├── unit/               # 305 TESTS PASSING
+│   ├── unit/               # 378 TESTS PASSING
 │   │   ├── __init__.py
 │   │   ├── test_tokens.py
 │   │   ├── test_database.py
@@ -406,9 +433,9 @@ Before fixes: 170 passed
 - [x] Verified without printing values: `.env` loaded, YouTube configured, the only configured platform, dynamic loopback redirect (`YOUTUBE_REDIRECT_URI` empty), callback 127.0.0.1:0
 - [x] `.gitignore` now also ignores `secrets/` and `client_secret*.json`. A downloaded `secrets/youtube_client.json` was untracked and not ignored.
 - [x] Tests: `.env` loading, real-env priority, missing file, YouTube configured from `.env`, loaded before services start (fake values only; tests never read the real `.env`)
-- [ ] **Blocker: `ENCRYPTION_KEY` is empty in `.env`.** Normal startup (`TokenEncryption()`) fails and OAuth tokens can't be stored until it's set. The user must generate one: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`, then put it in `.env` without sharing it.
-- [ ] Real YouTube OAuth (Connected Accounts → Connect YouTube): NOT RUN
-- [ ] Real private YouTube test upload: NOT RUN
+- [x] `ENCRYPTION_KEY` set by the user
+- [x] Real YouTube OAuth: 2 channels connected (user)
+- [x] Real YouTube upload (user) + Phase 5A private regression with thumbnail
 - Instagram / TikTok: not configured, untouched
 
 ---
@@ -602,7 +629,7 @@ Run: `pytest tests/unit/ -v`
 | TikTok unaudited app | Only `SELF_ONLY` posts | TikTok app audit |
 | YouTube unverified project | Uploads forced private | Google API project verification |
 | Instagram redirect URI: Meta may require HTTPS | Plain loopback callback may be rejected | Check the dashboard; use an HTTPS tunnel/redirect if required |
-| `ENCRYPTION_KEY` empty in `.env` | App can't start normally; tokens can't be stored | User generates a Fernet key and sets it in `.env` |
+| TikTok / Instagram not configured | No real verification | Phase 5B |
 | TikTok `refresh_expires_in` not persisted | Can't warn before the refresh token expires | Add a column in a later migration |
 | No logging setup | No observability | Add in Phase 5 |
 | History / Settings menus | Show "not implemented" | Phase 6 |
@@ -628,13 +655,12 @@ Run: `pytest tests/unit/ -v`
 
 ## Next Recommended Task
 
-### Phase 5: Real Provider Verification & Hardening
-
-1. Configure developer apps (Meta Instagram Login app, TikTok Login Kit for Desktop + Content Posting API, Google Desktop OAuth client) and export credentials
-2. Connect one test account per platform (real OAuth)
-3. Publish one private test post per platform: TikTok `SELF_ONLY`, YouTube `private`, Instagram test account with a hosted `video_url`
-4. Fix anything real providers reveal; record the results in API_INTEGRATIONS.md
-5. Then: TikTok export-screen UX, `.env` loading, sanitized logging, History menu
+### Phase 5B: Real TikTok Verification (then Instagram)
+1. TikTok developer app: Login Kit for Desktop + Content Posting API; register `http://127.0.0.1:*/callback/tiktok`; put the client key/secret in `.env`
+2. Connect a test account; add it to the profile with privacy `SELF_ONLY`
+3. Publish one package from Content Inbox; confirm `cover_status=not_supported` and the post appears (private)
+4. Instagram: decide on video hosting for `video_url.txt`, then do the same
+5. Optional: background watcher calling `ContentIntake.scan()` / `publish_ready()`; TikTok frame-cover option
 
 ---
 

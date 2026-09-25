@@ -51,6 +51,15 @@ class TikTokPublisher(PlatformPublisher):
     MAX_DURATION = 10 * 60
     CHUNK_SIZE = 10 * MB
 
+    # Direct Post only offers post_info.video_cover_timestamp_ms (a frame of the video).
+    COVER_UNSUPPORTED_REASON = (
+        "TikTok Direct Post has no cover image upload (only video_cover_timestamp_ms, a frame of the video); "
+        "cover image skipped"
+    )
+
+    def supports_cover_timestamp(self) -> bool:
+        return True
+
     def validate(self, caption: str, options: dict[str, Any], media: MediaInfo) -> list[str]:
         errors = []
         privacy = options.get("privacy_level")

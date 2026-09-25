@@ -210,3 +210,19 @@ Publishing endpoints were verified 2026-09-25 (Phase 4). See each platform's Pub
 | Instagram | Reels: container (`video_url`) → status → `media_publish` | ✅ | ✅ | ✅ | NOT RUN |
 | TikTok | Direct Post: creator_info → init → chunked PUT → status | ✅ | ✅ | ✅ | NOT RUN |
 | YouTube | Resumable `videos.insert` → chunked PUT → `videos.list` status | ✅ | ✅ | ✅ | NOT RUN |
+
+## Covers / Thumbnails (verified 2026-09-25)
+
+| Platform | Official mechanism | Soc_bot |
+|----------|--------------------|---------|
+| YouTube | `POST https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=…&uploadType=media`; body = image; `image/jpeg`, `image/png` (or octet-stream); **≤ 50 MB**; **~50 quota units**; scopes `youtube.upload` / `youtube` / `youtube.force-ssl` / `youtubepartner`; errors `invalidImage` 400, `mediaBodyRequired` 400, `forbidden` 403 (no permission, e.g. a channel without custom-thumbnail rights), `videoNotFound` 404, `uploadRateLimitExceeded` 429 | ✅ Implemented: called once after the video upload succeeds, with the existing OAuth token. The result is stored separately (`cover_status`); a failure never marks the video failed or re-uploads it. **Real run: ✅ published** on private test video `rAGivy-c3DM` |
+| TikTok | Direct Post `post_info.video_cover_timestamp_ms` (a frame of the video). No cover image upload | Cover image **not supported** (reported, not sent). Frame selection is not implemented yet |
+| Instagram | `cover_url` (a public image URL Meta downloads) and `thumb_offset` exist in the IG User `/media` reference, which is written for **Facebook Login / graph.facebook.com**. The Instagram Login content-publishing docs don't mention them | Cover image **not supported** (reported, not sent). NOT VERIFIED whether `cover_url` works with Instagram Login tokens |
+
+## Real Provider Status (updated 2026-09-25)
+
+| Platform | Real OAuth | Real publishing | Real cover |
+|----------|------------|-----------------|------------|
+| YouTube | ✅ 2 channels | ✅ (user upload + Phase 5A private regression) | ✅ thumbnail published |
+| TikTok | NOT RUN | NOT RUN | n/a (not supported) |
+| Instagram | NOT RUN | NOT RUN | n/a (not supported) |

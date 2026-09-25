@@ -93,6 +93,12 @@ class PublishOutcome:
     status: str
     platform_media_id: str | None = None
     state: dict[str, Any] = field(default_factory=dict)
+    # Cover/thumbnail result, separate from the video: "published" | "failed" | None (not attempted).
+    cover_status: str | None = None
+    cover_error: str | None = None
+
+
+COVER_IMAGE_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 
 
 class PlatformPublisher(ABC):
@@ -136,6 +142,38 @@ class PlatformPublisher(ABC):
     def can_restart(self, state: dict[str, Any]) -> bool:
         """Whether a job interrupted mid-upload (process crash) can safely be started again."""
         return self.RESTART_SAFE
+
+    # --- cover / thumbnail capability ----------------------------------------------
+    # Each platform documents covers differently; adapters override these.
+    COVER_UNSUPPORTED_REASON = "custom cover images are not supported for this platform"
+
+    def supports_cover_upload(self) -> bool:
+        """Can a local cover image file be uploaded for the published video?"""
+        return False
+
+    def supports_cover_timestamp(self) -> bool:
+        """Can a frame of the video be chosen as the cover (no image upload)?"""
+        return False
+
+    def supports_custom_cover(self) -> bool:
+        return self.supports_cover_upload()
+
+    def validate_cover(self, cover_path: str) -> list[str]:
+        """Platform-specific cover checks (type/size). Only called when uploads are supported."""
+        return []
+
+    def cover_plan(self, cover_path: str | None) -> tuple[str, str]:
+        """How this platform would handle a cover: (status, reason).
+
+        status: "none" (no cover), "upload" (will be uploaded after the video),
+        "not_supported", or "skipped" (supported but this file is unusable).
+        """
+        if not cover_path:
+            return "none", "no cover"
+        if not self.supports_cover_upload():
+            return "not_supported", self.COVER_UNSUPPORTED_REASON
+        errors = self.validate_cover(cover_path)
+        return ("skipped", "; ".join(errors)) if errors else ("upload", "")
 
     # --- shared HTTP helpers -------------------------------------------------
 

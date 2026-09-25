@@ -45,6 +45,14 @@ class InstagramPublisher(PlatformPublisher):
     MIN_DURATION, MAX_DURATION = 3, 15 * 60
     MAX_WIDTH = 1920
 
+    # Reels cover_url exists in the Facebook Login reference only and needs a *public* image URL;
+    # the Instagram Login publishing docs don't document it. thumb_offset (a frame) is also
+    # documented only in that reference. Neither is used.
+    COVER_UNSUPPORTED_REASON = (
+        "Instagram Login publishing documents no cover image upload (cover_url needs a public image URL "
+        "and is only documented for Facebook Login); cover image skipped"
+    )
+
     def validate(self, caption: str, options: dict[str, Any], media: MediaInfo) -> list[str]:
         errors = []
         url = options.get("video_url") or ""

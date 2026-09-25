@@ -5,6 +5,9 @@
 *.env
 !.env.example
 
+# Content packages (user media; folders are recreated at startup)
+/content/
+
 # Downloaded OAuth client files and other credentials
 secrets/
 client_secret*.json

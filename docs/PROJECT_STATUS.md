@@ -1,16 +1,17 @@
 # Project Status
 
 ## Current Phase
-**Phase 4: Publishing Engine**: ✅ **COMPLETE (code + mocked tests), 2026-09-25**
+**Phase 5A: Smart Content Intake + Publishing Profiles + Cover/Thumbnail Support**: ✅ **COMPLETE, 2026-09-25**
 
 | Claim | Status |
 |-------|--------|
-| OAuth implemented (Instagram, TikTok, YouTube) | ✅ |
-| OAuth + publishing endpoints verified against current official docs | ✅ 2026-09-25 |
-| OAuth + publishing tested with mocks | ✅ 305 unit tests |
-| Real provider OAuth tested | ❌ NOT RUN (credentials not configured) |
-| Publishing implemented | ✅ Phase 4 |
-| Real provider publishing tested | ❌ NOT RUN. **Mocked tests verified. Real provider publishing NOT verified.** |
+| OAuth + publishing implemented (Instagram, TikTok, YouTube) | ✅ |
+| Content intake, publishing profile, VERIFY/AUTO, lifecycle folders | ✅ (see CONTENT_INTAKE.md) |
+| Mocked tests | ✅ 378 passing, Ruff clean |
+| Real YouTube OAuth | ✅ RUN: 2 channels connected (by the user, 2026-09-25) |
+| Real YouTube publishing | ✅ RUN: user's first upload to both channels; Phase 5A regression private upload `rAGivy-c3DM` |
+| Real YouTube custom thumbnail | ✅ RUN: `thumbnails.set` succeeded on the regression upload |
+| Real Instagram / TikTok | ❌ NOT RUN (not configured) |
 
 ## Implementation State
 
@@ -127,13 +128,24 @@
 - [x] Verified without printing values: `.env` loaded, YouTube configured, the only configured platform, dynamic loopback redirect (`YOUTUBE_REDIRECT_URI` empty), callback 127.0.0.1:0
 - [x] `.gitignore` now also ignores `secrets/` and `client_secret*.json`. A downloaded `secrets/youtube_client.json` was untracked and not ignored.
 - [x] Tests: `.env` loading, real-env priority, missing file, YouTube configured from `.env`, loaded before services start (fake values only; tests never read the real `.env`)
-- [ ] **Blocker: `ENCRYPTION_KEY` is empty in `.env`.** Normal startup (`TokenEncryption()`) fails and OAuth tokens can't be stored until it's set. The user must generate one: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`, then put it in `.env` without sharing it.
-- [ ] Real YouTube OAuth (Connected Accounts → Connect YouTube): NOT RUN
-- [ ] Real private YouTube test upload: NOT RUN
+- [x] `ENCRYPTION_KEY` set by the user
+- [x] Real YouTube OAuth: 2 channels connected (user)
+- [x] Real YouTube upload: done by the user, and again in the Phase 5A regression (private)
 - Instagram / TikTok: not configured, untouched
 
+### Phase 5A: Smart Content Intake — **COMPLETE** ✅
+- [x] `src/content/` (models, detector, validator, manager, profile, intake) and `src/cli/content_menu.py`
+- [x] Migration 003: `content_items`, `publishing_profiles`, `publish_jobs.cover_status/cover_error`
+- [x] Content Inbox (menu 5), Settings → publishing profile (menu 6), History (menu 4), `--scan`, dry-run for content
+- [x] VERIFY (one confirmation) and AUTO (no confirmation, validation still enforced)
+- [x] Lifecycle incoming → publishing → published/archive | failed; crash resume; retry of failed destinations only
+- [x] Duplicate protection: unique content key + unique (post, account) job
+- [x] Cover capability model; YouTube `thumbnails.set`; TikTok/Instagram truthfully `not_supported`
+- [x] Bugs fixed: the main menu's prompt added a second, dead "Exit" option (regression test); a `.gitignore` `content/` pattern would have hidden `src/content/` (anchored to `/content/`)
+- [x] Real YouTube regression: private upload `rAGivy-c3DM` + custom thumbnail published; a second publish of the same package was refused
+
 ### In Progress 🔄
-- Phase 5: YouTube real OAuth verification (configuration done; `ENCRYPTION_KEY` must be set first)
+- Phase 5: Instagram / TikTok real verification (not configured)
 
 ### Planned 📋
 
@@ -186,7 +198,7 @@
 | `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- **305 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
+- **378 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
 
 ## Known Limitations
 - Real OAuth: NOT RUN for any platform (no credentials configured). Mocked tests are not provider verification.
@@ -203,4 +215,4 @@
 - No logging setup yet; History and Settings menus not implemented
 
 ## Next Recommended Task
-**Phase 5: Real Provider Verification & Hardening.** Configure developer credentials, run real OAuth, and make one private test post per platform, then fix whatever real providers reveal. Mocked tests can't confirm provider behaviour.
+**Phase 5B: real TikTok (then Instagram) verification.** Configure a TikTok Login Kit for Desktop + Content Posting API app, connect a test account, and publish a `SELF_ONLY` package through the Content Inbox. For Instagram, decide how videos get a public `video_url`. Optional: a background inbox watcher that calls `ContentIntake.scan()` / `publish_ready()`.

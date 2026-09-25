@@ -77,6 +77,21 @@
 - Generic checks only: exists, regular file, readable, non-empty, MP4/MOV/WebM, size; ffprobe metadata when installed
 - Platform limits live in each adapter's `validate()`
 
+### 7b. Content Intake (`src/content/`): ✅ **IMPLEMENTED** (Phase 5A)
+```
+content/incoming/<package>/  ->  ContentDetector  ->  ContentValidator  ->  PublishingProfile
+      -> ContentIntake.plan() (engine.plan_destinations + adapter.cover_plan)  ->  one confirmation (VERIFY) / none (AUTO)
+      -> ContentManager.move(publishing/)  ->  JobStore.create_post / add_missing_jobs  ->  existing PublisherEngine
+      -> published/ | archive/ | failed/ | stays in publishing/ (still processing / crash)
+```
+- **models.py**: `ContentPackage`, `content_root()` (`CONTENT_ROOT`), `stability_seconds()` (`CONTENT_STABILITY_SECONDS`)
+- **detector.py**: finds packages and their video/caption/cover (ambiguity = invalid; symlinks never followed)
+- **validator.py**: video via `core.validation`, UTF-8 caption (unmodified), cover magic bytes, partial-copy stability
+- **manager.py**: moves packages between stages, only inside the content root, never deletes
+- **profile.py**: `Profile` + `ProfileStore` (`publishing_profiles`, account IDs only)
+- **intake.py**: `ContentIntake`: scan/inspect (read-only), plan, publish (one package), publish_ready (AUTO), history
+- No platform-specific code: per-platform options come from the profile, and cover handling comes from the adapter's capability methods. See [CONTENT_INTAKE.md](CONTENT_INTAKE.md).
+
 ### 8. Storage (`src/storage/`) — ✅ **IMPLEMENTED**
 - **database.py** — SQLite connection, migrations, ORM/models
 - **tokens.py** — Token encryption/decryption, secure storage
@@ -201,7 +216,14 @@ class PlatformPublisher(ABC):
     def validate(caption, options, media) -> list[str]           # no network
     def publish(ctx, on_progress) -> PublishOutcome              # resumes from ctx.state
     def can_restart(state) -> bool
+    # Phase 5A cover capability
+    def supports_cover_upload() -> bool      # YouTube: True
+    def supports_cover_timestamp() -> bool   # TikTok: True (not configured yet)
+    def validate_cover(path) -> list[str]
+    def cover_plan(path) -> (status, reason) # none | upload | not_supported | skipped
 ```
+
+`PublishOutcome.cover_status/cover_error` carry the cover result separately; the engine stores them in `publish_jobs.cover_status/cover_error` without touching the video status.
 
 `publish()` is resumable: given the provider IDs saved by earlier attempts, it continues instead of starting over. A separate `get_status()` isn't needed. `cancel()` was not implemented: none of the three APIs offers a cancel for an in-flight publish (deleting a published video is a different action).
 

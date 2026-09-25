@@ -1,0 +1,112 @@
+# Content Intake, Publishing Profile & Covers (Phase 5A)
+
+Drop a folder into the content inbox, confirm once, and Soc_bot publishes it to every account in your saved profile.
+
+## Folder structure
+
+```
+content/                      # CONTENT_ROOT (default <project>/content; absolute or relative to the project)
+├── incoming/                 # put new packages here
+├── publishing/               # a package is here while it is being published (or after a crash)
+├── published/                # every destination succeeded
+├── failed/                   # validation failed or at least one destination failed
+└── archive/                  # "after success" target if the profile says archive
+```
+
+The folders are created automatically at startup. `content/` is git-ignored because it holds your media.
+
+## Package format
+
+```
+content/incoming/post_001/        # folder name = package ID
+    video.mp4                     # exactly one video: .mp4 .mov .webm (any file name)
+    caption.txt                   # exactly one caption file, UTF-8
+    cover.jpg                     # optional, at most one: cover.jpg/.jpeg/.png/.webp
+    title.txt                     # optional: YouTube title (default: first non-empty caption line)
+    video_url.txt                 # optional: public https URL of the same video (required for Instagram)
+```
+
+- Multiple videos, multiple `caption*.txt` files, or multiple `cover.*` files make the package **invalid**. Soc_bot never guesses which one you meant.
+- Other files are ignored and listed as a warning.
+- The caption is read as UTF-8 and sent exactly as written (emoji, hashtags and line breaks are kept; nothing is trimmed or shortened). Platform limits may reject it.
+- The video is never re-encoded or copied. The filesystem is the source of truth.
+- An invalid cover image (wrong type, can't be read, bad magic bytes, empty, over 50 MB) is a **warning**: the cover is skipped and the video can still be published.
+
+### Partial-copy protection
+A package counts as `COPYING` (not ready) when:
+- any file ends in `.part`, `.partial`, `.crdownload`, `.download`, `.tmp` or `.!ut`, or
+- its files changed during the `CONTENT_STABILITY_SECONDS` window (default 3). The size and mtime of each file are checked before and after the wait. If every file is already older than the window, there is no wait.
+
+## Publishing profile (Settings → Create/Edit / View / Reset)
+
+One `default` profile is stored in the `publishing_profiles` table. It holds account IDs and non-secret options only; tokens stay with the accounts (encrypted).
+
+| Setting | Values |
+|---------|--------|
+| Accounts | any number per platform (Instagram / TikTok / YouTube); each one becomes its own job |
+| TikTok privacy level | chosen by the user (required by TikTok); unaudited apps: `SELF_ONLY` |
+| YouTube privacy / made for kids | `private` (default) / `unlisted` / `public`; yes/no |
+| Cover/thumbnail | enabled / disabled |
+| After success | move to `published/` or `archive/` |
+| Mode | `VERIFY` (default) or `AUTO` |
+
+The profile is checked before every publish. It can't be used if a referenced account no longer exists, belongs to another platform, or isn't `active` ("YouTube X is not currently authorized"), if no accounts are selected, or if the TikTok privacy level is missing.
+
+## Modes
+
+**VERIFY** (Content Inbox): scan → pick a package → the verification screen shows the video, caption, cover, every destination with ✓/✗, and cover handling per destination → **one** confirmation → publish everything → results. Nothing else is asked during that publish.
+
+**AUTO** (Content Inbox, or `python main.py --scan`): every `READY` or `RESUME` package is published with no confirmation. Validation is never skipped: `INVALID` and `BLOCKED` packages are moved to `failed/` with the reason recorded, and nothing is sent for them. In VERIFY mode, `--scan` only lists packages.
+
+**Dry-run** (`python main.py --dry-run`): scans, validates, loads the profile and prints each package's plan and cover handling. It moves nothing, writes no content items or jobs, refreshes no tokens and never contacts a platform.
+
+## Inbox statuses
+
+| Status | Meaning |
+|--------|---------|
+| `READY` | valid, stable, profile OK, every destination passes validation |
+| `COPYING` | still being copied; try again shortly |
+| `INVALID` | package problems (missing/multiple files, empty or non-UTF-8 caption, bad video) |
+| `NO PROFILE` | create a profile under Settings |
+| `BLOCKED` | a profile problem or a destination fails validation (e.g. Instagram needs `video_url.txt`, YouTube title > 100 chars) |
+| `RESUME` | in `publishing/`: a previous run was interrupted; continuing never republishes finished destinations |
+| `FAILED` | in `failed/`: retrying runs **only** the failed destinations |
+| `PUBLISHED` | this video was already published (by content key); publishing again is refused |
+
+## Lifecycle and resume
+
+```
+incoming/post_001 ──(publish starts)──► publishing/post_001 ──all jobs published──► published/ (or archive/)
+                                              │
+                                              ├── any job failed ──► failed/post_001 ──(retry)──► publishing/ ...
+                                              └── jobs still processing / crash ──► stays in publishing/ (RESUME)
+```
+
+- The package is moved into `publishing/` **before** the post and jobs are created, so stored paths point at `publishing/<name>`. A resumed or retried package is moved back there first.
+- Each content item links to one post; each (post, account) is a single job (unique index). A profile that gains an account later gets one new job; existing jobs are never duplicated.
+- On restart, the existing job states decide what runs: `published` never runs again, `processing`/`uploading`/`pending` continue under the Phase 4 rules, and `failed` jobs run again only when you choose to retry.
+- **Content key** = SHA-256 of the video's name, size, and first and last 64 KiB. It deliberately excludes the folder name and the caption, so a renamed folder (a move adds a `__timestamp` suffix if the target exists) or an edited caption is still recognised. The same video placed in a new folder is reported `PUBLISHED`. The unique index on `content_items.content_key` enforces this.
+- Packages are never deleted.
+
+## Covers / thumbnails per platform
+
+Adapters declare what they support: `supports_cover_upload()`, `supports_cover_timestamp()`, `validate_cover()`, `cover_plan()`. The content layer only asks the adapter; it has no platform-specific code.
+
+| Platform | Cover image | What happens | Recorded `cover_status` |
+|----------|-------------|--------------|--------------------------|
+| **YouTube** | ✅ `thumbnails.set` (JPEG/PNG, ≤ 50 MB) | Uploaded **after** the video exists, once. A failure (e.g. `forbidden` for channels without custom-thumbnail rights) doesn't change the video result and never re-uploads the video | `pending` → `published` / `failed` (+ `cover_error`) |
+| **TikTok** | ❌ | Direct Post only has `video_cover_timestamp_ms` (a frame of the video); an image can't be uploaded. Not sent | `not_supported` (+ reason) |
+| **Instagram** | ❌ | Reels `cover_url` is documented only in the Facebook Login reference and needs a public image URL; the Instagram Login docs don't mention it. Not sent | `not_supported` (+ reason) |
+
+A cover the platform would reject (e.g. `.webp` or > 50 MB for YouTube) is `skipped` with the reason, and the video is still published.
+
+## History (main menu → History)
+Per content item: name, dates, status, every destination's video status, and every destination's cover status. It reads the existing job rows; there is no separate history table.
+
+## Limitations
+- No background watcher: scan from Content Inbox or `--scan`. `ContentIntake.scan()`/`publish_ready()` are the hooks a future watcher would call.
+- Instagram needs `video_url.txt` (public hosting isn't provided).
+- TikTok: frame-based covers (`video_cover_timestamp_ms`) are not configurable yet.
+- One profile (`default`); the table is keyed by name for more later.
+- A YouTube thumbnail failure is not retried automatically.
+- The same video file can't be published again as a new package (by design); rename or re-encode it if you really want a second post.

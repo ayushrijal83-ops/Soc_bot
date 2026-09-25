@@ -60,6 +60,8 @@ class JobInfo:
     platform_media_id: str | None
     error_message: str | None
     options: dict[str, Any]
+    cover_status: str | None = None
+    cover_error: str | None = None
 
 
 def _now() -> datetime:
@@ -204,6 +206,8 @@ class JobStore:
             platform_media_id=job.platform_media_id,
             error_message=job.error_message,
             options=json.loads(job.options_json) if job.options_json else {},
+            cover_status=job.cover_status,
+            cover_error=job.cover_error,
         )
 
     # --- state machine -------------------------------------------------------
@@ -225,6 +229,37 @@ class JobStore:
             session.commit()
         if result.rowcount != 1:
             raise JobError(f"Job {job_id} changed concurrently (was {current})")
+
+    def set_cover_status(self, job_id: int, status: str | None, error: str | None = None) -> None:
+        """Record the cover/thumbnail result separately from the video status."""
+        with self.database.session() as session:
+            session.execute(update(PublishJob).where(PublishJob.id == job_id)
+                            .values(cover_status=status, cover_error=error))
+            session.commit()
+
+    def add_missing_jobs(self, post_id: int, destinations: list[tuple[int, dict[str, Any]]]) -> list[int]:
+        """Create pending jobs for destinations the post doesn't have yet. Existing jobs are untouched."""
+        with self.database.session() as session:
+            existing = {row[0] for row in session.query(PublishJob.account_id).filter_by(post_id=post_id)}
+            created = []
+            for account_id, options in destinations:
+                if account_id in existing or session.get(Account, account_id) is None:
+                    continue
+                job = PublishJob(post_id=post_id, account_id=account_id, status="pending",
+                                 options_json=json.dumps(options or {}))
+                session.add(job)
+                session.flush()
+                created.append(job.id)
+            session.commit()
+            return created
+
+    def update_video_path(self, post_id: int, path: str) -> None:
+        """Point the post's video row at the file's current location (content packages move)."""
+        with self.database.session() as session:
+            post = session.get(Post, post_id)
+            video = session.get(Video, post.video_id)
+            video.path = path
+            session.commit()
 
     def claim(self, job_id: int) -> bool:
         """Atomically move a pending/retrying job to uploading. False if someone else owns it."""

@@ -78,6 +78,8 @@ Individual publishing job per destination (platform + account).
 | account_id | INTEGER | NOT NULL, FK → accounts(id) ON DELETE CASCADE | Destination account |
 | status | TEXT | NOT NULL, DEFAULT 'pending', CHECK(status IN ('pending','uploading','processing','published','failed','retrying')) | Job status |
 | platform_media_id | TEXT | | Platform's media/post ID after publish |
+| cover_status | TEXT | | Cover/thumbnail result: none, pending, published, failed, not_supported, skipped (migration 003) |
+| cover_error | TEXT | | Why the cover failed / wasn't used (migration 003) |
 | options_json | TEXT | | Per-destination publish options, e.g. `{"privacy_level": "SELF_ONLY"}`, `{"title": …, "privacy_status": …}`, `{"video_url": …}`; never secrets (migration 002) |
 | error_message | TEXT | | Last error if failed |
 | retry_count | INTEGER | NOT NULL, DEFAULT 0 | Number of retries attempted |
@@ -241,3 +243,28 @@ with db.session() as session:
 - Attempt status: `started` → `uploading` / `processing` → `success` / `failed` (`processing` + `completed_at` = provider still working when polling ended)
 - Never stored: access/refresh tokens, client secrets, auth codes, TikTok `upload_url`, YouTube session URI
 - Migrations: `001_initial_schema.sql`, `002_publishing.sql`; `main.py` runs `create_all()` + `migrate()` on startup
+
+## Phase 5A tables (migration `003_content_intake.sql`)
+
+### content_items
+One row per content package (identified by its video), linked to the post that publishes it.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | INTEGER | PK | |
+| content_key | TEXT | NOT NULL, **UNIQUE** (`uq_content_items_key`) | SHA-256 of the video's name, size, and first/last 64 KiB |
+| package_name | TEXT | NOT NULL | Folder name when first seen |
+| package_path | TEXT | NOT NULL | Current folder (updated on every move) |
+| video_path / caption_path / cover_path | TEXT | | Current file paths |
+| status | TEXT | NOT NULL, CHECK in (detected, publishing, published, failed) | Package-level status (job rows remain authoritative per destination) |
+| post_id | INTEGER | FK posts(id) ON DELETE SET NULL | The post whose jobs publish this package |
+| error_message | TEXT | | Why it failed / was invalid |
+| detected_at, created_at, updated_at, published_at | TIMESTAMP | | |
+
+### publishing_profiles
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | INTEGER | PK | |
+| name | TEXT | NOT NULL, **UNIQUE** | `default` (only one used for now) |
+| settings_json | TEXT | NOT NULL | `{"accounts": {"youtube": [ids]...}, "cover_enabled", "after_success", "mode", "tiktok_privacy_level", "youtube_privacy_status", "youtube_made_for_kids"}`: account IDs only, never tokens |
+| created_at, updated_at | TIMESTAMP | | |

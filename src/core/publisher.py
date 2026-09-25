@@ -241,6 +241,8 @@ class PublisherEngine:
                 attempt_id, "success" if outcome.status == "published" else "processing",
                 provider_state=outcome.state, completed=True,
             )
+            if outcome.cover_status:
+                self.store.set_cover_status(job.id, outcome.cover_status, outcome.cover_error)
             current = self.store.get_job(job.id).status
             if outcome.status == "published":
                 self.store.transition(job.id, "published", platform_media_id=outcome.platform_media_id,

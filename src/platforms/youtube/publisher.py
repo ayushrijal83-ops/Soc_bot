@@ -8,10 +8,13 @@ Verified against Google docs on 2026-09-25 (videos.insert, resumable upload guid
     PUT  session URI, Content-Range: bytes */total   (status query)              -> 308 Range: bytes=0-N, or 200/201
     GET  https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=...
          status.uploadStatus: uploaded | processed | failed | rejected | deleted
+    POST https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=...  (JPEG/PNG, <= 50 MB,
+         ~50 quota units; verified 2026-09-25) -- only after the video exists
 
 The video file is streamed chunk by chunk; it is never loaded into memory whole.
 """
 
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -28,6 +31,7 @@ from src.platforms.base import (
 )
 
 PRIVACY_STATUSES = ("private", "unlisted", "public")
+THUMBNAIL_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}  # thumbnails.set
 QUOTA_REASONS = ("quotaExceeded", "uploadLimitExceeded", "dailyLimitExceeded", "rateLimitExceeded")
 
 
@@ -35,6 +39,8 @@ class YouTubePublisher(PlatformPublisher):
     PLATFORM = "youtube"
     UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
     VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+    THUMBNAIL_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
+    MAX_THUMBNAIL_BYTES = 50 * 1024 * 1024
     # A crash after the last chunk may already have created the video, and a new upload would
     # duplicate it. Only restart when no upload could have completed.
     RESTART_SAFE = False
@@ -69,6 +75,23 @@ class YouTubePublisher(PlatformPublisher):
     def can_restart(self, state: dict[str, Any]) -> bool:
         return bool(state.get("video_id"))
 
+    def supports_cover_upload(self) -> bool:
+        return True
+
+    def validate_cover(self, cover_path: str) -> list[str]:
+        suffix = Path(cover_path).suffix.lower()
+        if suffix not in THUMBNAIL_TYPES:
+            return [f"YouTube thumbnails must be JPEG or PNG (got {suffix or 'no extension'})"]
+        try:
+            size = Path(cover_path).stat().st_size
+        except OSError:
+            return ["cover image is not readable"]
+        if size > self.MAX_THUMBNAIL_BYTES:
+            return ["YouTube thumbnails are limited to 50 MB"]
+        if size == 0:
+            return ["cover image is empty"]
+        return []
+
     def publish(self, ctx: PublishContext, on_progress: ProgressCallback) -> PublishOutcome:
         state = dict(ctx.state)
         if not state.get("video_id"):
@@ -77,7 +100,41 @@ class YouTubePublisher(PlatformPublisher):
             video_id = self._upload(ctx, session_uri)
             state["video_id"] = video_id
             on_progress("processing", state)
-        return self._poll(lambda: self._processing(ctx, state))
+
+        # Thumbnail: at most one attempt, only once the video exists. A failure never touches the
+        # video (it is already uploaded) and is reported separately.
+        cover = ctx.options.get("cover_path")
+        if cover and "thumbnail" not in state:
+            state["thumbnail"], state["thumbnail_error"] = self._set_thumbnail(ctx, state["video_id"], cover)
+            on_progress("processing", state)
+
+        outcome = self._poll(lambda: self._processing(ctx, state))
+        if "thumbnail" in state:
+            outcome.cover_status = state["thumbnail"]
+            outcome.cover_error = state.get("thumbnail_error")
+        return outcome
+
+    def _set_thumbnail(self, ctx: PublishContext, video_id: str, cover_path: str) -> tuple[str, str | None]:
+        """Upload the custom thumbnail. Returns ("published", None) or ("failed", reason); never raises."""
+        errors = self.validate_cover(cover_path)
+        if errors:
+            return "failed", "; ".join(errors)
+        try:
+            body = Path(cover_path).read_bytes()  # <= 50 MB, checked above
+        except OSError:
+            return "failed", "cover image could not be read"
+        try:
+            response = self._request(
+                "POST", self.THUMBNAIL_URL,
+                params={"videoId": video_id, "uploadType": "media"},
+                content=body,
+                headers={**self._auth(ctx), "Content-Type": THUMBNAIL_TYPES[Path(cover_path).suffix.lower()]},
+            )
+        except PublishError as e:
+            return "failed", str(e)
+        if response.status_code == 200:
+            return "published", None
+        return "failed", str(self._error(response, "thumbnails.set failed"))
 
     def _start_session(self, ctx: PublishContext) -> str:
         snippet = {"title": ctx.options["title"], "description": ctx.caption}

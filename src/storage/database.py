@@ -156,6 +156,10 @@ class PublishJob(Base):
     # Per-destination publish options (e.g. TikTok privacy_level, YouTube title). Never secrets.
     options_json = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
+    # Cover/thumbnail outcome, tracked separately from the video: none | pending | published |
+    # failed | not_supported | skipped (migration 003).
+    cover_status = Column(String(20), nullable=True)
+    cover_error = Column(Text, nullable=True)
     retry_count = Column(Integer, nullable=False, default=0)
     next_retry_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
@@ -201,6 +205,51 @@ class PublishAttempt(Base):
     job = relationship("PublishJob", back_populates="attempts")
 
     VALID_STATUSES = ("started", "uploading", "processing", "success", "failed")
+
+
+class ContentItem(Base):
+    """A content package from the content folder, linked to the post that publishes it."""
+
+    __tablename__ = "content_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    content_key = Column(String(64), nullable=False)
+    package_name = Column(String(255), nullable=False)
+    package_path = Column(String(1000), nullable=False)
+    video_path = Column(String(1000), nullable=True)
+    caption_path = Column(String(1000), nullable=True)
+    cover_path = Column(String(1000), nullable=True)
+    status = Column(String(20), nullable=False, default="detected")
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="SET NULL"), nullable=True)
+    error_message = Column(Text, nullable=True)
+    detected_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+    published_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("uq_content_items_key", "content_key", unique=True),
+        Index("idx_content_items_status", "status"),
+        CheckConstraint("status IN ('detected','publishing','published','failed')", name="ck_content_status"),
+    )
+
+    VALID_STATUSES = ("detected", "publishing", "published", "failed")
+
+
+class PublishingProfile(Base):
+    """Saved destinations + options. Holds account IDs only; tokens stay in accounts."""
+
+    __tablename__ = "publishing_profiles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    settings_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (Index("uq_publishing_profiles_name", "name", unique=True),)
 
 
 class SchemaVersion(Base):

@@ -517,3 +517,97 @@ def test_httpx_logging_cannot_leak_upload_urls():
     import src.platforms.base  # noqa: F401 - import sets the level
 
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+
+
+# ---------------------------------------------------------------------------------------------
+# YouTube custom thumbnail (thumbnails.set), Phase 5A
+# ---------------------------------------------------------------------------------------------
+
+YT_THUMB = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
+JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+
+def yt_provider(*thumb_responses):
+    p = (Provider()
+         .add("PUT", YT_UP, resp(201, {"id": "VID1"}))
+         .add("POST", YT_THUMB, *thumb_responses)
+         .add("POST", YT_UP, resp(200, headers={"Location": SESSION}))
+         .add("GET", YT_V, processed()))
+    return p
+
+
+class TestYouTubeThumbnail:
+    def cover(self, tmp_path, name="cover.jpg", data=JPEG_BYTES):
+        path = tmp_path / name
+        path.write_bytes(data)
+        return str(path)
+
+    def test_thumbnail_uploaded_after_video(self, video, tmp_path):
+        p = yt_provider(resp(200, {"kind": "youtube#thumbnailSetResponse", "items": [{}]}))
+        opts = {**YT_OPTS, "cover_path": self.cover(tmp_path)}
+        outcome = youtube(p).publish(ctx(video, opts), Progress())
+        assert outcome.status == "published" and outcome.platform_media_id == "VID1"
+        assert outcome.cover_status == "published" and outcome.cover_error is None
+        thumb = p.calls("POST", YT_THUMB)[0]
+        assert thumb.url.params["videoId"] == "VID1"
+        assert thumb.headers["Content-Type"] == "image/jpeg"
+        assert thumb.headers["Authorization"] == f"Bearer {TOKEN}"
+        assert thumb.content == JPEG_BYTES
+        order = [(r.method, str(r.url).split("?")[0]) for r in p.requests]
+        assert order.index(("PUT", YT_UP)) < order.index(("POST", YT_THUMB))  # video first
+
+    def test_thumbnail_failure_keeps_video_published(self, video, tmp_path):
+        body = {"error": {"code": 403, "message": "The authenticated user doesn't have permissions",
+                          "errors": [{"reason": "forbidden"}]}}
+        p = yt_provider(resp(403, body))
+        outcome = youtube(p).publish(ctx(video, {**YT_OPTS, "cover_path": self.cover(tmp_path)}), Progress())
+        assert outcome.status == "published" and outcome.platform_media_id == "VID1"
+        assert outcome.cover_status == "failed" and "403" in outcome.cover_error
+        assert len(p.calls("PUT", YT_UP)) == 1  # no second video upload
+
+    def test_thumbnail_network_error_is_reported_not_raised(self, video, tmp_path):
+        p = yt_provider(httpx.ConnectError("reset"))
+        outcome = youtube(p).publish(ctx(video, {**YT_OPTS, "cover_path": self.cover(tmp_path)}), Progress())
+        assert outcome.status == "published" and outcome.cover_status == "failed"
+
+    def test_resume_never_retries_thumbnail_or_video(self, video, tmp_path):
+        p = Provider().add("GET", YT_V, processed())
+        state = {"video_id": "VID1", "thumbnail": "failed", "thumbnail_error": "x"}
+        outcome = youtube(p).publish(ctx(video, {**YT_OPTS, "cover_path": self.cover(tmp_path)}, state=state), Progress())
+        assert outcome.cover_status == "failed"
+        assert p.calls("POST", YT_THUMB) == [] and p.calls("PUT", YT_UP) == []
+
+    def test_no_cover_publishes_normally(self, video):
+        p = yt_provider()
+        outcome = youtube(p).publish(ctx(video, YT_OPTS), Progress())
+        assert outcome.status == "published" and outcome.cover_status is None
+        assert p.calls("POST", YT_THUMB) == []
+
+    def test_oversized_and_unsupported_covers_not_uploaded(self, video, tmp_path):
+        big = tmp_path / "big.png"
+        with open(big, "wb") as f:
+            f.truncate(50 * 1024 * 1024 + 1)
+        for cover, expected in ((str(big), "50 MB"), (self.cover(tmp_path, "c.webp", b"RIFF1234WEBP"), "JPEG or PNG")):
+            p = yt_provider()
+            outcome = youtube(p).publish(ctx(video, {**YT_OPTS, "cover_path": cover}), Progress())
+            assert outcome.status == "published" and outcome.cover_status == "failed"
+            assert expected in outcome.cover_error
+            assert p.calls("POST", YT_THUMB) == []
+
+    def test_thumbnail_state_persisted_via_progress(self, video, tmp_path):
+        p = yt_provider(resp(200, {"items": [{}]}))
+        progress = Progress()
+        youtube(p).publish(ctx(video, {**YT_OPTS, "cover_path": self.cover(tmp_path)}), progress)
+        assert progress.events[-1][1]["thumbnail"] == "published"
+
+
+def test_tiktok_never_sends_a_cover_image(video):
+    p = (Provider()
+         .add("POST", f"{TT}/post/publish/creator_info/query/", CREATOR)
+         .add("POST", f"{TT}/post/publish/video/init/", tt_ok({"publish_id": "p1", "upload_url": UPLOAD}))
+         .add("PUT", "https://open-upload.tiktokapis.com/upload/", resp(201))
+         .add("POST", f"{TT}/post/publish/status/fetch/", tt_ok({"status": "PUBLISH_COMPLETE"})))
+    outcome = tiktok(p).publish(ctx(video, {**TT_OPTS, "cover_path": "C:/x/cover.jpg"}), Progress())
+    assert outcome.status == "published" and outcome.cover_status is None
+    init = json.loads(p.calls("POST", f"{TT}/post/publish/video/init/")[0].content)
+    assert "video_cover_timestamp_ms" not in init["post_info"] and "cover" not in json.dumps(init)

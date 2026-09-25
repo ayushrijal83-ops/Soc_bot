@@ -492,3 +492,14 @@ class TestValidation:
 
 def test_media_info_is_plain_data():
     assert MediaInfo("p", 1, "video/mp4").duration_seconds is None
+
+
+def test_cover_failure_is_stored_separately_and_video_stays_published(env):
+    fake = FakePublisher("youtube", PublishOutcome("published", "V1", {"video_id": "V1"},
+                                                   cover_status="failed", cover_error="forbidden (HTTP 403)"))
+    post_id = make_post(env, ("youtube",))
+    engine(env, {"youtube": fake}).publish_post(post_id)
+    job = job_by_platform(env, post_id)["youtube"]
+    assert job.status == "published" and job.platform_media_id == "V1"
+    assert job.cover_status == "failed" and "403" in job.cover_error
+    assert job.error_message is None

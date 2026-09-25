@@ -18,6 +18,7 @@ def isolated_database(tmp_path, monkeypatch):
     """Never touch the developer's data/publisher.db or real .env from tests."""
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'main.db'}")
     monkeypatch.setattr("main.ENV_FILE", tmp_path / "no-such.env")
+    monkeypatch.setenv("CONTENT_ROOT", str(tmp_path / "content"))
 
 
 class TestParseArgs:

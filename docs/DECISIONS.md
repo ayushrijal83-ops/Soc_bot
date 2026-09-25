@@ -316,3 +316,56 @@ Adapters report provider IDs (Instagram container ID, TikTok `publish_id`, YouTu
 ### Decision
 Migration `002_publishing.sql` adds `publish_jobs.options_json` (per-destination options such as the TikTok privacy level or YouTube title) and a unique index on `(post_id, account_id)`. The runner now strips comment lines instead of skipping whole comment-prefixed statements (previously most of 001 was silently skipped), tolerates "duplicate column" when `create_all()` already created the column, and records the version with `merge`. `main.py` runs `create_all()` + `migrate()` at startup.
 
+---
+
+## ADR-015: Content Intake Is a Layer Above the Engine
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+`src/content/` turns a folder package plus the saved profile into the same `(account_id, options)` destinations that manual Create Post uses, and calls the existing `JobStore` and `PublisherEngine`. It has no platform HTTP and no platform branches beyond building each platform's required options from the profile. Covers go through adapter capability methods.
+
+### Consequences
+- One publishing path, with the same retries, isolation, idempotency and attempt records
+- A package is moved to `publishing/` before its post is created, so stored file paths stay valid; resumed or retried packages are moved back there first
+
+---
+
+## ADR-016: Content Identity = Video Fingerprint, Not Folder Name
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+`content_key` = SHA-256 of the video's name, size, and first/last 64 KiB (unique in `content_items`). Folder name and caption are excluded.
+
+### Rationale
+Folders can be renamed during moves (timestamp suffix) and captions edited before a retry; neither may turn a half-published package into a "new" one. Hashing the whole video would be slow for large files.
+
+### Consequences
+Re-posting the identical video file as a new package is refused ("already published").
+
+---
+
+## ADR-017: Cover Support per Platform Capability
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+Adapters declare `supports_cover_upload()` / `supports_cover_timestamp()` / `validate_cover()` / `cover_plan()`. Only YouTube uploads an image (`thumbnails.set`, after the video). TikTok (frame-only `video_cover_timestamp_ms`) and Instagram (`cover_url` documented only for Facebook Login, and it needs a public URL) report `not_supported`. The cover result is stored in `publish_jobs.cover_status/cover_error`, separate from the video status.
+
+### Consequences
+A thumbnail failure never fails or re-uploads a published video. It is not retried automatically.
+
+---
+
+## ADR-018: One Confirmation per Package (VERIFY), None in AUTO
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Decision
+VERIFY shows the whole plan and asks once; `ContentIntake.publish()` then never prompts. AUTO publishes READY/RESUME packages without prompting but still runs full validation and moves INVALID/BLOCKED packages to `failed/`. Failed destinations are retried only when the user confirms retrying a FAILED package; AUTO never retries failed jobs, to avoid retry loops.
+

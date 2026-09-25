@@ -37,6 +37,9 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | SQLite database layer | ✅ **IMPLEMENTED** |
 | Video validation | ✅ **IMPLEMENTED** |
 | Dry-run mode | ✅ **IMPLEMENTED** (plan only, no API calls) |
+| Content Inbox (drop folders in `content/incoming/`) | ✅ **IMPLEMENTED** (Phase 5A) |
+| Publishing profile (VERIFY / AUTO) | ✅ **IMPLEMENTED** (Phase 5A) |
+| Cover/thumbnail (YouTube `thumbnails.set`) | ✅ **IMPLEMENTED**, real-tested on YouTube |
 | Unit/integration tests | ✅ **IMPLEMENTED** (305 unit tests, Ruff clean) |
 
 **Legend:** ✅ IMPLEMENTED | 🔄 IN PROGRESS | 📋 PLANNED | 🚫 BLOCKED
@@ -130,6 +133,23 @@ python main.py --dry-run
 python main.py --help
 ```
 
+## Content Inbox (Phase 5A)
+
+```
+content/incoming/post_001/
+    video.mp4        # one video (.mp4 / .mov / .webm)
+    caption.txt      # UTF-8 caption, sent as-is
+    cover.jpg        # optional (YouTube thumbnail; TikTok/Instagram: not supported)
+    title.txt        # optional YouTube title
+    video_url.txt    # optional public URL (needed for Instagram)
+```
+
+1. **Settings → Create/Edit Publishing Profile** (once): choose accounts, privacy, cover, VERIFY/AUTO
+2. **Content Inbox**: pick a package, review the plan, confirm **once**. It moves to `published/` (or `failed/`)
+3. `python main.py --scan`: AUTO profiles publish ready packages; `--dry-run` previews without doing anything
+
+Full guide: [docs/CONTENT_INTAKE.md](docs/CONTENT_INTAKE.md).
+
 ## CLI Workflow (Implemented V1 Menu)
 
 ```
@@ -139,8 +159,9 @@ SOCIAL PUBLISHER v1
 2. Connected Accounts
 3. Publishing Queue
 4. History
-5. Settings
-6. Exit
+5. Content Inbox
+6. Settings
+7. Exit
 ```
 
 **Connected Accounts Submenu:**
@@ -197,7 +218,7 @@ CONNECTED ACCOUNTS
 
 ## Development Status
 
-This project is in **Phase 4 (Publishing Engine): COMPLETE at code/test level (2026-09-25)**. Real provider OAuth and publishing have not been run yet (no credentials). The repository contains:
+This project is in **Phase 5A (Content Intake + Profiles + Covers): COMPLETE (2026-09-25)**. YouTube is verified against the real API; TikTok and Instagram are not configured yet. The repository contains:
 - ✅ SQLite database layer with migrations and token encryption
 - ✅ Terminal CLI menu system with input validation
 - ✅ Account management core (CRUD, listing, status, filtering)
@@ -206,8 +227,9 @@ This project is in **Phase 4 (Publishing Engine): COMPLETE at code/test level (2
 - ✅ Connected Accounts CLI submenu (list, details, connect, update, disconnect, enable)
 - ✅ Publishing engine: independent per-destination jobs, retries, idempotent resume, dry-run
 - ✅ Instagram / TikTok / YouTube publishers (official APIs, docs verified 2026-09-25)
-- ✅ 305 unit tests passing; `ruff check .` clean
-- ⚠️ **Mocked tests verified. Real provider OAuth and publishing NOT verified.**
+- ✅ Content Inbox, publishing profile, VERIFY/AUTO, YouTube thumbnails (Phase 5A)
+- ✅ 378 unit tests passing; `ruff check .` clean
+- ✅ Real YouTube OAuth, publishing and thumbnail verified; ⚠️ TikTok/Instagram real runs NOT done
 - Project structure and documentation
 
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.
