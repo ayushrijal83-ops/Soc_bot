@@ -3,7 +3,7 @@
 ## Core Principles
 
 1. **Never store social media passwords** — OAuth only
-2. **Encrypt tokens at rest** — Fernet (AES-128-GCM)
+2. **Encrypt tokens at rest** — Fernet (AES-128-GCM) ✅ **IMPLEMENTED**
 3. **Protect .env** — Never committed, in .gitignore
 4. **No secrets in logs** — Sanitize all output
 5. **HTTPS everywhere** — All API calls over TLS
@@ -12,15 +12,15 @@
 
 ## Threat Model
 
-| Threat | Mitigation |
-|--------|------------|
-| Token theft from DB | Encryption at rest, file permissions |
-| Token exposure in logs | Structured logging with sanitization |
-| .env committed to git | .gitignore, pre-commit hooks |
-| MITM on API calls | HTTPS enforcement, cert validation |
-| CSRF in OAuth | PKCE + state parameter |
-| Malicious video upload | Validation, size limits, type checking |
-| Token replay | Short-lived access tokens, refresh rotation |
+| Threat | Mitigation | Status |
+|--------|------------|--------|
+| Token theft from DB | Encryption at rest, file permissions | ✅ IMPLEMENTED |
+| Token exposure in logs | Structured logging with sanitization | 📋 PLANNED |
+| .env committed to git | .gitignore, pre-commit hooks | ✅ IMPLEMENTED |
+| MITM on API calls | HTTPS enforcement, cert validation | 📋 PLANNED |
+| CSRF in OAuth | PKCE + state parameter | 📋 PLANNED |
+| Malicious video upload | Validation, size limits, type checking | 📋 PLANNED |
+| Token replay | Short-lived access tokens, refresh rotation | 📋 PLANNED |
 
 ## OAuth Security
 
@@ -31,10 +31,10 @@
 - **Token refresh** — Proactive, before expiry
 - **Revocation handling** — Detect and disable compromised accounts
 
-## Token Protection
+## Token Protection (IMPLEMENTED)
 
 ```python
-# Encryption key from environment (32-byte base64)
+# Encryption key from environment (32-byte URL-safe base64)
 ENCRYPTION_KEY = os.environ["ENCRYPTION_KEY"]
 
 # Fernet encryption
@@ -43,7 +43,10 @@ encrypted = fernet.encrypt(token.encode())
 decrypted = fernet.decrypt(encrypted).decode()
 ```
 
-- Key generated once per deployment
+Implementation: `src/storage/tokens.py`
+- `TokenEncryption` class with `encrypt()`, `decrypt()`, `encrypt_optional()`, `decrypt_optional()`
+- `generate_key()` utility for key generation
+- Key loaded from `ENCRYPTION_KEY` environment variable
 - Never hardcoded, never in repo
 - Rotate key → re-encrypt all tokens (future feature)
 
@@ -61,7 +64,7 @@ videos/
 
 - `.env.example` committed (template only)
 - `.env` never committed
-- Pre-commit hook to detect accidental commits
+- Pre-commit hook to detect accidental commits (future)
 
 ## Secret Management
 
@@ -69,7 +72,7 @@ videos/
 |--------|---------|----------|
 | Platform App ID/Secret | .env | Platform dashboard |
 | Encryption Key | .env | Manual (re-encrypt DB) |
-| Access/Refresh Tokens | Encrypted DB | Auto via OAuth |
+| Access/Refresh Tokens | Encrypted DB (Fernet) | Auto via OAuth |
 | Database | File (SQLite) | N/A |
 
 ## Upload Validation

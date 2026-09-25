@@ -11,44 +11,67 @@
 
 ```
 tests/
-├── unit/                    # Fast, isolated unit tests
-│   ├── test_validation.py
-│   ├── test_models.py
-│   ├── test_token_encryption.py
-│   ├── test_job_state_machine.py
-│   └── test_cli_parsing.py
+├── unit/                    # Fast, isolated unit tests (47 tests ✅)
+│   ├── test_tokens.py       # Token encryption (14 tests)
+│   ├── test_database.py     # Database layer (33 tests)
+│   ├── test_validation.py   # 📋 PLANNED
+│   ├── test_models.py       # 📋 PLANNED
+│   ├── test_job_state_machine.py  # 📋 PLANNED
+│   └── test_cli_parsing.py  # 📋 PLANNED
 ├── integration/             # Slower, cross-component tests
-│   ├── test_database.py
-│   ├── test_account_manager.py
-│   ├── test_publisher_engine.py
-│   └── test_oauth_flows.py
+│   ├── test_database.py     # 📋 PLANNED (uses temp DB)
+│   ├── test_account_manager.py  # 📋 PLANNED
+│   ├── test_publisher_engine.py  # 📋 PLANNED
+│   └── test_oauth_flows.py  # 📋 PLANNED
 ├── platform/                # Platform-specific tests (mocked APIs)
-│   ├── test_instagram_adapter.py
-│   ├── test_tiktok_adapter.py
-│   └── test_youtube_adapter.py
+│   ├── test_instagram_adapter.py  # 📋 PLANNED
+│   ├── test_tiktok_adapter.py    # 📋 PLANNED
+│   └── test_youtube_adapter.py   # 📋 PLANNED
 ├── e2e/                     # End-to-end (manual/ci only)
-│   └── test_publish_flow.py
+│   └── test_publish_flow.py  # 📋 PLANNED
 └── fixtures/                # Shared test data
     ├── sample_videos/
     ├── mock_responses/
     └── test_accounts.json
 ```
 
-## Unit Tests (Implemented: 0)
+## Unit Tests (Implemented: 47)
 
-| Test Module | Coverage Target |
-|-------------|-----------------|
-| `test_validation.py` | Video validation logic |
-| `test_models.py` | Database models, serialization |
-| `test_token_encryption.py` | Encrypt/decrypt roundtrip |
-| `test_job_state_machine.py` | Status transitions |
-| `test_cli_parsing.py` | Argument parsing, menu logic |
+| Test Module | Tests | Coverage |
+|-------------|-------|----------|
+| `test_tokens.py` | 14 | Encrypt/decrypt roundtrip, special chars, empty strings, wrong key, corrupted data, optional handling, env key |
+| `test_database.py` | 33 | Init, schema version, idempotency, migrations, health check, all model CRUD, constraints, relationships, indexes, encryption integration |
+
+### Token Encryption Tests (`test_tokens.py`)
+- Key generation produces valid URL-safe base64
+- Encrypt/decrypt roundtrip
+- Special characters in tokens
+- Empty string/bytes raise errors
+- Wrong key fails decryption
+- Corrupted data fails decryption
+- Optional handling (None/empty)
+- Environment variable key loading
+
+### Database Layer Tests (`test_database.py`)
+- Database initialization creates all 6 tables
+- Schema version tracking
+- Idempotent initialization
+- Migration runs pending only
+- Health check
+- Account: create, uniqueness, platform/status CHECK constraints, encryption roundtrip
+- Video: create, checksum uniqueness, cascade delete posts
+- Post: create, FK to video
+- PublishJob: create, status CHECK, FK to post/account, default status
+- PublishAttempt: create, uniqueness, status CHECK, cascade delete
+- Relationships: account→jobs, post→jobs, job→attempts (ordered)
+- Token encryption integration: persist/decrypt, wrong key fails
+- Indexes: all expected indexes exist
 
 ## Integration Tests (Implemented: 0)
 
 | Test Module | Coverage Target |
 |-------------|-----------------|
-| `test_database.py` | CRUD, migrations, constraints |
+| `test_database.py` | CRUD, migrations, constraints (temp DB) |
 | `test_account_manager.py` | OAuth flow, token refresh, disconnect |
 | `test_publisher_engine.py` | Job creation, execution, dry-run |
 
@@ -118,7 +141,7 @@ Each platform adapter tested against **mocked official API responses**:
 # All tests
 pytest
 
-# Unit only (fast)
+# Unit only (fast) — 47 tests passing
 pytest tests/unit -v
 
 # Integration (requires test DB)
@@ -140,6 +163,7 @@ pytest -n auto
 - Mock responses from official API documentation
 - Fixtures in `tests/fixtures/`
 - Video fixtures: small synthetic MP4 files (< 1MB)
+- Temporary databases used for isolation (`tempfile.NamedTemporaryFile`)
 
 ## CI/CD Integration (Future)
 
@@ -158,4 +182,6 @@ jobs:
 ```
 
 ## Current Status
-📋 **PLANNED** — No tests implemented yet. First tests will be written alongside database layer.
+✅ **Phase 1 UNIT TESTS IMPLEMENTED** — 47 tests passing covering token encryption and database layer.
+
+Next: Integration tests for account manager and publisher engine (Phase 3-4).

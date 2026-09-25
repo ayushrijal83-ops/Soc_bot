@@ -1,7 +1,7 @@
 # Project Status
 
 ## Current Phase
-**Phase 0: Project Initialization & Documentation**
+**Phase 1: Database Foundation** — ✅ **COMPLETE**
 
 ## Implementation State
 
@@ -17,7 +17,7 @@
   - PROJECT_STATUS.md (this file)
   - API_INTEGRATIONS.md (platform API reference)
   - AUTHENTICATION.md (OAuth design)
-  - DATABASE.md (schema design - PLANNED)
+  - DATABASE.md (schema design - **IMPLEMENTED**)
   - DEVELOPMENT.md (dev setup)
   - TESTING.md (test strategy)
   - SECURITY.md (security practices)
@@ -28,18 +28,21 @@
   - .gitignore (protects .env, tokens, secrets)
   - .env.example (template)
   - requirements.txt (dependencies)
+  - requirements-dev.txt (dev dependencies)
+
+### Phase 1: Foundation — **COMPLETE** ✅
+- [x] SQLite database layer with migrations (`src/storage/database.py`)
+- [x] Token encryption utilities (`src/storage/tokens.py`)
+- [x] Base models for Account, Video, Post, PublishJob, PublishAttempt
+- [x] Configuration loading from .env
+- [x] Database initialization CLI (`python -m src.storage.database init`)
+- [x] Migration system with version tracking
+- [x] Unit tests for database layer (47 tests passing)
 
 ### In Progress 🔄
-- None (initialization complete)
+- None
 
 ### Planned 📋
-
-#### Phase 1: Foundation (Next)
-- [ ] SQLite database layer with migrations (`src/storage/database.py`)
-- [ ] Token encryption utilities (`src/storage/tokens.py`)
-- [ ] Base models for Account, Video, Post, PublishJob
-- [ ] Configuration loading from .env
-- [ ] Logging setup
 
 #### Phase 2: CLI Framework
 - [ ] Main entry point (`main.py`)
@@ -70,7 +73,6 @@
 - [ ] Dry-run mode
 - [ ] Retry logic
 - [ ] History display
-- [ ] Unit tests
 - [ ] Integration tests
 
 ### Blocked 🚫
@@ -78,28 +80,32 @@
 
 ## Important Files
 
-| File | Purpose |
-|------|---------|
-| `main.py` | Entry point (not yet created) |
-| `src/storage/database.py` | Database layer (PLANNED) |
-| `src/accounts/manager.py` | Account management (PLANNED) |
-| `src/core/jobs.py` | Job management (PLANNED) |
-| `src/core/publisher.py` | Publisher engine (PLANNED) |
-| `src/platforms/*/auth.py` | Platform OAuth (PLANNED) |
-| `src/platforms/*/publisher.py` | Platform publishing (PLANNED) |
-| `data/publisher.db` | SQLite database (PLANNED) |
-| `.env` | Environment config (NOT COMMITTED) |
+| File | Purpose | Status |
+|------|---------|--------|
+| `main.py` | Entry point | 📋 PLANNED |
+| `src/storage/database.py` | Database layer | ✅ IMPLEMENTED |
+| `src/storage/tokens.py` | Token encryption | ✅ IMPLEMENTED |
+| `src/storage/migrations/001_initial_schema.sql` | Initial migration | ✅ IMPLEMENTED |
+| `src/accounts/manager.py` | Account management | 📋 PLANNED |
+| `src/core/jobs.py` | Job management | 📋 PLANNED |
+| `src/core/publisher.py` | Publisher engine | 📋 PLANNED |
+| `src/platforms/*/auth.py` | Platform OAuth | 📋 PLANNED |
+| `src/platforms/*/publisher.py` | Platform publishing | 📋 PLANNED |
+| `data/publisher.db` | SQLite database | ✅ CREATED |
+| `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- None yet
+- **47 unit tests passing** in `tests/unit/`
+  - `test_tokens.py` — 14 tests for token encryption
+  - `test_database.py` — 33 tests for database layer
 
 ## Known Limitations
-- No functional code implemented
 - No platform API integrations verified
-- Database schema not created
 - OAuth flows not implemented
+- CLI not implemented
+- No logging setup yet
 
 ## Next Recommended Task
-**Create database layer and models** (`src/storage/database.py`, `src/storage/tokens.py`)
+**Create CLI Framework** (`main.py`, `src/cli/menu.py`, `src/cli/prompts.py`, `src/cli/display.py`)
 
-This establishes the persistence foundation needed for accounts, jobs, and history.
+This establishes the user interface for interacting with the database and publishing engine.
