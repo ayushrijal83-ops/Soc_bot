@@ -27,7 +27,7 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 |-----------|--------|
 | Project structure & documentation | ✅ **IMPLEMENTED** |
 | Terminal CLI menu system | ✅ **IMPLEMENTED** |
-| Account management (OAuth) | 📋 **PLANNED** |
+| Account management core (CRUD, listing, status) | ✅ **IMPLEMENTED** |
 | Job management & queue | 📋 **PLANNED** |
 | Instagram publishing adapter | 📋 **PLANNED** |
 | TikTok publishing adapter | 📋 **PLANNED** |
@@ -35,7 +35,7 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | SQLite database layer | ✅ **IMPLEMENTED** |
 | Video validation | 📋 **PLANNED** |
 | Dry-run mode | 📋 **PLANNED** (placeholder) |
-| Unit/integration tests | ✅ **IMPLEMENTED** (100 unit tests) |
+| Unit/integration tests | ✅ **IMPLEMENTED** (138 unit tests) |
 
 **Legend:** ✅ IMPLEMENTED | 🔄 IN PROGRESS | 📋 PLANNED | 🚫 BLOCKED
 
@@ -84,6 +84,9 @@ Create a `.env` file from `.env.example` with the following variables:
 # Database
 DATABASE_URL=sqlite:///data/publisher.db
 
+# Encryption key for token storage (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+ENCRYPTION_KEY=
+
 # Instagram (Meta)
 INSTAGRAM_APP_ID=your_app_id
 INSTAGRAM_APP_SECRET=your_app_secret
@@ -119,7 +122,7 @@ python main.py --dry-run
 python main.py --help
 ```
 
-## CLI Workflow (Planned V1 Menu)
+## CLI Workflow (Implemented V1 Menu)
 
 ```
 SOCIAL PUBLISHER v1
@@ -132,16 +135,18 @@ SOCIAL PUBLISHER v1
 6. Exit
 ```
 
-**Create Post Flow:**
-1. Choose video file
-2. Enter caption
-3. Select platforms (Instagram, TikTok, YouTube)
-4. Select connected accounts/channels per platform
-5. Validate media against platform requirements
-6. Show publishing plan
-7. Confirm → Create independent publishing jobs
-8. Publish → Show results
-9. Save to history
+**Connected Accounts Submenu:**
+```
+CONNECTED ACCOUNTS
+
+1. List Accounts
+2. Account Details
+3. Create Development Account
+4. Update Account
+5. Disconnect Account
+6. Enable Account
+7. Back to Main Menu
+```
 
 ## Authentication Concept
 
@@ -155,7 +160,7 @@ SOCIAL PUBLISHER v1
 ## Security Rules
 
 - ✅ Official OAuth only
-- ✅ Tokens encrypted at rest
+- ✅ Tokens encrypted at rest (Fernet AES-128-GCM)
 - ✅ `.env` in `.gitignore`
 - ✅ No credentials in logs
 - ✅ HTTPS for all API calls
@@ -164,10 +169,12 @@ SOCIAL PUBLISHER v1
 
 ## Development Status
 
-This project is in **Phase 2 (CLI Framework) — COMPLETE**. The repository contains:
+This project is in **Phase 3A (Account Management Core) — COMPLETE**. The repository contains:
 - ✅ SQLite database layer with migrations and token encryption
 - ✅ Terminal CLI menu system with input validation
-- ✅ 100 unit tests passing
+- ✅ Account management core (CRUD, listing, status, filtering)
+- ✅ Connected Accounts CLI submenu (list, details, create dev, update, disconnect, enable)
+- ✅ 138 unit tests passing
 - Project structure and documentation
 
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.

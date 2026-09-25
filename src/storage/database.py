@@ -50,8 +50,8 @@ class Account(Base):
     expires_at = Column(DateTime, nullable=True)
     status = Column(String(20), nullable=False, default="active")
     meta_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime, nullable=False, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         UniqueConstraint("platform", "platform_account_id", name="uq_accounts_platform_id"),

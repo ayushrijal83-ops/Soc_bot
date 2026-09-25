@@ -1,7 +1,7 @@
 # Project Status
 
 ## Current Phase
-**Phase 2: CLI Framework** — ✅ **COMPLETE**
+**Phase 3A: Account Management Core** — ✅ **COMPLETE**
 
 ## Implementation State
 
@@ -50,13 +50,26 @@
 - [x] Unit tests for CLI framework (53 new tests)
 - [x] All 100 unit tests passing
 
+### Phase 3A: Account Management Core — **COMPLETE** ✅
+- [x] Account Manager (`src/accounts/manager.py`)
+- [x] Account CRUD operations (create, read, update, delete/disconnect)
+- [x] Account listing with filtering (by platform, status)
+- [x] Account search by platform + platform_account_id
+- [x] Token encryption/decryption using existing Fernet infrastructure
+- [x] Safe account display (no tokens in output)
+- [x] Account status management (active, expired, revoked, disconnected)
+- [x] Development/test account creation (explicitly labeled, no real OAuth)
+- [x] Connected Accounts CLI submenu (list, details, create dev, update, disconnect, enable)
+- [x] Account selection logic for future publishing
+- [x] 38 unit tests for Account Manager
+- [x] Total 138 unit tests passing
+
 ### In Progress 🔄
 - None
 
 ### Planned 📋
 
-#### Phase 3: Account Management
-- [ ] Account Manager (`src/accounts/manager.py`)
+#### Phase 3B: Official OAuth Verification + OAuth Infrastructure
 - [ ] OAuth callback server
 - [ ] Instagram OAuth flow (`src/platforms/instagram/auth.py`)
 - [ ] TikTok OAuth flow (`src/platforms/tiktok/auth.py`)
@@ -91,10 +104,12 @@
 | `src/cli/menu.py` | Menu navigation & routing | ✅ IMPLEMENTED |
 | `src/cli/prompts.py` | Interactive prompts & validation | ✅ IMPLEMENTED |
 | `src/cli/display.py` | Formatting, tables, status messages | ✅ IMPLEMENTED |
+| `src/cli/account_menu.py` | Account management submenu | ✅ IMPLEMENTED |
 | `src/storage/database.py` | Database layer | ✅ IMPLEMENTED |
 | `src/storage/tokens.py` | Token encryption | ✅ IMPLEMENTED |
 | `src/storage/migrations/001_initial_schema.sql` | Initial migration | ✅ IMPLEMENTED |
-| `src/accounts/manager.py` | Account management | 📋 PLANNED |
+| `src/accounts/manager.py` | Account management core | ✅ IMPLEMENTED |
+| `src/accounts/__init__.py` | Account package exports | ✅ IMPLEMENTED |
 | `src/core/jobs.py` | Job management | 📋 PLANNED |
 | `src/core/publisher.py` | Publisher engine | 📋 PLANNED |
 | `src/platforms/*/auth.py` | Platform OAuth | 📋 PLANNED |
@@ -103,21 +118,22 @@
 | `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- **100 unit tests passing** in `tests/unit/`
+- **138 unit tests passing** in `tests/unit/`
   - `test_tokens.py` — 14 tests for token encryption
   - `test_database.py` — 33 tests for database layer
   - `test_cli_display.py` — 11 tests for display utilities
   - `test_cli_prompts.py` — 24 tests for input validation
   - `test_cli_menu.py` — 14 tests for menu navigation
   - `test_main.py` — 4 tests for entry point
+  - `test_account_manager.py` — 38 tests for Account Manager
 
 ## Known Limitations
 - No platform API integrations verified
-- OAuth flows not implemented
+- OAuth flows not implemented (Phase 3B)
 - No logging setup yet
 - Publishing features are placeholders only
 
 ## Next Recommended Task
-**Create Account Management** (`src/accounts/manager.py`, OAuth callback server, platform OAuth flows)
+**Phase 3B: Official OAuth Verification + OAuth Infrastructure**
 
-This establishes the ability to connect and manage social media accounts.
+This establishes the real platform authentication flows needed for production use.

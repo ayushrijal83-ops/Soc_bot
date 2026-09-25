@@ -3,6 +3,10 @@
 
 import argparse
 import sys
+
+from src.storage.database import get_database
+from src.storage.tokens import TokenEncryption
+from src.accounts.manager import AccountManager
 from src.cli.menu import run_menu
 
 
@@ -31,6 +35,14 @@ Examples:
     return parser.parse_args()
 
 
+def initialize_services():
+    """Initialize database, encryption, and account manager."""
+    db = get_database()
+    encryption = TokenEncryption()
+    account_manager = AccountManager(db, encryption)
+    return account_manager
+
+
 def main() -> int:
     """Main entry point."""
     args = parse_args()
@@ -42,7 +54,8 @@ def main() -> int:
         return 0
 
     try:
-        run_menu()
+        account_manager = initialize_services()
+        run_menu(account_manager=account_manager)
         return 0
     except KeyboardInterrupt:
         print("\n\nInterrupted. Goodbye!")

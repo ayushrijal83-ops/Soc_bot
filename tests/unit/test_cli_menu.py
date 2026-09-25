@@ -47,7 +47,8 @@ class TestMenuHandler:
             with patch('src.cli.menu.MenuHandler._pause'):
                 result = handler.handle_choice(2)
         assert result is True
-        mock_print.assert_called_once_with("Account management")
+        # AccountManager not initialized, should show appropriate message
+        mock_print.assert_called_once_with("Account management (AccountManager not initialized)")
 
     def test_handle_choice_publishing_queue(self):
         """Test handle_choice for Publishing Queue."""

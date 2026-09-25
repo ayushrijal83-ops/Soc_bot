@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 
+from src.cli.account_menu import run_account_menu
 from src.cli.display import (
     clear_screen,
     print_header,
@@ -14,8 +15,9 @@ from src.cli.prompts import prompt_menu_selection
 class MenuHandler:
     """Handles menu navigation and routing."""
 
-    def __init__(self):
+    def __init__(self, account_manager=None):
         self.running = True
+        self.account_manager = account_manager
         self.menu_options = [
             "Create Post",
             "Connected Accounts",
@@ -59,8 +61,11 @@ class MenuHandler:
 
     def handle_connected_accounts(self) -> bool:
         """Handle Connected Accounts option."""
-        print_not_implemented("Account management")
-        self._pause()
+        if self.account_manager is None:
+            print_not_implemented("Account management (AccountManager not initialized)")
+            self._pause()
+            return True
+        run_account_menu(self.account_manager)
         return True
 
     def handle_publishing_queue(self) -> bool:
@@ -105,7 +110,7 @@ class MenuHandler:
             self.running = self.handle_choice(choice)
 
 
-def run_menu() -> None:
+def run_menu(account_manager=None) -> None:
     """Entry point for running the menu system."""
-    handler = MenuHandler()
+    handler = MenuHandler(account_manager=account_manager)
     handler.run()

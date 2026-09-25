@@ -3,24 +3,24 @@
 ## System Overview
 
 ```
-                     main.py
-                       |
-                 Terminal CLI
-                       |
-          +------------+------------+
-          |                         |
-    Account Manager            Job Manager
-          |                         |
-          +------------+------------+
-                       |
-                Publisher Engine
-                       |
-      +----------------+----------------+
-      |                |                |
-   Instagram         TikTok          YouTube
-    Adapter          Adapter          Adapter
-      |                |                |
-   Official API     Official API     Official API
+                      main.py
+                        |
+                  Terminal CLI
+                        |
+           +------------+------------+
+           |                         |
+     Account Manager            Job Manager
+           |                         |
+           +------------+------------+
+                        |
+                 Publisher Engine
+                        |
+       +----------------+----------------+
+       |                |                |
+    Instagram         TikTok          YouTube
+     Adapter          Adapter          Adapter
+       |                |                |
+    Official API     Official API     Official API
 ```
 
 ## Core Components
@@ -29,29 +29,33 @@
 - **menu.py** — Main menu loop, navigation, user input handling
 - **prompts.py** — Interactive prompts for video selection, caption entry, platform/account selection
 - **display.py** — Rich text formatting, tables, progress bars, status display
+- **account_menu.py** — Account management submenu (list, details, create dev, update, disconnect, enable)
 
-### 2. Account Manager (`src/accounts/manager.py`) — 📋 **PLANNED**
+### 2. Account Manager (`src/accounts/manager.py`) — ✅ **IMPLEMENTED**
 - Manages connected accounts per platform
-- Handles OAuth authorization flows
-- Stores/retrieves account credentials from database
-- Token refresh coordination
+- Stores/retrieves account credentials from database (encrypted)
 - Account status tracking (active, expired, revoked, disconnected)
+- Account listing with filtering (platform, status)
+- Account search by platform + platform_account_id
+- Safe display (no tokens in output)
+- Internal token access for publishing
+- Development/test account creation (explicitly labeled)
 
-### 3. Job Manager (`src/core/jobs.py`)
+### 3. Job Manager (`src/core/jobs.py`) — 📋 **PLANNED**
 - Creates independent publishing jobs per destination (platform + account)
 - Manages job lifecycle: PENDING → UPLOADING → PROCESSING → PUBLISHED / FAILED
 - Retry logic with exponential backoff
 - Job queue persistence
 - Concurrency control (max parallel uploads)
 
-### 4. Publisher Engine (`src/core/publisher.py`)
+### 4. Publisher Engine (`src/core/publisher.py`) — 📋 **PLANNED**
 - Platform-agnostic orchestration layer
 - Coordinates validation, upload, and publishing per job
 - Calls platform adapters through a common interface
 - Aggregates results across all destinations
 - Dry-run simulation
 
-### 5. Platform Adapters (`src/platforms/{instagram,tiktok,youtube}/`)
+### 5. Platform Adapters (`src/platforms/{instagram,tiktok,youtube}/`) — 📋 **PLANNED**
 Each adapter implements a common interface:
 - **auth.py** — Platform-specific OAuth flow, token exchange, refresh
 - **client.py** — API client wrapper, request/response handling, rate limiting
@@ -65,31 +69,31 @@ Each adapter implements a common interface:
 
 ```
 User Input (Video + Caption)
-         |
-         v
-   Validation
-         |
-         v
+          |
+          v
+    Validation
+          |
+          v
 Platform/Account Selection
-         |
-         v
-   Job Creation (1 job per destination)
-         |
-         v
-   For Each Job (Parallel):
-      Publisher Engine
-            |
-            v
-      Platform Adapter
-            |
-            v
-      Official API
-            |
-            v
-      Result (Success/Failure)
-         |
-         v
-   Aggregate Results → Display → Save History
+          |
+          v
+    Job Creation (1 job per destination)
+          |
+          v
+    For Each Job (Parallel):
+       Publisher Engine
+             |
+             v
+       Platform Adapter
+             |
+             v
+       Official API
+             |
+             v
+       Result (Success/Failure)
+          |
+          v
+    Aggregate Results → Display → Save History
 ```
 
 ## CLI Layer — ✅ **IMPLEMENTED**
@@ -98,7 +102,7 @@ Platform/Account Selection
 main.py
   └── CLI Menu (menu.py)
         ├── Create Post → prompts.py → validation.py → Job Manager
-        ├── Connected Accounts → Account Manager → OAuth flows
+        ├── Connected Accounts → account_menu.py → Account Manager
         ├── Publishing Queue → Job Manager → status display
         ├── History → Database queries → display.py
         ├── Settings → Configuration display/edit
@@ -109,13 +113,14 @@ main.py
 
 Responsibilities:
 - List connected accounts per platform
-- Initiate OAuth authorization (opens browser)
-- Handle OAuth callback (local HTTP server)
-- Exchange authorization code for tokens
-- Store tokens securely (encrypted)
-- Refresh tokens before expiry
-- Detect revoked/expired tokens
-- Disconnect accounts (revoke tokens, remove from DB)
+- Store/retrieve account credentials from database (encrypted)
+- Token refresh coordination (future)
+- Account status tracking (active, expired, revoked, disconnected)
+- Account listing with filtering (platform, status)
+- Account search by platform + platform_account_id
+- Safe display (no tokens in output)
+- Internal token access for publishing
+- Development/test account creation (explicitly labeled)
 
 ## Job Manager
 

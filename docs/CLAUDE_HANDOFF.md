@@ -6,13 +6,13 @@
 
 ## Current Objective
 
-**Phase 2 Complete** — CLI Framework implemented with menu navigation, input validation, and comprehensive test coverage. Ready for Phase 3: Account Management.
+**Phase 3A Complete** — Account Management Core implemented with CRUD operations, CLI integration, and comprehensive test coverage. Ready for Phase 3B: Official OAuth Verification + OAuth Infrastructure.
 
 ---
 
 ## Current Project State
 
-- **Phase:** 2 (CLI Framework) — **COMPLETE**
+- **Phase:** 3A (Account Management Core) — **COMPLETE**
 - **Repository:** https://github.com/ayushrijal83-ops/Soc_bot
 - **Branch:** main
 - **Last Commit:** 90312a5 (Initial commit with docs)
@@ -44,11 +44,13 @@ Soc_bot/
 │   │   ├── __init__.py
 │   │   ├── display.py      # Formatting, tables, status messages
 │   │   ├── menu.py         # Menu navigation & routing
-│   │   └── prompts.py      # Interactive prompts & validation
+│   │   ├── prompts.py      # Interactive prompts & validation
+│   │   └── account_menu.py # Account management submenu
 │   ├── core/               # Empty
 │   │   └── __init__.py
-│   ├── accounts/           # Empty
-│   │   └── __init__.py
+│   ├── accounts/           # IMPLEMENTED
+│   │   ├── __init__.py
+│   │   └── manager.py      # Account CRUD, listing, status management
 │   ├── storage/            # IMPLEMENTED
 │   │   ├── __init__.py
 │   │   ├── tokens.py       # Fernet encryption
@@ -65,14 +67,15 @@ Soc_bot/
 │           └── __init__.py
 ├── tests/
 │   ├── __init__.py
-│   ├── unit/               # 100 TESTS PASSING
+│   ├── unit/               # 138 TESTS PASSING
 │   │   ├── __init__.py
 │   │   ├── test_tokens.py
 │   │   ├── test_database.py
 │   │   ├── test_cli_display.py
 │   │   ├── test_cli_prompts.py
 │   │   ├── test_cli_menu.py
-│   │   └── test_main.py
+│   │   ├── test_main.py
+│   │   └── test_account_manager.py
 │   ├── integration/        # Empty
 │   │   └── __init__.py
 │   ├── platform/           # Empty
@@ -96,10 +99,10 @@ Soc_bot/
 ```
 
 ### Documentation (Updated)
-All 11 required documentation files updated to reflect Phase 2 completion:
+All 11 required documentation files updated to reflect Phase 3A completion:
 - README.md — Main entry point with accurate status
 - ARCHITECTURE.md — System design with ASCII diagrams
-- PROJECT_STATUS.md — Progress tracker (Phase 2 ✅)
+- PROJECT_STATUS.md — Progress tracker (Phase 3A ✅)
 - API_INTEGRATIONS.md — Platform APIs (all marked UNVERIFIED)
 - AUTHENTICATION.md — OAuth design, token handling
 - DATABASE.md — Schema design (**IMPLEMENTED**)
@@ -217,10 +220,75 @@ All 11 required documentation files updated to reflect Phase 2 completion:
 
 ---
 
+## Phase 3A Implementation Summary
+
+### Files Created
+1. `src/accounts/manager.py` — Account CRUD, listing, filtering, status management, token encryption
+2. `src/accounts/__init__.py` — Package exports
+3. `src/cli/account_menu.py` — Account management submenu with 7 options
+4. `tests/unit/test_account_manager.py` — 38 comprehensive tests
+
+### Account Manager Features
+- **Create Account**: Store accounts with encrypted access/refresh tokens
+- **Get Account**: Retrieve by internal ID
+- **Find Account**: Lookup by platform + platform_account_id (respects uniqueness constraint)
+- **List Accounts**: With optional filtering by platform and/or status
+- **Update Account**: Modify display info, status, tokens (re-encrypted), expiry, metadata
+- **Disconnect Account**: Sets status to 'disconnected', preserves historical data
+- **Enable Account**: Sets status to 'active'
+- **Get Active Accounts**: Filter for status='active', optionally by platform
+- **Safe Display**: `get_account_display_info()` returns sanitized info (no tokens)
+- **Internal Token Access**: `get_account_with_tokens()` for publishing (raw tokens, clearly marked)
+- **Development Account Creation**: Explicitly labeled dev/test accounts with placeholder tokens
+- **Error Handling**: Custom exceptions (AccountError, AccountNotFoundError, DuplicateAccountError, InvalidPlatformError, InvalidStatusError)
+- **Validation**: Platform must be instagram/tiktok/youtube; status must be valid enum value
+- **Duplicate Prevention**: Enforces (platform, platform_account_id) uniqueness
+
+### Account Manager Security
+- **Token Encryption**: Uses existing `TokenEncryption` (Fernet AES-128-GCM)
+- **No Token Exposure**: Display/list functions never return raw tokens
+- **Internal Access Only**: `get_account_with_tokens()` clearly marked for internal use only
+- **Encryption Error Handling**: Wraps TokenEncryptionError in AccountError
+
+### Account Submenu CLI
+```
+╔════════════════════════════════════════╗
+║        CONNECTED ACCOUNTS              ║
+╠════════════════════════════════════════╣
+║  1. List Accounts                      ║
+║  2. Account Details                    ║
+║  3. Create Development Account         ║
+║  4. Update Account                     ║
+║  5. Disconnect Account                 ║
+║  6. Enable Account                     ║
+║  7. Back to Main Menu                  ║
+╚════════════════════════════════════════╝
+```
+- List Accounts: Optional platform/status filters, table display
+- Account Details: Shows all safe fields (no tokens)
+- Create Development Account: Explicitly labeled DEV/TEST, placeholder tokens
+- Update Account: Username, display name, status
+- Disconnect Account: Sets status='disconnected', preserves history
+- Enable Account: Sets status='active'
+- Clear warnings for dev accounts and disconnect action
+
+### Test Results (Phase 1 + 2 + 3A)
+```
+138 passed in ~12s
+- test_tokens.py: 14 tests (encryption, decryption, edge cases)
+- test_database.py: 33 tests (init, models, constraints, relationships, indexes, encryption integration)
+- test_cli_display.py: 11 tests (headers, menus, tables, status messages)
+- test_cli_prompts.py: 24 tests (text, int, choice, yes/no, menu selection, EOF, Ctrl+C)
+- test_cli_menu.py: 14 tests (init, routing, handlers, run loop, edge cases)
+- test_main.py: 4 tests (args parsing, dry-run, KeyboardInterrupt, exceptions)
+- test_account_manager.py: 38 tests (CRUD, listing, filtering, updates, disconnect, enable, dev accounts, security, edge cases)
+```
+
+---
+
 ## What Has NOT Been Implemented ❌
 
-### Code (Phase 3+)
-- **No Account Manager** (`src/accounts/manager.py`)
+### Code (Phase 3B+)
 - **No OAuth callback server**
 - **No Instagram/TikTok/YouTube OAuth flows**
 - **No Job Manager** (`src/core/jobs.py`)
@@ -248,6 +316,7 @@ All 11 required documentation files updated to reflect Phase 2 completion:
 | 2024-01-XX | Git commit 90312a5 pushed to origin |
 | 2026-09-25 | **Phase 1: Database Foundation implemented** |
 | 2026-09-25 | **Phase 2: CLI Framework implemented** |
+| 2026-09-25 | **Phase 3A: Account Management Core implemented** |
 
 ---
 
@@ -281,10 +350,12 @@ main.py → Terminal CLI → Account Manager + Job Manager → Publisher Engine 
 | `src/cli/menu.py` | Menu navigation & routing | ✅ IMPLEMENTED |
 | `src/cli/prompts.py` | Interactive prompts & validation | ✅ IMPLEMENTED |
 | `src/cli/display.py` | Formatting, tables, status messages | ✅ IMPLEMENTED |
+| `src/cli/account_menu.py` | Account management submenu | ✅ IMPLEMENTED |
 | `src/storage/database.py` | DB layer, migrations, models | ✅ IMPLEMENTED |
 | `src/storage/tokens.py` | Token encryption | ✅ IMPLEMENTED |
 | `src/storage/migrations/001_initial_schema.sql` | Initial migration | ✅ IMPLEMENTED |
-| `src/accounts/manager.py` | Account/OAuth management | 📋 PLANNED |
+| `src/accounts/manager.py` | Account CRUD, status, encryption | ✅ IMPLEMENTED |
+| `src/accounts/__init__.py` | Account package exports | ✅ IMPLEMENTED |
 | `src/core/jobs.py` | Job lifecycle, retry | 📋 PLANNED |
 | `src/core/publisher.py` | Orchestration engine | 📋 PLANNED |
 | `src/core/validation.py` | Media validation | 📋 PLANNED |
@@ -347,7 +418,7 @@ Migration system: versioned SQL files in `src/storage/migrations/`
 
 ## Tests
 
-**100 unit tests passing.** TESTING.md defines strategy:
+**138 unit tests passing.** TESTING.md defines strategy:
 - Unit: validation, models, encryption, state machine, CLI parsing
 - Integration: database, account manager, publisher engine
 - Platform: mocked API tests per adapter
@@ -363,7 +434,7 @@ Run: `pytest tests/unit/ -v`
 |-------|--------|------------|
 | API specs unverified | May implement wrong | Verify before coding |
 | No platform credentials | Cannot test OAuth | Set up developer accounts |
-| No logging setup | No observability | Add in Phase 3 |
+| No logging setup | No observability | Add in Phase 3B |
 | Publishing features placeholders | Menu shows "not implemented" | Implement in Phase 3-6 |
 
 ---
@@ -381,25 +452,24 @@ Run: `pytest tests/unit/ -v`
 
 ## Current Blockers
 
-**None.** Ready to begin Phase 3.
+**None.** Ready to begin Phase 3B.
 
 ---
 
 ## Next Recommended Task
 
-### Phase 3: Account Management
+### Phase 3B: Official OAuth Verification + OAuth Infrastructure
 
 **Priority:** HIGH
 
 **Files to Create:**
-1. `src/accounts/manager.py` — Account CRUD, listing, status management
-2. OAuth callback server (local HTTP on port 8080)
-3. `src/platforms/instagram/auth.py` — Instagram/Meta OAuth flow
-4. `src/platforms/tiktok/auth.py` — TikTok OAuth flow
-5. `src/platforms/youtube/auth.py` — YouTube/Google OAuth flow
+1. `src/accounts/oauth_callback.py` — Local HTTP callback server (port 8080)
+2. `src/platforms/instagram/auth.py` — Instagram/Meta OAuth flow
+3. `src/platforms/tiktok/auth.py` — TikTok OAuth flow
+4. `src/platforms/youtube/auth.py` — YouTube/Google OAuth flow
 
 **Verification:**
-- `python main.py` → "Connected Accounts" → shows empty list
+- `python main.py` → "Connected Accounts" → "Create Development Account" works
 - OAuth flow initiates browser, handles callback, stores encrypted tokens
 - Account appears in list with status "active"
 - Token refresh works (simulated)
@@ -416,7 +486,7 @@ Run: `pytest tests/unit/ -v`
 3. **Read API_INTEGRATIONS.md** — Note UNVERIFIED items
 4. **Verify `.env`** has ENCRYPTION_KEY set
 5. **Run tests** to confirm baseline: `pytest tests/unit/ -v`
-6. **Implement Account Management** (Phase 3 above)
+6. **Implement OAuth Infrastructure** (Phase 3B above)
 7. **Run tests** after each component
 8. **Update PROJECT_STATUS.md** and **this file** after each meaningful change
 

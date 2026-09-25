@@ -1,9 +1,14 @@
 """Tests for main entry point."""
 
+import os
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
 from main import parse_args, main
+
+
+# Set ENCRYPTION_KEY for tests that need it
+os.environ["ENCRYPTION_KEY"] = "nZEJx1hxthoUa6wzoWYOVg0rNAsmhidhd9uASEPii5s="
 
 
 class TestParseArgs:

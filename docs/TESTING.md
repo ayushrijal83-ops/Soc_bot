@@ -11,13 +11,14 @@
 
 ```
 tests/
-├── unit/                    # Fast, isolated unit tests (100 tests ✅)
+├── unit/                    # Fast, isolated unit tests (138 tests ✅)
 │   ├── test_tokens.py       # Token encryption (14 tests)
 │   ├── test_database.py     # Database layer (33 tests)
 │   ├── test_cli_display.py  # Display utilities (11 tests)
 │   ├── test_cli_prompts.py  # Input validation (24 tests)
 │   ├── test_cli_menu.py     # Menu navigation (14 tests)
 │   ├── test_main.py         # Entry point (4 tests)
+│   ├── test_account_manager.py  # Account management (38 tests)
 │   ├── test_validation.py   # 📋 PLANNED
 │   ├── test_models.py       # 📋 PLANNED
 │   ├── test_job_state_machine.py  # 📋 PLANNED
@@ -39,7 +40,7 @@ tests/
     └── test_accounts.json
 ```
 
-## Unit Tests (Implemented: 100)
+## Unit Tests (Implemented: 138)
 
 | Test Module | Tests | Coverage |
 |-------------|-------|----------|
@@ -49,6 +50,7 @@ tests/
 | `test_cli_prompts.py` | 24 | Text, int, choice, yes/no, menu selection, EOF, Ctrl+C |
 | `test_cli_menu.py` | 14 | Init, routing, handlers, run loop, edge cases |
 | `test_main.py` | 4 | Args parsing, dry-run, KeyboardInterrupt, exceptions |
+| `test_account_manager.py` | 38 | Account CRUD, listing, filtering, updates, disconnect, enable, dev accounts, security, edge cases |
 
 ### Token Encryption Tests (`test_tokens.py`)
 - Key generation produces valid URL-safe base64
@@ -102,6 +104,20 @@ tests/
 ### Main Entry Point Tests (`test_main.py`)
 - Argument parsing: default, --dry-run, --help, --version
 - Main function: normal run, dry-run mode, KeyboardInterrupt, exceptions
+
+### Account Manager Tests (`test_account_manager.py`)
+- **Account Creation**: valid account, no refresh token, no display name, default status, invalid platform, invalid status, duplicate rejection, different platform allowed
+- **Account Retrieval**: get by ID, find by platform+ID, not found handling
+- **Account Listing**: all accounts, filter by platform, filter by status, filter by both, invalid platform/status handling, ordering by created_at DESC
+- **Account Updates**: display info, status, access token (encrypted), refresh token (encrypted), nonexistent account, invalid status
+- **Account Disconnect**: sets status to disconnected, preserves historical data
+- **Account Enable**: sets status to active
+- **Active Accounts**: get all active, filter by platform
+- **Safe Display**: `get_account_display_info()` excludes tokens
+- **Internal Token Access**: `get_account_with_tokens()` for publishing, not found handling
+- **Development Accounts**: explicitly labeled dev accounts with placeholder tokens
+- **Error Hierarchy**: AccountError, AccountNotFoundError, DuplicateAccountError, InvalidPlatformError, InvalidStatusError
+- **Edge Cases**: expires_at updates, meta_json updates, case-sensitive platform/status validation, ordering verification
 
 ## Integration Tests (Implemented: 0)
 
@@ -177,7 +193,7 @@ Each platform adapter tested against **mocked official API responses**:
 # All tests
 pytest
 
-# Unit only (fast) — 100 tests passing
+# Unit only (fast) — 138 tests passing
 pytest tests/unit -v
 
 # Integration (requires test DB)
@@ -218,6 +234,6 @@ jobs:
 ```
 
 ## Current Status
-✅ **Phase 1 & 2 UNIT TESTS IMPLEMENTED** — 100 tests passing covering token encryption, database layer, and CLI framework.
+✅ **Phase 1, 2 & 3A UNIT TESTS IMPLEMENTED** — 138 tests passing covering token encryption, database layer, CLI framework, and Account Management Core.
 
-Next: Integration tests for account manager and publisher engine (Phase 3-4).
+Next: Integration tests for account manager and publisher engine (Phase 3B-4).
