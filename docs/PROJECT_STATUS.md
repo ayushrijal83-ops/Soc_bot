@@ -154,6 +154,14 @@
 - [ ] User: create the TikTok app, fill `.env`, connect the account, save the profile (SELF_ONLY)
 - [ ] Real SELF_ONLY publish via Content Inbox, then record the result here
 
+### Phase 5C: Instagram OAuth audit & fix — 🔄 code fixed, real OAuth NOT yet tested
+- [x] **Root cause of "Sorry, this page isn't available":** `.env` `INSTAGRAM_APP_ID/SECRET` = Meta app "Soc_bot" credentials, not the Instagram App ID/secret (verified: Graph API accepts the pair as Meta app "Soc_bot"; the Instagram token endpoint answers "Invalid platform app")
+- [x] Instagram now requires a registered `INSTAGRAM_REDIRECT_URI` (dynamic ports can never match); https paste mode + GitHub Pages callback page added
+- [x] Fixed: `permissions` returned as a list would have crashed scope parsing after the exchange; `#_` stripped from codes; the "Invalid platform app" error now explains the fix
+- [x] 23 new Instagram OAuth tests; 425 total passing; TikTok/YouTube files untouched
+- [ ] User: put the Instagram App ID/secret + `INSTAGRAM_REDIRECT_URI` in `.env`; register the redirect in Business login settings; add @nopex_12b to the app; push `docs/oauth/instagram-callback.html` (paste mode)
+- [ ] Real Instagram OAuth (Connected Accounts → Connect Instagram)
+
 ### In Progress 🔄
 - Phase 5: Instagram / TikTok real verification (not configured)
 
@@ -208,7 +216,7 @@
 | `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- **402 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
+- **425 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
 
 ## Known Limitations
 - Real OAuth: NOT RUN for any platform (no credentials configured). Mocked tests are not provider verification.

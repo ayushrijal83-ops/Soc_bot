@@ -408,3 +408,20 @@ A published content item is `PUBLISHED` only if every profile account already ha
 ### Rationale
 The Phase 5A behaviour blocked a video published to YouTube from ever reaching TikTok. The intended rule was "same content + same account never twice".
 
+---
+
+## ADR-022: Instagram Uses a Registered Redirect; https Paste Mode
+
+**Date:** 2026-09-25
+**Status:** Accepted
+
+### Context
+Meta redirects only to URIs registered exactly in Business login settings, and community reports say they must be https. A desktop app can't serve https on a registered, fixed public address.
+
+### Decision
+Instagram requires `INSTAGRAM_REDIRECT_URI`. A loopback URI uses the local callback server on that fixed port. Any https non-loopback URI uses paste mode: a static GitHub Pages page receives the redirect, and the user pastes the address into Soc_bot, which applies the same state/platform/code validation as the callback server. Only platforms that declare `REQUIRES_REGISTERED_REDIRECT` (Instagram) can use paste mode; TikTok and YouTube are unchanged.
+
+### Consequences
+- One extra copy/paste step for Instagram
+- The one-time code passes through GitHub Pages' request logs (it's short-lived, single-use and needs the secret)
+

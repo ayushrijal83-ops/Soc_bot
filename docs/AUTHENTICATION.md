@@ -102,3 +102,16 @@ A fixed `*_REDIRECT_URI` must have the form `http://<host>:<port>/callback/<plat
 
 TikTok requests only `user.info.basic,video.publish`. See API_INTEGRATIONS.md → TikTok Setup.
 
+## Instagram redirect modes (Phase 5C)
+
+Instagram (`InstagramAuth.REQUIRES_REGISTERED_REDIRECT = True`) never uses a dynamic port. `INSTAGRAM_REDIRECT_URI` must be set to a URI registered in Business login settings:
+
+| Redirect URI | Mode | How the callback reaches Soc_bot |
+|--------------|------|----------------------------------|
+| `http://127.0.0.1:<port>/callback/instagram` | local | the existing `OAuthCallbackServer` on that fixed port (same validation as other platforms) |
+| any `https://` non-loopback URI (e.g. `https://ayushrijal83-ops.github.io/Soc_bot/oauth/instagram-callback.html`) | paste | the browser lands on the static page; the user pastes the full address; `AuthManager._read_pasted_redirect` checks the base URI, `error`, code and state (single-use, unexpired, platform = instagram) before any token exchange |
+
+Paste mode needs the interactive CLI (`AuthManager.redirect_prompt`, set by Connected Accounts). TikTok and YouTube never use it; for them, non-loopback redirect URIs are still rejected.
+
+Security note: in paste mode the one-time code reaches the static host (GitHub Pages) in the request URL. The code expires within an hour, can be used once, and is useless without the app secret, which exists only in the local `.env`. The page is plain HTML (no JavaScript, `no-referrer`, `noindex`).
+

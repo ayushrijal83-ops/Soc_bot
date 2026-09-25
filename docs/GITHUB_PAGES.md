@@ -9,6 +9,7 @@ TikTok (and other platforms' developer portals) require public **Terms of Servic
 | `docs/index.html` | Landing page with links to both documents |
 | `docs/terms.html` | Terms of Service |
 | `docs/privacy.html` | Privacy Policy |
+| `docs/oauth/instagram-callback.html` | Instagram OAuth callback page for paste mode (tells the user to copy the address back into Soc_bot; no JavaScript) |
 | `docs/.nojekyll` | Turns off Jekyll so GitHub serves the files as-is. The Markdown docs in `docs/` would otherwise go through Jekyll and could break the build |
 
 Plain HTML with inline CSS: no JavaScript, no external resources, no trackers, relative links. It works on mobile and in dark mode.

@@ -19,6 +19,31 @@ Status terms used here are separate claims:
 
 ## Instagram
 
+## Instagram Setup & Diagnosis (Phase 5C, 2026-09-25)
+
+### Why authorization showed "Sorry, this page isn't available."
+**Root cause (verified):** `.env` `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET` held the credentials of the **Meta (Facebook) app "Soc_bot"**, not its **Instagram App ID/secret**.
+- `GET graph.facebook.com/v25.0/<INSTAGRAM_APP_ID>` with `app_id|app_secret` as the token returned the app `name = "Soc_bot"`, so it is a Meta app ID + secret.
+- `POST api.instagram.com/oauth/access_token` with the same ID returned **`Invalid platform app`**, identical to the response for a made-up ID. Instagram doesn't recognise that `client_id`, so `instagram.com/oauth/authorize` shows "this page isn't available".
+
+**Second problem (code):** with `INSTAGRAM_REDIRECT_URI` empty, Soc_bot sent a random-port `http://127.0.0.1:<port>/callback/instagram`. Meta only redirects to a URI registered **exactly** in Business login settings, so this could never work.
+
+**Third problem (code):** the token response's `permissions` can be a JSON list, while the docs show a string. Scope parsing expected a string and would have crashed after a successful exchange.
+
+### Required Meta dashboard configuration (existing app "Soc_bot", use case "Manage messaging & content on Instagram")
+1. **App Dashboard → Instagram → API setup with Instagram login.** Copy the **Instagram app ID** and **Instagram app secret** shown there into `.env` as `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET`. (They differ from App settings → Basic "App ID/App secret".)
+2. **Permissions:** `instagram_business_basic`, `instagram_business_content_publish`. No Facebook permissions, no Page, no Business Portfolio.
+3. **Step "Set up Instagram business login" → Business login settings → OAuth redirect URIs:** add the redirect URI, then put **the identical string** in `.env` as `INSTAGRAM_REDIRECT_URI`:
+   - **Recommended (paste mode):** `https://ayushrijal83-ops.github.io/Soc_bot/oauth/instagram-callback.html` (a static page in this repo; it must be pushed and live first)
+   - Alternative (local mode, only if the dashboard accepts http): `http://127.0.0.1:8765/callback/instagram`
+   - After saving, check the list: the dashboard may add a trailing slash. `.env` must match what's listed.
+4. **Account access (Standard Access):** Meta: Standard Access serves "accounts you own/manage that you've added to your app". Add @nopex_12b to the app, via the "Generate access tokens → Add account" step on the same page or **App roles → Roles → Instagram Testers**. If it's added as a tester, accept the invite in Instagram (Settings → Website permissions / Apps and websites → Tester invites). NOT VERIFIED from Meta's docs: the exact UI labels (the pages couldn't be fetched in full).
+5. **App mode:** Development mode is expected to work for accounts with a role on the app (Standard Access); Live mode + App Review (Advanced Access) is needed only for accounts you don't own or manage. NOT VERIFIED in Meta's docs for this exact use case; community reports only.
+
+### Uncertainties (explicit)
+- Whether Business login settings accept `http://127.0.0.1` redirect URIs is **not stated** in Meta's docs; community reports say https is required. That's why paste mode with an https page exists.
+- The Instagram Tester UI path is from Meta's dashboard and community knowledge, not from a fetched official page.
+
 ### Official API
 - **Name:** Instagram API with Instagram Login (Business Login for Instagram)
 - **Documentation:** https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login
@@ -38,7 +63,9 @@ Status terms used here are separate claims:
 - **Account identity:** `GET https://graph.instagram.com/v25.0/me?fields=user_id,username,name,profile_picture_url`, with the token sent in the `Authorization` header. `user_id` is the Instagram professional account ID and is stored as `platform_account_id`; `id` is only app-scoped.
 - **PKCE:** not documented for Instagram Login, so it is not sent.
 - **Revocation:** Instagram Login documents no token-revocation endpoint. Soc_bot disconnects locally only (`revoke_tokens()` returns `False` without a request). Users remove access in Instagram → Settings → Apps and websites. Meta's Deauthorize Callback URL is an app-dashboard setting that needs a public HTTPS endpoint, so it is not implemented.
-- **Redirect URI:** must exactly match a registered OAuth redirect URI. Instagram does not document a wildcard-port loopback rule, so set a fixed `INSTAGRAM_REDIRECT_URI`. Meta may also require HTTPS here. Confirm in the dashboard before the first real login.
+- **Redirect URI:** must exactly match a registered OAuth redirect URI (enforced by Soc_bot since Phase 5C: no fixed `INSTAGRAM_REDIRECT_URI` means a clear error before the browser opens). Two modes:
+  - **Paste mode** (any registered `https://` non-loopback URI, e.g. the GitHub Pages callback page): Soc_bot opens the browser, you approve, the browser lands on the page, and you paste its full address into Soc_bot. Soc_bot checks the base URI, the `error` parameter, the code, and that the state is single-use, unexpired and issued for Instagram, then exchanges the code (stripping `#_`).
+  - **Local mode** (registered `http://127.0.0.1:<port>/callback/instagram`): the existing loopback callback server on that fixed port.
 - **State parameter:** sent and validated (CSRF protection, bound to platform)
 
 ### Required Credentials
@@ -246,4 +273,4 @@ Publishing endpoints were verified 2026-09-25 (Phase 4). See each platform's Pub
 |----------|------------|-----------------|------------|
 | YouTube | ✅ 2 channels | ✅ (user upload + Phase 5A private regression) | ✅ thumbnail published |
 | TikTok | NOT RUN (developer app / credentials not yet configured) | NOT RUN | n/a (not supported) |
-| Instagram | NOT RUN | NOT RUN | n/a (not supported) |
+| Instagram | NOT RUN (Phase 5C: root cause found = Meta App ID used instead of Instagram App ID; code fixed; awaiting correct `.env` + registered redirect) | NOT RUN | n/a (not supported) |

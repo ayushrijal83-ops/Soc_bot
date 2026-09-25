@@ -25,6 +25,9 @@ class InstagramAuth(PlatformAuth):
     SCOPE_SEPARATOR = ","
     # Instagram has no refresh token: the long-lived access token itself is re-exchanged.
     REFRESH_USES_ACCESS_TOKEN = True
+    # Meta only redirects to URIs registered exactly in Business login settings, so a dynamic
+    # loopback port can never work. INSTAGRAM_REDIRECT_URI must be set (see AuthManager).
+    REQUIRES_REGISTERED_REDIRECT = True
 
     AUTHORIZATION_URL = "https://www.instagram.com/oauth/authorize"
     TOKEN_URL = "https://api.instagram.com/oauth/access_token"
@@ -44,6 +47,8 @@ class InstagramAuth(PlatformAuth):
 
         ``pkce_verifier`` is accepted for interface compatibility; Instagram Login does not document PKCE.
         """
+        # Meta appends "#_" to the redirect; it is not part of the code.
+        code = code.removesuffix("#_")
         data = {
             "client_id": self.config.client_id,
             "client_secret": self.config.client_secret,
@@ -57,7 +62,7 @@ class InstagramAuth(PlatformAuth):
 
         if response.status_code != 200:
             raise OAuthTokenExchangeError(
-                f"Token exchange failed (HTTP {response.status_code})",
+                f"Token exchange failed (HTTP {response.status_code}): {_meta_error(response)}",
                 platform=self.PLATFORM,
                 status_code=response.status_code,
                 response_body=_error_body(response),
@@ -77,7 +82,7 @@ class InstagramAuth(PlatformAuth):
             refresh_token=None,
             expires_in=long_lived.get("expires_in"),
             token_type=long_lived.get("token_type", "bearer"),
-            scope=short.get("permissions"),
+            scope=_permissions(short.get("permissions")),
             platform_account_id=str(short["user_id"]) if short.get("user_id") is not None else None,
             raw_response=None,  # never keep token-bearing bodies around
         )
@@ -176,6 +181,31 @@ class InstagramAuth(PlatformAuth):
         )
 
 
+def _meta_error(response: httpx.Response) -> str:
+    """Meta's error message (no secrets in it), with a hint for the most common setup mistake."""
+    try:
+        body = response.json()
+    except ValueError:
+        return "no error message"
+    message = body.get("error_message") or (body.get("error") or {}).get("message") if isinstance(body, dict) else None
+    message = str(message or "no error message")[:200]
+    if "invalid platform app" in message.lower():
+        message += (" -- INSTAGRAM_APP_ID/INSTAGRAM_APP_SECRET must be the *Instagram* App ID and secret from "
+                    "App Dashboard > Instagram > API setup with Instagram login, not the Meta App ID/secret")
+    return message
+
+
 def _error_body(response: httpx.Response) -> str:
     """Error body for diagnostics; error responses carry no tokens but keep it bounded."""
     return response.text[:500]
+
+
+def _permissions(value: Any) -> str | None:
+    """Granted permissions as a comma-separated string.
+
+    Meta's docs show a comma-separated string, but responses can carry a JSON list.
+    """
+    if isinstance(value, list):
+        return ",".join(str(v) for v in value)
+    return value if isinstance(value, str) else None
+

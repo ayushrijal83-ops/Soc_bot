@@ -183,6 +183,10 @@ class AccountMenuHandler:
             self._pause()
             return True
 
+        if platform == "instagram":
+            print_info("Instagram uses the INSTAGRAM App ID/secret from App Dashboard > Instagram > "
+                       "API setup with Instagram login (not the Meta App ID shown in App settings).")
+            self.auth_manager.redirect_prompt = lambda message: prompt_text(message)
         print_info(f"Connecting {platform_display}...")
         print_info("Browser authorization required: your browser will open the official login page.")
         print_info("Waiting for authorization...")

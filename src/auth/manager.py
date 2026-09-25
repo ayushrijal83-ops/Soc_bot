@@ -4,8 +4,9 @@ import asyncio
 import json
 import os
 import webbrowser
+from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from src.accounts.manager import AccountManager, AccountNotFoundError
 from src.auth.base import OAuthConfig, parse_scopes
@@ -16,6 +17,11 @@ from src.storage.database import Database
 from src.storage.tokens import TokenEncryption
 
 SUPPORTED_PLATFORMS = ("instagram", "tiktok", "youtube")
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def is_loopback_redirect(uri: str) -> bool:
+    return (urlparse(uri).hostname or "") in LOOPBACK_HOSTS
 
 
 class AuthManager:
@@ -44,6 +50,9 @@ class AuthManager:
         self._configs: dict[str, OAuthConfig] = {}
         # Platforms whose redirect URI is fixed (pre-registered with the provider).
         self._fixed_redirect_uris: dict[str, str] = {}
+        # Paste mode (https redirect that isn't this machine): called with instructions, returns the
+        # URL the browser ended on. Set by the CLI; None means paste mode can't be used.
+        self.redirect_prompt: Callable[[str], str | None] | None = None
 
     def _get_auth_class(self, platform: str):
         """Dynamically import and return the platform auth class."""
@@ -75,16 +84,22 @@ class AuthManager:
         if platform not in SUPPORTED_PLATFORMS:
             raise ValueError(f"Unsupported platform: {platform}")
 
+        auth_class = self._get_auth_class(platform)
         if redirect_uri:
             parsed = urlparse(redirect_uri)
-            if parsed.path.rstrip("/") != f"{CALLBACK_PATH_PREFIX}{platform}" or not parsed.port:
+            paste_mode = getattr(auth_class, "REQUIRES_REGISTERED_REDIRECT", False) and not is_loopback_redirect(redirect_uri)
+            if paste_mode:
+                # A registered https page (e.g. the project's GitHub Pages callback page): the user pastes
+                # the URL the browser lands on back into Soc_bot.
+                if parsed.scheme != "https" or not parsed.hostname:
+                    raise OAuthConfigurationError("A non-local redirect URI must be https://", platform=platform)
+            elif parsed.path.rstrip("/") != f"{CALLBACK_PATH_PREFIX}{platform}" or not parsed.port:
                 raise OAuthConfigurationError(
                     f"Redirect URI must be http://<host>:<port>{CALLBACK_PATH_PREFIX}{platform}",
                     platform=platform,
                 )
             self._fixed_redirect_uris[platform] = redirect_uri
 
-        auth_class = self._get_auth_class(platform)
         if platform == "instagram":
             config = auth_class.create_config(
                 app_id=client_id, app_secret=client_secret, redirect_uri=redirect_uri, scopes=scopes
@@ -153,7 +168,20 @@ class AuthManager:
             raise ValueError(f"Platform {platform} is not configured. Set credentials in .env first.")
 
         auth = self._get_auth_adapter(platform)
-        callback_server, redirect_uri = self._start_callback_server(platform)
+        fixed = self._fixed_redirect_uris.get(platform)
+        if getattr(auth, "REQUIRES_REGISTERED_REDIRECT", False) and not fixed:
+            raise OAuthConfigurationError(
+                f"{platform.title()} only redirects to a URI registered exactly in the app dashboard. "
+                f"Set {platform.upper()}_REDIRECT_URI in .env to that URI (see docs/API_INTEGRATIONS.md).",
+                platform=platform,
+            )
+        paste_mode = bool(fixed) and not is_loopback_redirect(fixed)
+        if paste_mode:
+            if self.redirect_prompt is None:
+                raise OAuthCallbackError("This redirect URI needs the interactive CLI (paste mode)", platform=platform)
+            callback_server, redirect_uri = None, fixed
+        else:
+            callback_server, redirect_uri = self._start_callback_server(platform)
 
         try:
             # The authorization URL and the token exchange must use the same redirect URI.
@@ -166,8 +194,11 @@ class AuthManager:
 
             webbrowser.open(auth_url)
 
-            # The HTTP server runs in its own thread; wait on its threading.Event off the loop.
-            callback_data = await asyncio.to_thread(callback_server.wait_for_callback)
+            if paste_mode:
+                callback_data = await asyncio.to_thread(self._read_pasted_redirect, platform, redirect_uri)
+            else:
+                # The HTTP server runs in its own thread; wait on its threading.Event off the loop.
+                callback_data = await asyncio.to_thread(callback_server.wait_for_callback)
 
             code = callback_data.get("code")
             if not code or callback_data.get("error"):
@@ -197,7 +228,48 @@ class AuthManager:
                 },
             }
         finally:
-            callback_server.stop()
+            if callback_server is not None:
+                callback_server.stop()
+
+    def _read_pasted_redirect(self, platform: str, redirect_uri: str) -> dict[str, Any]:
+        """Paste mode: validate the URL the browser landed on, like the callback server does.
+
+        Same checks: registered base URI, provider error, code present, state single-use and issued
+        for this platform. Never echoes the code.
+        """
+        pasted = (self.redirect_prompt(
+            "After approving in the browser you land on the Soc_bot callback page. "
+            "Copy the FULL address from the browser's address bar and paste it here"
+        ) or "").strip()
+        parsed = urlparse(pasted)
+        registered = urlparse(redirect_uri)
+        data: dict[str, Any] = {"code": None, "state": None, "error": None, "error_description": None,
+                                "platform": None, "pkce_verifier": None}
+        same_base = (parsed.scheme, parsed.netloc.lower(), parsed.path.rstrip("/")) == (
+            registered.scheme, registered.netloc.lower(), registered.path.rstrip("/"))
+        if not same_base:
+            data["error"], data["error_description"] = "wrong_url", "The pasted address is not the registered redirect URI."
+            return data
+        query = parse_qs(parsed.query)
+        data["code"] = (query.get("code", [None])[0] or "").removesuffix("#_") or None
+        data["state"] = query.get("state", [None])[0]
+        if query.get("error"):
+            data["error"] = query["error"][0]
+            data["error_description"] = query.get("error_description", query.get("error_reason", [""]))[0]
+            return data
+        if not data["code"]:
+            data["error"], data["error_description"] = "missing_code", "Missing authorization code in the pasted address"
+            return data
+        if not data["state"]:
+            data["error"], data["error_description"] = "missing_state", "Missing state in the pasted address"
+            return data
+        try:
+            state = self.state_store.consume_state(data["state"], platform=platform)
+        except OAuthStateError as e:
+            data["error"], data["error_description"] = "invalid_state", str(e)
+            return data
+        data["platform"], data["pkce_verifier"] = state.platform, state.pkce_verifier
+        return data
 
     def _store_account(self, platform: str, identity: dict[str, Any], token_result) -> Any:
         """Create the account, or update tokens/identity if it is already connected."""

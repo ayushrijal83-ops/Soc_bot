@@ -10,6 +10,27 @@
 
 ---
 
+## Phase 5C (Instagram) Audit — read this first
+
+**Status: code fixed, REAL INSTAGRAM OAUTH NOT YET TESTED. Uncommitted** (user asked for no commit).
+
+**What was wrong:**
+1. **Credentials (root cause of "Sorry, this page isn't available").** `.env` `INSTAGRAM_APP_ID/SECRET` are the **Meta app** "Soc_bot" credentials. Evidence: `graph.facebook.com/v25.0/<id>` with `id|secret` returns name "Soc_bot"; `api.instagram.com/oauth/access_token` returns "Invalid platform app", the same as for a made-up ID. Instagram Login needs the **Instagram app ID/secret** from App Dashboard → Instagram → API setup with Instagram login. Only the user can fix `.env`.
+2. **Redirect.** With an empty `INSTAGRAM_REDIRECT_URI`, a random-port loopback URI was sent, which can never match Meta's exact registered URI. Now refused before the browser opens.
+3. **Scope parsing.** `permissions` returned as a list would have crashed `parse_scopes` after a successful exchange. Now normalised.
+
+**What changed (Instagram-only paths; TikTok/YouTube files untouched, their tests green):**
+- `src/platforms/instagram/auth.py`: `REQUIRES_REGISTERED_REDIRECT`, `_permissions()` (list or string), `#_` stripped from the code, `_meta_error()` (Meta's message + "use the Instagram App ID" hint)
+- `src/auth/manager.py`: `is_loopback_redirect`; `configure_platform` accepts an https non-loopback redirect only for `REQUIRES_REGISTERED_REDIRECT` platforms; `connect_account` refuses a missing Instagram redirect, and in **paste mode** skips the callback server and calls `_read_pasted_redirect` (same validation: base URI, error, code, state single-use/unexpired/platform); `redirect_prompt` hook
+- `src/cli/account_menu.py`: Instagram hint (Instagram App ID, not Meta App ID) and the paste prompt
+- `docs/oauth/instagram-callback.html`: static https callback page (for GitHub Pages)
+- `tests/unit/test_instagram_oauth.py` (23 tests); `tests/unit/test_auth_manager.py` fixture gives Instagram a fixed loopback redirect
+- Docs: API_INTEGRATIONS (Instagram Setup & Diagnosis), AUTHENTICATION, DECISIONS ADR-022, GITHUB_PAGES, PROJECT_STATUS, `.env.example`
+
+**Manual test procedure:** API_INTEGRATIONS.md → "Instagram Setup & Diagnosis", plus: `python main.py` → 2 Connected Accounts → Connect Instagram → approve as @nopex_12b → (paste mode) copy the address of the "Instagram authorization received" page → paste → Soc_bot shows "Instagram account connected.", the account ID (IG user_id), username nopex_12b, and granted scopes.
+
+---
+
 ## Phase 5B Summary (read this first)
 
 **To finish Phase 5B** (the user must do steps 1–3; see API_INTEGRATIONS.md → TikTok Setup):

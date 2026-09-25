@@ -33,7 +33,14 @@ def services():
     db.init()
     accounts = AccountManager(db, encryption)
     manager = AuthManager(db, encryption, accounts, callback_timeout=5)
-    manager.configure_platform("instagram", "ig_id", "IG_SECRET", redirect_uri=None)
+    # Instagram needs a registered (fixed) redirect URI; use a free loopback port.
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        ig_port = sock.getsockname()[1]
+    manager.configure_platform("instagram", "ig_id", "IG_SECRET",
+                               redirect_uri=f"http://127.0.0.1:{ig_port}/callback/instagram")
     manager.configure_platform("tiktok", "tt_key", "TT_SECRET")
     manager.configure_platform("youtube", "yt_id", "YT_SECRET")
     yield manager, accounts, encryption
