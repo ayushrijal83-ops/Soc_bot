@@ -47,8 +47,8 @@ def run(setup, answers, fake):
 
 def test_create_post_publishes_after_confirmation(setup, capsys):
     fake = FakePublisher("tiktok", PublishOutcome("published", "TT1", {}))
-    # video, caption, accounts, privacy (4 = SELF_ONLY), confirm
-    engine = run(setup, [setup[2], "Hello", "1", "4", "y"], fake)
+    # video, no cover, caption, toggle account 1, continue, privacy (4 = SELF_ONLY), confirm
+    engine = run(setup, [setup[2], "", "Hello", "1", "", "4", "y"], fake)
     out = capsys.readouterr().out
     assert "PUBLISHING PLAN" in out and "READY" in out
     assert "PUBLISHED" in out and "1 published" in out
@@ -59,7 +59,7 @@ def test_create_post_publishes_after_confirmation(setup, capsys):
 
 def test_create_post_cancel_publishes_nothing(setup, capsys):
     fake = FakePublisher("tiktok")
-    engine = run(setup, [setup[2], "Hello", "1", "4", "n"], fake)
+    engine = run(setup, [setup[2], "", "Hello", "1", "", "4", "n"], fake)
     assert fake.calls == []
     assert engine.store.recent_jobs() == []
     assert "Nothing was published" in capsys.readouterr().out
@@ -67,7 +67,7 @@ def test_create_post_cancel_publishes_nothing(setup, capsys):
 
 def test_create_post_blocked_plan_is_not_published(setup, capsys):
     fake = FakePublisher("tiktok", validate_errors=["caption too long"])
-    engine = run(setup, [setup[2], "Hello", "1", "4"], fake)
+    engine = run(setup, [setup[2], "", "Hello", "1", "", "4"], fake)
     out = capsys.readouterr().out
     assert "BLOCKED" in out and "caption too long" in out
     assert engine.store.recent_jobs() == [] and fake.calls == []

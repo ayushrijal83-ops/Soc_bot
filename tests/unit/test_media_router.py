@@ -241,14 +241,14 @@ class TestConfig:
         assert not any("prepare" in e for e in events)
 
     def test_create_post_warning_depends_on_size(self, monkeypatch, capsys):
-        from src.cli.publish_menu import _ask_options
+        from src.cli.publish_menu import _instagram_notice
 
         monkeypatch.setenv("MEDIA_STORAGE_PROVIDER", "auto")
         for k, v in S3_ENV.items():
             monkeypatch.setenv(k, v)
-        _ask_options("instagram", "instagram / a", "c", 10_000_000)
+        _instagram_notice(10_000_000, False)
         assert "TempFile.org, a PUBLIC" in capsys.readouterr().out
-        _ask_options("instagram", "instagram / a", "c", 150_000_000)
+        _instagram_notice(150_000_000, False)
         assert "temporary private storage" in capsys.readouterr().out
 
 
@@ -319,9 +319,9 @@ def test_one_video_two_instagram_accounts_each_get_their_own_media(env):  # noqa
     jobs = JobStore(env[0]).jobs_for_post(post_id)
     assert [j.status for j in jobs] == ["published", "published"]
     assert ig.seen_urls[0] != ig.seen_urls[1]  # independent temporary objects
-    # A's object is cleaned before B's is created: no shared object, nothing B needs is deleted
-    assert events == ["small:prepare", "small:url", "small:cleanup:small-1",
-                      "small:prepare", "small:url", "small:cleanup:small-2"]
+    # Jobs may run concurrently: each has its own object, and each object is cleaned exactly once.
+    assert events.count("small:prepare") == 2 and events.count("small:url") == 2
+    assert sorted(e for e in events if "cleanup" in e) == ["small:cleanup:small-1", "small:cleanup:small-2"]
 
 
 def test_failure_of_one_instagram_account_does_not_affect_the_other(env):  # noqa: F811

@@ -139,7 +139,7 @@ python main.py --help
 content/incoming/post_001/
     video.mp4        # one video (.mp4 / .mov / .webm)
     caption.txt      # UTF-8 caption, sent as-is
-    cover.jpg        # optional (YouTube thumbnail; TikTok/Instagram: not supported)
+    cover.jpg        # optional (YouTube thumbnail; Instagram Reel cover, JPEG <= 8 MB; TikTok: not supported)
     title.txt        # optional YouTube title
 ```
 

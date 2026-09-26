@@ -302,11 +302,12 @@ class TestConfig:
                         "leaves this computer) (uploaded only when publishing)")
 
     def test_create_post_warns_and_never_asks_for_url(self, monkeypatch, capsys):
-        from src.cli.publish_menu import _ask_options
+        from src.cli.publish_menu import _ask_options, _instagram_notice
 
         monkeypatch.setenv("MEDIA_STORAGE_PROVIDER", "tempfile")
         with patch("builtins.input", side_effect=AssertionError("must not prompt")):
             assert _ask_options("instagram", "instagram / noxivra_01", "c") == {}
+        _instagram_notice(10_000_000, False)
         out = capsys.readouterr().out
         assert "TempFile.org" in out and "PUBLIC" in out and "may be able to download" in out
 

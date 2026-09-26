@@ -443,7 +443,7 @@ def test_create_post_cli_has_no_url_prompt(env, capsys):  # noqa: F811
 
     def fake_input(prompt=""):
         prompts.append(prompt)
-        return {0: video_path, 1: "caption", 2: str(ig_number)}.get(len(prompts) - 1, "n")
+        return {0: video_path, 1: "", 2: "caption", 3: str(ig_number), 4: ""}.get(len(prompts) - 1, "n")
 
     with patch("builtins.input", fake_input), patch("src.cli.publish_menu.clear_screen"):
         run_create_post(accounts, eng)

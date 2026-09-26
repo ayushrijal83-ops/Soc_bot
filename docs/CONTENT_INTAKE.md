@@ -95,9 +95,9 @@ Adapters declare what they support: `supports_cover_upload()`, `supports_cover_t
 |----------|-------------|--------------|--------------------------|
 | **YouTube** | ✅ `thumbnails.set` (JPEG/PNG, ≤ 50 MB) | Uploaded **after** the video exists, once. A failure (e.g. `forbidden` for channels without custom-thumbnail rights) doesn't change the video result and never re-uploads the video | `pending` → `published` / `failed` (+ `cover_error`) |
 | **TikTok** | ❌ | Direct Post only has `video_cover_timestamp_ms` (a frame of the video); an image can't be uploaded. Not sent | `not_supported` (+ reason) |
-| **Instagram** | ❌ | Reels `cover_url` is documented only in the Facebook Login reference and needs a public image URL; the Instagram Login docs don't mention it. Not sent | `not_supported` (+ reason) |
+| **Instagram** | ✅ `cover_url` (JPEG, ≤ 8 MB) | Served next to the video through the Cloudflare Quick Tunnel and sent with the Reel container; the same `cover.jpg` is used for every selected account. An invalid cover **blocks** the destination (never silently dropped) | `pending` → `published` |
 
-A cover the platform would reject (e.g. `.webp` or > 50 MB for YouTube) is `skipped` with the reason, and the video is still published.
+A cover YouTube would reject (e.g. `.webp` or > 50 MB) is `skipped` with the reason, and the video is still published. A cover that isn't a readable image blocks the whole package (it is never silently dropped); for Instagram, a non-JPEG or > 8 MB cover blocks the Instagram destinations.
 
 ## History (main menu → History)
 Per content item: name, dates, status, every destination's video status, and every destination's cover status. It reads the existing job rows; there is no separate history table.

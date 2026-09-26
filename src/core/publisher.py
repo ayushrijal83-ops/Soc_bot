@@ -6,8 +6,11 @@ rolls back another. No platform HTTP lives here; adapters implement PlatformPubl
 
 import json
 import logging
+import os
+import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -21,6 +24,21 @@ from src.storage.database import Database
 
 UpdateCallback = Callable[["JobResult"], None]
 log = logging.getLogger("soc_bot.engine")
+
+# Platforms whose jobs of one post run concurrently (each job fully isolated: own media session,
+# own container, own result). Everything else stays sequential.
+PARALLEL_PLATFORMS = ("instagram",)
+DEFAULT_MAX_CONCURRENT = 5
+MAX_CONCURRENT_LIMIT = 20
+
+
+def max_concurrent_publishes() -> int:
+    """INSTAGRAM_MAX_CONCURRENT_PUBLISHES (default 5, allowed 1..20)."""
+    try:
+        value = int(os.environ.get("INSTAGRAM_MAX_CONCURRENT_PUBLISHES") or DEFAULT_MAX_CONCURRENT)
+    except ValueError:
+        return DEFAULT_MAX_CONCURRENT
+    return value if 1 <= value <= MAX_CONCURRENT_LIMIT else DEFAULT_MAX_CONCURRENT
 
 
 def granted_scopes(account) -> list[str] | None:
@@ -58,6 +76,23 @@ class PostResult:
     def count(self, status: str) -> int:
         return sum(1 for j in self.jobs if j.status == status)
 
+    @property
+    def status(self) -> str:
+        return batch_status([j.status for j in self.jobs])
+
+
+def batch_status(statuses: list[str]) -> str:
+    """Aggregate of a post's jobs (the batch is only a coordinator; jobs keep their own states)."""
+    if not statuses or all(s == "pending" for s in statuses):
+        return "pending"
+    if any(s in ("pending", "retrying", "uploading", "processing") for s in statuses):
+        return "running"
+    if all(s == "published" for s in statuses):
+        return "completed"
+    if all(s == "failed" for s in statuses):
+        return "failed"
+    return "completed_with_failures"
+
 
 @dataclass
 class PlanItem:
@@ -88,6 +123,7 @@ class PublisherEngine:
         retry_delays: tuple[float, ...] = (30, 60, 120),
         probe_media: bool = True,
         links=None,
+        max_concurrent: int | None = None,
     ):
         self.store = JobStore(database)
         self.links = links  # PublishedLinks or None (off)
@@ -97,6 +133,7 @@ class PublisherEngine:
         self.sleep = sleep
         self.retry_delays = retry_delays  # max retries == len(retry_delays)
         self.probe_media = probe_media
+        self.max_concurrent = max_concurrent  # None: INSTAGRAM_MAX_CONCURRENT_PUBLISHES at publish time
 
     @property
     def publishers(self) -> dict[str, PlatformPublisher]:
@@ -168,18 +205,52 @@ class PublisherEngine:
     # --- publishing ------------------------------------------------------------
 
     def publish_post(self, post_id: int, on_update: UpdateCallback | None = None) -> PostResult:
-        """Publish every destination of a post independently and return the aggregate result."""
+        """Publish every destination of a post independently and return the aggregate result.
+
+        Instagram jobs run in a pool of at most ``max_concurrent`` workers: the rest wait and start as
+        workers free up (retry waits keep their slot). Other platforms run one after another. Published
+        and failed jobs are never started again, so calling this again resumes a batch.
+        """
         post, video = self.store.get_post(post_id)
-        result = PostResult(post_id)
         media, media_errors = self._media(video)
-        for job in self.store.jobs_for_post(post_id):
+        caption = post.caption or ""
+        jobs = self.store.jobs_for_post(post_id)
+        lock = threading.Lock()
+
+        def notify(update: JobResult) -> None:  # one line at a time from concurrent workers
+            if on_update:
+                with lock:
+                    on_update(update)
+
+        def run(job: JobInfo) -> JobResult:
             try:
-                job_result = self._run_job(job, media, media_errors, post.caption or "", on_update)
+                return self._run_job(job, media, media_errors, caption, notify)
             except Exception as e:  # noqa: BLE001 - isolate destinations: one bug must not stop the others
-                job_result = self._fail(job, PublishError(f"Unexpected error: {type(e).__name__}", code="internal"),
-                                        attempt_id=None, on_update=on_update)
-            result.jobs.append(job_result)
-        return result
+                return self._fail(job, PublishError(f"Unexpected error: {type(e).__name__}", code="internal"),
+                                  attempt_id=None, on_update=notify)
+
+        results: dict[int, JobResult] = {}
+        parallel = [job for job in jobs if job.platform in PARALLEL_PLATFORMS and job.status not in ("published", "failed")]
+        parallel_ids = {job.id for job in parallel}
+        for job in jobs:
+            if job.id not in parallel_ids:
+                results[job.id] = run(job)
+        if parallel:
+            limit = self.max_concurrent or max_concurrent_publishes()
+            pool = ThreadPoolExecutor(max_workers=min(limit, len(parallel)), thread_name_prefix="soc_bot-publish")
+            try:
+                futures = {pool.submit(run, job): job.id for job in parallel}
+                for future in as_completed(futures):
+                    results[futures[future]] = future.result()
+            except KeyboardInterrupt:
+                # Queued jobs are not started (they stay pending: resume later). Running jobs finish their
+                # current step and clean up their own media session.
+                log.warning("Stopping: queued jobs stay pending; waiting for active jobs to finish and clean up.")
+                pool.shutdown(wait=True, cancel_futures=True)
+                raise
+            finally:
+                pool.shutdown(wait=True)
+        return PostResult(post_id, [results[job.id] for job in jobs])
 
     def retry_job(self, job_id: int, on_update: UpdateCallback | None = None) -> JobResult:
         """Manually retry a failed job (failed -> retrying -> run)."""
@@ -298,6 +369,9 @@ class PublisherEngine:
         try:
             url = adapter.published_url(job.platform_media_id, state)
             if not url:
+                if state.get("permalink_missing"):
+                    log.warning("Job %s is published but its permanent link could not be read; run Published Links "
+                                "-> Import from publish history later.", job.id)
                 return False
             from src.core.published_links import video_label
 

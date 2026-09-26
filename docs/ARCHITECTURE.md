@@ -104,6 +104,17 @@ InstagramPublisher ──► MediaSourceProvider (prepare / get_public_url / cle
 `create_media_provider()` picks the provider from `MEDIA_STORAGE_PROVIDER` (default `s3`; never falls back to a public host). AUTO order: TempFile → Cloudflare Quick Tunnel → S3 (0x0 is never in AUTO). The tunnel provider is not object storage: it serves the local file through a temporary `trycloudflare.com` URL while Instagram fetches it, and cleanup stops the tunnel (see API_INTEGRATIONS.md → Cloudflare Quick Tunnel).
 Temporary private object + presigned HTTPS URL for platforms that fetch media from a URL. The provider is created by the Instagram adapter via `create_media_provider()`; the engine only gets `delivery_notes()` text for plans. See API_INTEGRATIONS.md → Instagram Media Delivery.
 
+### 7c-2. Instagram fan-out + cover: ✅ **IMPLEMENTED** (2026-09-26)
+```
+Create Post: video + optional cover.jpg + caption ─► multi-select accounts (A/N/toggle) ─► plan (no network) ─► ONE confirmation
+   └─► post (= batch) with one publish_job per account ─► PublisherEngine.publish_post
+          └─► Instagram jobs: ThreadPoolExecutor(max INSTAGRAM_MAX_CONCURRENT_PUBLISHES=5); others sequential
+                 └─► each job: InstagramPublisher ─► MediaStorageRouter.select(size, needs_cover)
+                        └─► CloudflareTunnelMediaProvider: 127.0.0.1 server {/media/<t1>.mp4 → video, /media/<t2>.jpg → cover}
+                            + one Quick Tunnel ─► container(video_url, cover_url) ─► poll ─► media_publish ─► permalink ─► cleanup
+```
+The batch is only a coordinator (post id). Jobs keep their own state machine; resume = `publish_post` again (final jobs skipped). See API_INTEGRATIONS.md → Instagram multi-account fan-out.
+
 ### 7d. Published-Link Library (`src/core/published_links.py`, `src/cli/links_menu.py`): ✅ **IMPLEMENTED**
 `PublisherEngine(links=PublishedLinks())` calls `_record_link` after the `published` transition, and `adapter.published_url(media_id, state)` gives the permanent URL (YouTube watch URL / Instagram permalink / TikTok `None`). Links go to per-platform JSON files under `content/published_links/`, not the DB. See CONTENT_INTAKE.md → Published Links.
 

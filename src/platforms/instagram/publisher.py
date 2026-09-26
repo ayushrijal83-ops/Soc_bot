@@ -23,12 +23,13 @@ import math
 import os
 from collections.abc import Callable
 from contextlib import ExitStack
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
-from src.core.validation import MediaInfo
+from src.core.validation import MediaInfo, jpeg_info
 from src.media_storage import (
     MediaSourceProvider,
     MediaStorageError,
@@ -68,13 +69,12 @@ class InstagramPublisher(PlatformPublisher):
     MAX_WIDTH = 1920
     REQUIRED_SCOPES = (("instagram_business_content_publish",),)
 
-    # Reels cover_url exists in the Facebook Login reference only and needs a *public* image URL;
-    # the Instagram Login publishing docs don't document it. thumb_offset (a frame) is also
-    # documented only in that reference. Neither is used.
-    COVER_UNSUPPORTED_REASON = (
-        "Instagram Login publishing documents no cover image upload (cover_url needs a public image URL "
-        "and is only documented for Facebook Login); cover image skipped"
-    )
+    # Reels cover: IG User Media reference, cover_url "For Reels only. The path to an image to use as the
+    # cover image for the Reels tab"; Instagram fetches it from a public server. Reels cover photo specs:
+    # JPEG, max 8 MB, sRGB, 9:16 recommended. cover_url takes precedence over thumb_offset (not used here).
+    # The Instagram Login publishing guide doesn't list it; verified by a real publish (docs/API_INTEGRATIONS.md).
+    MAX_COVER_BYTES = 8 * 1024 * 1024
+    COVER_EXTENSIONS = (".jpg", ".jpeg")
 
     def __init__(self, *args, media_provider: Callable[[], MediaSourceProvider] | None = None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -88,10 +88,14 @@ class InstagramPublisher(PlatformPublisher):
             if parsed.scheme != "https" or not parsed.netloc:
                 errors.append("video_url override must be an https:// URL")
         else:
-            problems = self.media_problems(media.size_bytes)
+            problems = self.media_problems(media.size_bytes, needs_cover=bool(options.get("cover_path")))
             if problems:
                 errors.append("Instagram temporary media storage is not configured: " + "; ".join(problems)
                               + " (see docs/API_INTEGRATIONS.md > Instagram media delivery)")
+        if options.get("cover_path"):
+            if options.get("video_url"):
+                errors.append("A cover image can't be combined with the video_url override")
+            errors.extend(self.validate_cover(options["cover_path"]))
         if media.mime_type not in ("video/mp4", "video/quicktime"):
             errors.append("Instagram Reels accept MP4 or MOV only")
         if len(caption) > self.MAX_CAPTION_CHARS:
@@ -108,17 +112,38 @@ class InstagramPublisher(PlatformPublisher):
             errors.append("Instagram Reels are limited to 1920 px width")
         return errors
 
-    def media_problems(self, size: int | None = None) -> list[str]:
-        """No-network check that this file can be delivered (with ``auto``, depends on its size)."""
-        return media_provider_problems(size) if self._media_provider_factory is create_media_provider else []
+    def media_problems(self, size: int | None = None, needs_cover: bool = False) -> list[str]:
+        """No-network check that this file (and cover) can be delivered (with ``auto``, depends on size)."""
+        if self._media_provider_factory is not create_media_provider:
+            return []
+        return media_provider_problems(size, needs_cover)
+
+    def supports_cover_upload(self) -> bool:
+        return True  # via cover_url, served by the media provider next to the video
+
+    def cover_plan(self, cover_path: str | None) -> tuple[str, str]:
+        # A cover the user chose is never silently dropped: an unusable one is reported by validate()
+        # and blocks the destination instead of being "skipped".
+        return ("upload", "") if cover_path else ("none", "no cover")
+
+    def validate_cover(self, cover_path: str) -> list[str]:
+        path = Path(cover_path)
+        if path.suffix.lower() not in self.COVER_EXTENSIONS:
+            return [f"Instagram Reel covers must be JPEG: convert {path.name} to .jpg"]
+        problems, _ = jpeg_info(path, self.MAX_COVER_BYTES)
+        return [f"Instagram cover: {p}" for p in problems]
 
     def delivery_notes(self, options: dict[str, Any], media: MediaInfo | None = None) -> list[str]:
         if options.get("video_url"):
             return ["media delivery: explicit video_url override"]
         size = media.size_bytes if media is not None else None
+        cover = bool(options.get("cover_path"))
         when = ("tunnel started only after you confirm, stopped when Instagram is done"
-                if delivery_provider(size) == "cloudflare_tunnel" else "uploaded only when publishing")
-        return [f"media delivery: {media_delivery_description(size)} ({when})"]
+                if delivery_provider(size, cover) == "cloudflare_tunnel" else "uploaded only when publishing")
+        notes = [f"media delivery: {media_delivery_description(size, cover)} ({when})"]
+        if cover:
+            notes.append(f"cover: {Path(options['cover_path']).name} (sent as cover_url; same file for every account)")
+        return notes
 
     def poll_attempts(self, size: int | None) -> int:
         try:
@@ -128,16 +153,22 @@ class InstagramPublisher(PlatformPublisher):
         extra = math.ceil(max(0, (size or 0) - 50_000_000) / 25_000_000)
         return max(self.POLL_ATTEMPTS, min(self.POLL_ATTEMPTS + extra, cap))
 
-    def _media_url(self, ctx: PublishContext, stack: ExitStack) -> str:
-        """Direct HTTPS URL for this attempt. Temporary media is cleaned up when ``stack`` closes."""
+    def _media_url(self, ctx: PublishContext, stack: ExitStack) -> tuple[str, str | None]:
+        """Direct HTTPS URLs (video, cover or None) for this attempt. Cleaned up when ``stack`` closes."""
         if ctx.options.get("video_url"):
-            return ctx.options["video_url"]
-        log.info("Preparing Instagram media.")
+            return ctx.options["video_url"], None
+        cover = ctx.options.get("cover_path")
+        log.info("Preparing Instagram media%s.", " and cover" if cover else "")
         try:
             provider = self._media_provider_factory()
-            handle = provider.prepare(ctx.video_path, ctx.media.mime_type)
+            if cover:
+                handle = provider.prepare(ctx.video_path, ctx.media.mime_type, cover_path=Path(cover))
+            else:
+                handle = provider.prepare(ctx.video_path, ctx.media.mime_type)
             stack.callback(provider.cleanup, handle)
-            return provider.get_public_url(handle)
+            if cover and not handle.cover_url:
+                raise PublishError("The media provider did not deliver the cover image", code="media_storage")
+            return provider.get_public_url(handle), (handle.cover_url if cover else None)
         except MediaStorageError as e:
             # Storage outages are transient; configuration/permission problems are not.
             raise PublishError(f"Instagram media preparation failed: {e}", code="media_storage",
@@ -164,9 +195,12 @@ class InstagramPublisher(PlatformPublisher):
                 state = {}
 
         if not container_id:
-            container_id = self._create_container(ctx, self._media_url(ctx, stack))
-            log.info("Instagram media container created.")
-            state = {"container_id": container_id}  # never the media URL
+            video_url, cover_url = self._media_url(ctx, stack)
+            container_id = self._create_container(ctx, video_url, cover_url)
+            log.info("Instagram media container created%s.", " with cover" if cover_url else "")
+            state = {"container_id": container_id}  # never the media or cover URL
+            if cover_url:
+                state["cover_sent"] = True
             on_progress("processing", state)
             log.info("Waiting for Instagram media processing.")
 
@@ -197,6 +231,11 @@ class InstagramPublisher(PlatformPublisher):
         permalink = self.fetch_permalink(ctx.access_token, str(media_id))
         if permalink:
             state["permalink"] = permalink  # permanent public URL (not a secret)
+        else:
+            # Still published. No URL is guessed from the media id; Import from publish history retries it.
+            state["permalink_missing"] = True
+        if state.get("cover_sent"):
+            return PublishOutcome("published", str(media_id), state, cover_status="published")
         return PublishOutcome("published", str(media_id), state)
 
     def fetch_permalink(self, access_token: str, media_id: str) -> str | None:
@@ -214,8 +253,10 @@ class InstagramPublisher(PlatformPublisher):
         # Only the permalink Instagram returned; the media id alone can't be turned into a URL.
         return state.get("permalink")
 
-    def _create_container(self, ctx: PublishContext, video_url: str) -> str:
+    def _create_container(self, ctx: PublishContext, video_url: str, cover_url: str | None = None) -> str:
         payload = {"media_type": "REELS", "video_url": video_url, "caption": ctx.caption}
+        if cover_url:  # only when there is a cover: never an empty cover_url
+            payload["cover_url"] = cover_url
         if "share_to_feed" in ctx.options:
             payload["share_to_feed"] = "true" if ctx.options["share_to_feed"] else "false"
         response = self._request(

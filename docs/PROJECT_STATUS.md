@@ -139,7 +139,7 @@
 - [x] VERIFY (one confirmation) and AUTO (no confirmation, validation still enforced)
 - [x] Lifecycle incoming → publishing → published/archive | failed; crash resume; retry of failed destinations only
 - [x] Duplicate protection: unique content key + unique (post, account) job
-- [x] Cover capability model; YouTube `thumbnails.set`; TikTok/Instagram truthfully `not_supported`
+- [x] Cover capability model; YouTube `thumbnails.set`; TikTok truthfully `not_supported` (Instagram: supported since 2026-09-26 via `cover_url`)
 - [x] Bugs fixed: the main menu's prompt added a second, dead "Exit" option (regression test); a `.gitignore` `content/` pattern would have hidden `src/content/` (anchored to `/content/`)
 - [x] Real YouTube regression: private upload `rAGivy-c3DM` + custom thumbnail published; a second publish of the same package was refused
 
@@ -189,6 +189,19 @@
 - [x] **Real direct tunnel test ✅ (2026-09-25, cloudflared 2026.9.3):** `videos/0612.mp4` through a real Quick Tunnel. Public GET 200 `video/mp4`, Content-Length 131,925,281, SHA-256 identical (9a28387d…0b7d), Range 206, other paths 404, ~10.5 MB/s; after cleanup cloudflared is gone, the URL returns 502 and the source is unchanged
 - [x] Bugs found by the real run and fixed: the parser took `https://api.trycloudflare.com` (printed by cloudflared) as the tunnel URL; the readiness check used the local resolver, which cached "no such host" (trycloudflare.com negative TTL 60 s). Now: hyphenated names only, public DoH (2 resolvers), first lookup after 5 s, default timeout 90 s
 - [x] **Real Instagram publish through the tunnel ✅ (2026-09-25):** Create Post (AUTO) → `videos/0612.mp4` (131.9 MB) → Cloudflare Quick Tunnel → Reel on noxivra_01. Post 8 / job 9, media id 18155048788569324, https://www.instagram.com/reel/DduAxFSgaZt/, 84 s end to end. Link saved to `instagram.json`; no cloudflared left; tunnel URL in no log, DB or link file; source unchanged (same SHA-256)
+
+### Instagram fan-out + one cover for all accounts: ✅ implemented (2026-09-26)
+- [x] Instagram `cover_url` (JPEG ≤ 8 MB, stdlib structure check; invalid cover BLOCKS), served with the video on the same per-job tunnel
+- [x] Router is cover-aware (`supports_cover`; only the Cloudflare Quick Tunnel today)
+- [x] Create Post: cover prompt, multi-select accounts (A/N/toggle/ranges), one batch summary (valid/invalid, concurrency, provider, bandwidth), ONE confirmation, grouped duplicate question
+- [x] Engine: Instagram jobs in a pool of `INSTAGRAM_MAX_CONCURRENT_PUBLISHES` (default 5); failure isolation; resume skips published/failed; Ctrl+C leaves queued jobs pending; published-links writes locked
+- [x] Publishing Queue: batches (post) with aggregate status and per-job ✓/✗ lines, no URLs
+- [x] 45 new tests; **746 passing**
+- [x] Real TEST 1 (10 MB + cover → noxivra_01): https://www.instagram.com/reel/DdvCpWvEspn/, cover verified by API `thumbnail_url` readback
+- [x] Real TEST 2 (131.9 MB 0612.mp4 + cover → noxivra_01): https://www.instagram.com/reel/DdvDAyhCGzR/, cover verified (same thumbnail bytes), sources unchanged
+- [x] **Real 11-account fan-out ✅ (2026-09-26, post 11, jobs 12-22):** 10.1 MB video + one cover → all 11 connected accounts (noxivra_01-10, noxivra_100), concurrency 5. Observed max 5 running / 5 cloudflared; slots refilled as jobs finished; 11/11 published in 4 min 10 s; all 11 covers verified by API thumbnail readback; 11 links saved; sources unchanged
+- [x] **Real 5-account run ✅ (post 12, jobs 23-27):** `videos/1114(1).mp4` (40.0 MB, the user's chosen test video; `0612.mp4` is no longer in the project) + one cover → noxivra_02-06, all 5 concurrent (5 cloudflared), 5/5 published in 1 min 24 s, covers verified, sources unchanged. A >99 MB × 5 run was not repeated
+- [~] Real TEST 5 (resume): published jobs were not touched, but the run also resumed a **stale** RETRYING job from 2026-09-25 (post 4 / job 5) and published an unintended Reel (https://www.instagram.com/reel/DdvDNpKDoMk/)
 
 ### Published-Link Library — ✅ implemented (2026-09-25)
 - [x] `content/published_links/{youtube,instagram,tiktok}.json`, atomic UTF-8 writes, malformed-file quarantine, account+provider_id dedupe, temporary-URL rejection
@@ -251,7 +264,7 @@
 | `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- **701 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
+- **746 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
 
 ## Known Limitations
 - Real OAuth: NOT RUN for any platform (no credentials configured). Mocked tests are not provider verification.

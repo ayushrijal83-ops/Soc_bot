@@ -95,10 +95,13 @@ def _parse_range(header: str | None, size: int) -> tuple[int, int] | None:
     return (start, end) if start <= end < size else None
 
 
-def make_handler(route: str, path: Path, content_type: str):
-    """Request handler that serves exactly one file at exactly one path. Everything else is 404."""
+def make_handler(routes: dict[str, tuple[Path, str]]):
+    """Request handler that serves only the prepared files, each at exactly one random path.
 
-    class SingleFileHandler(http.server.BaseHTTPRequestHandler):
+    ``routes`` maps "/media/<token>.<ext>" to (local file, content type). Everything else is 404.
+    """
+
+    class PreparedFilesHandler(http.server.BaseHTTPRequestHandler):
         server_version = "Soc_bot"
         sys_version = ""
 
@@ -109,9 +112,11 @@ def make_handler(route: str, path: Path, content_type: str):
             self._serve(body=True)
 
         def _serve(self, body: bool) -> None:
-            if self.path.split("?", 1)[0] != route:  # exact match: no traversal, no listing
+            entry = routes.get(self.path.split("?", 1)[0])  # exact match: no traversal, no listing
+            if entry is None:
                 self.send_error(404)
                 return
+            path, content_type = entry
             size = path.stat().st_size
             start, end, status = 0, size - 1, 200
             if self.headers.get("Range"):
@@ -149,7 +154,7 @@ def make_handler(route: str, path: Path, content_type: str):
         def log_message(self, format, *args):  # never log request paths (they hold the token)
             pass
 
-    return SingleFileHandler
+    return PreparedFilesHandler
 
 
 @dataclass
@@ -180,6 +185,7 @@ class CloudflareTunnelMediaProvider(MediaSourceProvider):
     name = ("Cloudflare Quick Tunnel to this computer (temporary public URL, nothing is uploaded; "
             "runs only while Instagram fetches the video)")
     max_file_size = None  # streamed from disk; Instagram's own 300 MB limit is checked by the adapter
+    supports_cover = True  # the cover is served next to the video, on the same server and tunnel
 
     def __init__(self, executable: str = "cloudflared", startup_timeout: float = 90, token_bytes: int = 16,
                  host: str = "127.0.0.1", popen=subprocess.Popen, client: httpx.Client | None = None,
@@ -196,7 +202,7 @@ class CloudflareTunnelMediaProvider(MediaSourceProvider):
 
     # --- lifecycle --------------------------------------------------------------------------
 
-    def prepare(self, video_path: Path, content_type: str) -> MediaHandle:
+    def prepare(self, video_path: Path, content_type: str, cover_path: Path | None = None) -> MediaHandle:
         path = Path(video_path)
         if not path.is_file():
             raise MediaStorageError(f"Video file not found: {path.name}")
@@ -209,12 +215,22 @@ class CloudflareTunnelMediaProvider(MediaSourceProvider):
             raise StorageNotConfiguredError(f"cloudflared not found ({self.executable!r}). {INSTALL_HINT}")
 
         route = f"/media/{secrets.token_hex(self.token_bytes)}{UPLOAD_EXTENSIONS[content_type]}"
-        session = self._start_server(route, path, content_type)
+        routes = {route: (path, content_type)}
+        cover_route = None
+        if cover_path is not None:
+            cover = Path(cover_path)
+            if not cover.is_file() or cover.stat().st_size == 0:
+                raise MediaStorageError(f"Cover image not found or empty: {cover.name}")
+            # Same local file for every job; only this job's random path points at it.
+            cover_route = f"/media/{secrets.token_hex(self.token_bytes)}.jpg"
+            routes[cover_route] = (cover, "image/jpeg")
+        session = self._start_server(routes)
         handle = MediaHandle(path, content_type, session=session)
         try:
             port = session.server.server_address[1]
             base = self._start_tunnel(exe, port, session)
             handle.public_url = base + route
+            handle.cover_url = base + cover_route if cover_route else None
             if self.verify_public:
                 self._wait_until_public(handle.public_url, path.stat().st_size)
         except BaseException:
@@ -233,7 +249,7 @@ class CloudflareTunnelMediaProvider(MediaSourceProvider):
         if handle is None or handle.cleaned:
             return
         handle.cleaned = True
-        handle.public_url = None
+        handle.public_url = handle.cover_url = None
         session, handle.session = handle.session, None
         if session is None:
             return
@@ -258,8 +274,8 @@ class CloudflareTunnelMediaProvider(MediaSourceProvider):
 
     # --- internals --------------------------------------------------------------------------
 
-    def _start_server(self, route: str, path: Path, content_type: str) -> TunnelSession:
-        server = http.server.ThreadingHTTPServer((self.host, 0), make_handler(route, path, content_type))  # 0 = free port
+    def _start_server(self, routes: dict[str, tuple[Path, str]]) -> TunnelSession:
+        server = http.server.ThreadingHTTPServer((self.host, 0), make_handler(routes))  # 0 = free port
         server.daemon_threads = True
         thread = threading.Thread(target=server.serve_forever, name="soc_bot-media-server", daemon=True)
         thread.start()

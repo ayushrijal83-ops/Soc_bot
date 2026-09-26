@@ -495,3 +495,18 @@ Add `TempFileMediaStorage` (`MEDIA_STORAGE_PROVIDER=tempfile`) behind the same `
 - Large videos need S3 credentials; without them, the plan blocks them clearly.
 - One upload per Instagram account (no shared object): simpler and race-free, at the cost of extra uploads.
 
+## ADR-027: Instagram Fan-Out With One Cover (2026-09-26)
+
+### Context
+One video + one cover + caption must reach many Instagram accounts. Instagram fetches media and covers from public URLs, and large batches must not open dozens of tunnels at once.
+
+### Decision
+- A **post is the batch** (existing tables): one job per account, with the cover path in each job's options (the same local file).
+- `PublisherEngine.publish_post` runs Instagram jobs in a bounded thread pool (`INSTAGRAM_MAX_CONCURRENT_PUBLISHES`, default 5). Each job has its own media session (server + Quick Tunnel serving video and cover), so cleanup can't cross jobs.
+- Providers declare `supports_cover`. The router never picks one that can't serve the cover, so a chosen cover is never dropped.
+- Instagram sends `cover_url` (JPEG ≤ 8 MB) from the IG User Media reference, verified to work with Instagram Login by a real publish + `thumbnail_url` readback.
+
+### Consequences
+- No schema change. Resume, duplicate rules and failure isolation are unchanged per job.
+- Bandwidth scales with accounts (each fetch is a full transfer); the confirmation shows the estimate.
+- TempFile/S3 can't carry covers yet. Add `supports_cover` there if a no-cloudflared setup needs covers.

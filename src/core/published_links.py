@@ -1,6 +1,7 @@
 """Published-link library: one JSON file per platform with the permanent URLs of published videos.
 
-    content/published_links/youtube.json | instagram.json | tiktok.json
+    content/published_links/youtube.json | instagram.json | tiktok.json   (records with metadata)
+    content/published_links/youtube.txt  | instagram.txt  | tiktok.txt    (one URL per line, for pasting)
 
 Written only after a platform confirmed a publication (the engine calls ``record`` from the
 "published" transition). Only permanent URLs on the platform's own website are accepted, so
@@ -13,7 +14,10 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
+import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -36,6 +40,40 @@ class LinkError(ValueError):
     pass
 
 
+# Read-modify-write of the JSON files happens under this lock (concurrent publish jobs, one process)
+# plus an OS file lock on <root>/.lock (two Soc_bot processes, e.g. the menu and --scan).
+_WRITE_LOCK = threading.RLock()
+
+
+@contextmanager
+def _process_lock(root: Path):
+    root.mkdir(parents=True, exist_ok=True)
+    with open(root / ".lock", "a+b") as f:
+        if os.name == "nt":
+            import msvcrt
+
+            while True:
+                try:
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def is_permanent_platform_url(platform: str, url: str) -> bool:
     parsed = urlparse(url or "")
     if parsed.scheme != "https" or parsed.username or parsed.password:
@@ -55,13 +93,24 @@ class PublishedLinks:
             raise LinkError(f"Unknown platform: {platform}")
         return self.root / f"{platform}.json"
 
+    def text_path(self, platform: str) -> Path:
+        return self.path(platform).with_suffix(".txt")
+
     def ensure_files(self) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        for platform in PLATFORMS:
-            if not self.path(platform).exists():
-                self._write(platform, [])
+        """Create missing JSON files and (re)build the .txt exports from the JSON records."""
+        with _WRITE_LOCK, _process_lock(self.root):
+            for platform in PLATFORMS:
+                records = self._records(platform)
+                if not self.path(platform).exists():
+                    self._write(platform, records)
+                else:
+                    self._write_text(platform, records)
 
     def records(self, platform: str) -> list[dict]:
+        with _WRITE_LOCK:
+            return self._records(platform)
+
+    def _records(self, platform: str) -> list[dict]:
         path = self.path(platform)
         if not path.exists():
             return []
@@ -80,7 +129,12 @@ class PublishedLinks:
             raise LinkError(f"Refusing to save a non-permanent {platform} URL")
         if not provider_id:
             raise LinkError("A provider id is required for duplicate protection")
-        records = self.records(platform)
+        with _WRITE_LOCK, _process_lock(self.root):
+            return self._add(platform, video, account, url, provider_id, published_at)
+
+    def _add(self, platform: str, video: str, account: str, url: str, provider_id: str,
+             published_at: datetime | None) -> bool:
+        records = self._records(platform)  # re-read under the lock: another writer may have added some
         if any(r.get("account") == account and r.get("provider_id") == provider_id for r in records):
             return False
         when = published_at or datetime.now(timezone.utc)
@@ -94,14 +148,22 @@ class PublishedLinks:
     # --- file safety ----------------------------------------------------------------------
 
     def _write(self, platform: str, records: list[dict]) -> None:
-        """Atomic replace: write a temp file in the same folder, fsync, then os.replace."""
-        path = self.path(platform)
+        """JSON first (the source of truth), then the derived .txt export. Both atomic."""
+        self._atomic_write(self.path(platform), json.dumps(records, ensure_ascii=False, indent=2) + "\n")
+        self._write_text(platform, records)
+
+    def _write_text(self, platform: str, records: list[dict]) -> None:
+        urls = [r["url"] for r in records if is_permanent_platform_url(platform, r.get("url", ""))]
+        self._atomic_write(self.text_path(platform), "".join(f"{url}\n" for url in urls))
+
+    @staticmethod
+    def _atomic_write(path: Path, text: str) -> None:
+        """Write a temp file in the same folder, fsync, then os.replace (a crash never leaves half a file)."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix=f".{platform}.", suffix=".tmp", dir=path.parent)
+        fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(records, f, ensure_ascii=False, indent=2)
-                f.write("\n")
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, path)

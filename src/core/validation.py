@@ -109,3 +109,54 @@ def file_checksum(path: str | os.PathLike) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+# JPEG start-of-frame markers (baseline, progressive, lossless, ...): they carry the image size.
+_SOF_MARKERS = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+
+
+def jpeg_info(path: str | os.PathLike, max_bytes: int) -> tuple[list[str], tuple[int, int] | None]:
+    """Structural JPEG check without third-party libraries: (problems, (width, height)).
+
+    Checks: readable, non-empty, <= max_bytes, SOI marker, well-formed segments up to the scan,
+    a frame header with a non-zero size, and the EOI marker at the end. Never modifies the file.
+    """
+    p = Path(path)
+    name = p.name
+    try:
+        size = p.stat().st_size
+        if size == 0:
+            return [f"{name} is empty"], None
+        if size > max_bytes:
+            return [f"{name} is {size / 1_000_000:.1f} MB (max {max_bytes / 1_000_000:.0f} MB)"], None
+        data = p.read_bytes()
+    except OSError:
+        return [f"{name} could not be read"], None
+    if not data.startswith(b"\xff\xd8\xff"):
+        return [f"{name} is not a JPEG image"], None
+    if not data.rstrip(b"\x00").endswith(b"\xff\xd9"):
+        return [f"{name} is incomplete or corrupt (no JPEG end marker)"], None
+    i, dims = 2, None
+    while i + 4 <= len(data):
+        if data[i] != 0xFF:
+            return [f"{name} is corrupt (bad JPEG segment)"], None
+        marker = data[i + 1]
+        if marker == 0xFF:  # fill byte
+            i += 1
+            continue
+        if marker == 0x01 or 0xD0 <= marker <= 0xD7:  # standalone markers
+            i += 2
+            continue
+        length = int.from_bytes(data[i + 2:i + 4], "big")
+        if length < 2 or i + 2 + length > len(data):
+            return [f"{name} is corrupt (truncated JPEG segment)"], None
+        if marker in _SOF_MARKERS and length >= 7:
+            height = int.from_bytes(data[i + 5:i + 7], "big")
+            width = int.from_bytes(data[i + 7:i + 9], "big")
+            dims = (width, height)
+        if marker == 0xDA:  # start of scan: compressed data follows
+            break
+        i += 2 + length
+    if dims is None or 0 in dims:
+        return [f"{name} is corrupt (no JPEG frame header)"], None
+    return [], dims

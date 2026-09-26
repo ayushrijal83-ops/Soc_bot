@@ -44,7 +44,8 @@ class TestStorage:
     def test_creates_directory_and_three_files(self, links):
         assert not links.root.exists()
         links.ensure_files()
-        assert sorted(p.name for p in links.root.iterdir()) == ["instagram.json", "tiktok.json", "youtube.json"]
+        assert sorted(p.name for p in links.root.iterdir()) == [".lock", "instagram.json", "instagram.txt", "tiktok.json", "tiktok.txt", "youtube.json", "youtube.txt"]
+        assert links.text_path("youtube").read_text(encoding="utf-8") == ""
         assert json.loads(links.path("youtube").read_text(encoding="utf-8")) == []
 
     def test_add_and_read(self, links):
@@ -307,4 +308,89 @@ def test_main_creates_link_files(tmp_path, monkeypatch):
     monkeypatch.setenv("ENCRYPTION_KEY", "nZEJx1hxthoUa6wzoWYOVg0rNAsmhidhd9uASEPii5s=")
     _, _, eng, _ = main_module.initialize_services()
     assert eng.links is not None
-    assert sorted(os.listdir(tmp_path / "content" / "published_links")) == ["instagram.json", "tiktok.json", "youtube.json"]
+    assert sorted(os.listdir(tmp_path / "content" / "published_links")) == [".lock", "instagram.json", "instagram.txt", "tiktok.json", "tiktok.txt", "youtube.json", "youtube.txt"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Plain-text export, cross-process safety, missing permalinks, batch summary
+# ---------------------------------------------------------------------------------------------
+
+class TestTextExport:
+    def test_one_url_per_line_follows_the_json(self, links):
+        links.add("instagram", "v", "a1", "https://www.instagram.com/reel/AAA/", "1")
+        links.add("instagram", "v", "a2", "https://www.instagram.com/reel/BBB/", "2")
+        links.add("instagram", "v", "a2", "https://www.instagram.com/reel/BBB/", "2")  # duplicate: ignored
+        assert links.text_path("instagram").read_bytes() == (
+            b"https://www.instagram.com/reel/AAA/\nhttps://www.instagram.com/reel/BBB/\n")
+        assert len(links.records("instagram")) == 2  # JSON metadata kept
+
+    def test_rebuilt_from_json_at_startup(self, links):
+        links.add("youtube", "v", "a", YT_URL, "IgHvoyTmD4k")
+        links.text_path("youtube").unlink()
+        links.ensure_files()
+        assert links.text_path("youtube").read_text(encoding="utf-8") == YT_URL + "\n"
+
+    def test_only_permanent_urls_in_text(self, links):
+        links.ensure_files()
+        links.path("instagram").write_text(json.dumps([
+            {"url": "https://www.instagram.com/reel/OK/", "provider_id": "1", "account": "a"},
+            {"url": "https://x.trycloudflare.com/media/abc.mp4", "provider_id": "2", "account": "b"}]), encoding="utf-8")
+        links.ensure_files()
+        assert links.text_path("instagram").read_text(encoding="utf-8") == "https://www.instagram.com/reel/OK/\n"
+
+
+def _add_many(root, start, count):
+    lib = PublishedLinks(root)
+    for i in range(start, start + count):
+        lib.add("instagram", "v", f"acct{i}", f"https://www.instagram.com/reel/R{i}/", str(i))
+
+
+def test_two_processes_writing_at_once_lose_nothing(tmp_path):
+    import multiprocessing
+
+    root = tmp_path / "published_links"
+    ctx = multiprocessing.get_context("spawn")
+    procs = [ctx.Process(target=_add_many, args=(root, n * 100, 15)) for n in range(3)]
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(60)
+        assert proc.exitcode == 0
+    records = PublishedLinks(root).records("instagram")
+    assert len(records) == 45 and len({r["provider_id"] for r in records}) == 45
+    assert len(PublishedLinks(root).text_path("instagram").read_text(encoding="utf-8").splitlines()) == 45
+
+
+def test_threads_writing_at_once_lose_nothing(links):
+    import threading
+
+    threads = [threading.Thread(target=_add_many, args=(links.root, n * 100, 10)) for n in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(links.records("instagram")) == 50
+
+
+def test_permalink_failure_keeps_the_reel_published_and_saves_nothing(env, links, caplog):  # noqa: F811
+    import logging
+
+    eng = engine(env, mocked_platforms(permalink=None), links=links)
+    with caplog.at_level(logging.WARNING):
+        result = eng.publish_post(post(env, ("instagram",)))
+    job = result.jobs[0]
+    assert job.status == "published" and links.records("instagram") == []
+    assert eng.store.provider_state(job.job_id)["permalink_missing"] is True
+    assert "Import from publish history" in caplog.text
+
+
+def test_batch_summary_counts_saved_links(env, links, capsys):  # noqa: F811
+    from src.cli.publish_menu import _print_summary
+
+    eng = engine(env, mocked_platforms(), links=links)
+    result = eng.publish_post(post(env))
+    _print_summary(result.jobs, eng)
+    out = capsys.readouterr().out
+    assert "Instagram: 1 published, 0 failed" in out and out.count("Permanent links saved: 1") == 2
+    assert "TikTok returns no public post URL" in out and "instagram.txt" in out
+    assert "trycloudflare" not in out and "tempfile" not in out

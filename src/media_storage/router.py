@@ -33,6 +33,7 @@ class Tier:
     max_file_size: int | None       # None = no application limit
     problems: Callable[[], list[str]]
     factory: Callable[[], MediaSourceProvider]
+    supports_cover: bool = False  # can serve a cover image next to the video
 
 
 def fmt_mb(size: int) -> str:
@@ -52,12 +53,18 @@ class MediaStorageRouter(MediaSourceProvider):
         # Margin: multipart framing adds bytes on top of the file, so stay clearly below the limit.
         return tier.max_file_size is None or size <= tier.max_file_size - self.margin_bytes
 
-    def select(self, size: int) -> Tier:
-        """The provider that WOULD handle a file of ``size`` bytes. Raises StorageNotConfiguredError."""
+    def select(self, size: int, needs_cover: bool = False) -> Tier:
+        """The provider that WOULD handle a file of ``size`` bytes (and its cover image, if any).
+
+        Raises StorageNotConfiguredError. A provider that can't deliver the cover is never chosen for a
+        job that has one: the cover is never silently dropped."""
         reasons = []
         for tier in self.tiers:
             if not self.fits(tier, size):
                 reasons.append(f"{tier.label} takes up to {fmt_mb(tier.max_file_size - self.margin_bytes)}")
+                continue
+            if needs_cover and not tier.supports_cover:
+                reasons.append(f"{tier.label} can't deliver a cover image")
                 continue
             problems = tier.problems()
             if problems:
@@ -70,23 +77,29 @@ class MediaStorageRouter(MediaSourceProvider):
             "(MEDIA_STORAGE_BUCKET/ACCESS_KEY/SECRET_KEY + REGION or ENDPOINT)."
         )
 
-    def problems_for(self, size: int) -> list[str]:
+    def problems_for(self, size: int, needs_cover: bool = False) -> list[str]:
         try:
-            self.select(size)
+            self.select(size, needs_cover)
         except StorageNotConfiguredError as e:
             return [str(e)]
         return []
 
     # --- MediaSourceProvider -----------------------------------------------------------------
 
-    def prepare(self, video_path: Path, content_type: str) -> MediaHandle:
+    supports_cover = True  # routes cover jobs to a tier that supports covers
+
+    def prepare(self, video_path: Path, content_type: str, cover_path: Path | None = None) -> MediaHandle:
         path = Path(video_path)
         if not path.is_file():
             raise MediaStorageError(f"Video file not found: {path.name}")
-        tier = self.select(path.stat().st_size)
-        log.info("Media routing: %s video -> %s.", fmt_mb(path.stat().st_size), tier.label)
+        tier = self.select(path.stat().st_size, needs_cover=cover_path is not None)
+        log.info("Media routing: %s video%s -> %s.", fmt_mb(path.stat().st_size),
+                 " + cover" if cover_path is not None else "", tier.label)
         provider = tier.factory()
-        handle = provider.prepare(path, content_type)
+        if cover_path is not None:
+            handle = provider.prepare(path, content_type, cover_path=cover_path)
+        else:
+            handle = provider.prepare(path, content_type)
         handle.provider = provider  # every later call goes to the provider that owns the object
         return handle
 

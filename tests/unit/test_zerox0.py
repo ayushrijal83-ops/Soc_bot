@@ -380,11 +380,12 @@ class TestSettingsCheck:
 
 
 def test_create_post_warns_about_public_host(monkeypatch, capsys):
-    from src.cli.publish_menu import _ask_options
+    from src.cli.publish_menu import _ask_options, _instagram_notice
 
     monkeypatch.setenv("MEDIA_STORAGE_PROVIDER", "0x0")
     with patch("builtins.input", side_effect=AssertionError("must not prompt for a URL")):
         assert _ask_options("instagram", "instagram / noxivra_01", "caption") == {}
+    _instagram_notice(10_000_000, False)
     out = capsys.readouterr().out
     assert "0x0.st" in out and "PUBLIC" in out
 

@@ -479,3 +479,21 @@ When new issues arise:
 ### Note: "Tunnel cleanup warning: …"
 
 The Reel's status is unaffected. If a `cloudflared.exe` is still running afterwards, end it in Task Manager (the URL was random and is useless once the local server stopped).
+
+### Problem: Instagram destination BLOCKED: "Instagram cover: …" / "covers must be JPEG"
+
+**Cause:** the chosen cover isn't a valid JPEG (corrupt, truncated, PNG/WebP renamed, empty) or is larger than 8 MB (Meta's Reels cover limit). Soc_bot never drops or converts a chosen cover.
+
+**Solution:** export the cover as a JPEG (sRGB, ideally 1080×1920 / 9:16) under 8 MB, or publish without a cover.
+
+### Problem: "can't deliver a cover image" / small video + cover goes through the Cloudflare tunnel
+
+**Cause:** only the Cloudflare Quick Tunnel provider can serve a cover next to the video. TempFile/S3/0x0 have no cover support, so AUTO routes cover jobs to the tunnel, and blocks them when cloudflared is missing.
+
+**Solution:** install cloudflared (see DEVELOPMENT.md), or publish without a cover.
+
+### Problem: a big batch is slow / uses a lot of upload bandwidth
+
+**Cause:** each Instagram account fetches its own copy (131.9 MB × 50 ≈ 6.6 GB); at most `INSTAGRAM_MAX_CONCURRENT_PUBLISHES` (default 5) run at once.
+
+**Solution:** keep the PC online until the batch finishes. Lower the limit on slow connections (each active job needs upload bandwidth). An interrupted batch continues from Publishing Queue → Continue open jobs: published accounts are skipped. Check the list of open jobs first: "Continue open jobs" resumes **every** open job, including old ones.

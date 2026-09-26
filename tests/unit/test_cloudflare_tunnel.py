@@ -471,10 +471,11 @@ class TestRouting:
         assert "Cloudflare Quick Tunnel" in notes and "tunnel started only after you confirm" in notes
 
     def test_create_post_notice(self, exe, monkeypatch, capsys):
-        from src.cli.publish_menu import _ask_options
+        from src.cli.publish_menu import _ask_options, _instagram_notice
 
         monkeypatch.setenv("MEDIA_STORAGE_PROVIDER", "auto")
         assert _ask_options("instagram", "instagram / noxivra_01", "c", size=131_925_281) == {}
+        _instagram_notice(131_925_281, False)
         out = capsys.readouterr().out
         assert "stays on this computer" in out and "Quick Tunnel" in out and "PUBLIC third-party" not in out
 

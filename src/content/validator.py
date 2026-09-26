@@ -69,9 +69,8 @@ class ContentValidator:
 
         if package.cover_path is not None:
             problem = image_problem(package.cover_path)
-            if problem:
-                warnings.append(f"{problem} The cover will not be used.")
-                package.cover_path = None
+            if problem:  # the chosen cover is never silently dropped
+                errors.append(f"{problem} Fix or remove the cover image.")
 
         for filename, attr in ((TITLE_FILE, "title"),):
             path = package.package_path / filename

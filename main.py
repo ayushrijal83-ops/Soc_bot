@@ -140,6 +140,9 @@ def run_scan(intake) -> int:
 
 def main() -> int:
     """Main entry point."""
+    for stream in (sys.stdout, sys.stderr):  # never crash on ✓/emoji when the console codepage lacks them
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     args = parse_args()
     load_environment()  # before anything reads DATABASE_URL, ENCRYPTION_KEY or platform credentials
     configure_logging()

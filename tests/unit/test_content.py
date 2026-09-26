@@ -122,11 +122,11 @@ class TestDetector:
         (d / "caption.txt").write_bytes(b"\xff\xfe\xfa bad")
         assert any("UTF-8" in e for e in detect(tmp_path).validation_errors)
 
-    def test_invalid_cover_is_warning_and_dropped(self, tmp_path):
+    def test_invalid_cover_blocks_the_package(self, tmp_path):
         make_package(tmp_path, cover_bytes=b"not an image")
         pkg = detect(tmp_path)
-        assert pkg.valid and pkg.cover_path is None
-        assert any("could not be read as a valid image" in w for w in pkg.validation_warnings)
+        assert not pkg.valid and pkg.cover_path is not None  # never silently dropped
+        assert any("could not be read as a valid image" in e for e in pkg.validation_errors)
 
     def test_image_checks(self, tmp_path):
         (tmp_path / "a.png").write_bytes(PNG)
@@ -519,11 +519,11 @@ class TestCoverCapabilities:
         status, reason = tt.cover_plan(str(tmp_path / "c.jpg"))
         assert status == "not_supported" and "video_cover_timestamp_ms" in reason
 
-    def test_instagram_truthful(self, tmp_path):
+    def test_instagram_cover_via_cover_url(self, tmp_path):
         ig = InstagramPublisher()
-        assert not ig.supports_cover_upload()
-        status, reason = ig.cover_plan(str(tmp_path / "c.jpg"))
-        assert status == "not_supported" and "Instagram Login" in reason
+        assert ig.supports_cover_upload()
+        assert ig.cover_plan(str(tmp_path / "c.jpg")) == ("upload", "")  # problems block in validate()
+        assert ig.cover_plan(None) == ("none", "no cover")
 
     def test_no_cover(self):
         assert YouTubePublisher().cover_plan(None) == ("none", "no cover")

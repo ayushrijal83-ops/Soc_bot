@@ -39,6 +39,8 @@ class MediaHandle:
     object_key: str = ""
     cleaned: bool = field(default=False)
     public_url: str | None = field(default=None, repr=False)
+    # Temporary URL of the cover image served with this video (providers with supports_cover only).
+    cover_url: str | None = field(default=None, repr=False)
     token: str | None = field(default=None, repr=False)
     # Provider that created the object (set by the router so cleanup goes to the right place).
     provider: object | None = field(default=None, repr=False, compare=False)
@@ -50,6 +52,8 @@ class MediaSourceProvider(ABC):
     name: str = ""
     # Capability: largest file this provider accepts, in bytes (None = no application limit).
     max_file_size: int | None = None
+    # Capability: can also deliver a cover image (prepare(..., cover_path=...) sets handle.cover_url).
+    supports_cover: bool = False
 
     @abstractmethod
     def prepare(self, video_path: Path, content_type: str) -> MediaHandle:
@@ -117,13 +121,21 @@ class ObjectStorageMediaProvider(MediaSourceProvider):
             log.warning("Could not delete temporary media (%s).", e)
 
 
-def media_provider_problems(size: int | None = None) -> list[str]:
-    """Why no provider can take the media (no network). Empty = OK. With ``auto`` the answer depends on size."""
+def media_provider_problems(size: int | None = None, needs_cover: bool = False) -> list[str]:
+    """Why no provider can take the media (no network). Empty = OK. With ``auto`` the answer depends on
+    size and on whether a cover image must be delivered too."""
     settings = StorageSettings.from_env()
     problems = settings.problems()
-    if problems or settings.provider != "auto" or size is None:
+    if problems:
         return problems
-    return build_router(settings).problems_for(size)
+    if settings.provider != "auto":
+        if needs_cover and settings.provider not in COVER_PROVIDERS:
+            return [(f"MEDIA_STORAGE_PROVIDER={settings.provider} can't deliver a cover image "
+                     "(use auto or cloudflare_tunnel)")]
+        return []
+    if size is None:
+        return []
+    return build_router(settings).problems_for(size, needs_cover)
 
 
 def create_media_provider() -> MediaSourceProvider:
@@ -155,6 +167,10 @@ def create_media_provider() -> MediaSourceProvider:
     return ObjectStorageMediaProvider(create_media_storage(settings), settings.ttl, settings.delete_after_publish)
 
 
+# Providers that can serve a cover image next to the video (declared by the provider class).
+COVER_PROVIDERS = ("cloudflare_tunnel",)
+
+
 def _tunnel(settings: StorageSettings) -> MediaSourceProvider:
     from src.media_storage.cloudflare_tunnel import CloudflareTunnelMediaProvider
 
@@ -177,29 +193,38 @@ def build_router(settings: StorageSettings):
     available = {
         "tempfile": Tier(
             "tempfile", "TempFile.org (temporary PUBLIC upload)", TempFileMediaStorage.max_file_size,
-            as_tempfile.problems, lambda: TempFileMediaStorage(expiry_hours=settings.tempfile_expiry_hours)),
+            as_tempfile.problems, lambda: TempFileMediaStorage(expiry_hours=settings.tempfile_expiry_hours),
+            TempFileMediaStorage.supports_cover),
         "cloudflare_tunnel": Tier(
             "cloudflare_tunnel", "Cloudflare Quick Tunnel (served from this computer, nothing uploaded)",
-            CloudflareTunnelMediaProvider.max_file_size, as_tunnel.problems, lambda: _tunnel(settings)),
+            CloudflareTunnelMediaProvider.max_file_size, as_tunnel.problems, lambda: _tunnel(settings),
+            CloudflareTunnelMediaProvider.supports_cover),
         "s3": Tier(
             "s3", "S3 (PRIVATE temporary object + presigned HTTPS URL)", ObjectStorageMediaProvider.max_file_size,
             as_s3.problems,
-            lambda: ObjectStorageMediaProvider(create_media_storage(as_s3), settings.ttl, settings.delete_after_publish)),
+            lambda: ObjectStorageMediaProvider(create_media_storage(as_s3), settings.ttl, settings.delete_after_publish),
+            ObjectStorageMediaProvider.supports_cover),
     }
     return MediaStorageRouter([available[name] for name in AUTO_ORDER], margin_bytes=settings.auto_margin_bytes)
 
 
-def media_delivery_description(size: int | None = None) -> str:
+def media_delivery_description(size: int | None = None, needs_cover: bool = False) -> str:
     """How Instagram media will be delivered with the current settings (no network)."""
     settings = StorageSettings.from_env()
     if settings.provider == "auto" and size is not None:
         from src.media_storage.router import fmt_mb
 
+        router = build_router(settings)
         try:
-            tier = build_router(settings).select(size)
+            tier = router.select(size, needs_cover)
         except StorageNotConfiguredError:
             return f"{fmt_mb(size)} video: no media provider can take it (see error)"
-        reason = "; too large for TempFile.org" if tier.name != "tempfile" else ""
+        reason = ""
+        if tier.name != "tempfile":
+            too_big = not router.fits(router.tiers[0], size)
+            reason = "; too large for TempFile.org" if too_big else "; video + cover need a provider that serves both"
+        if needs_cover:
+            reason += "; cover served with the video"
         return f"{fmt_mb(size)} video -> {_describe(tier.name)} [auto{reason}]"
     if settings.provider == "auto":
         return ("automatic by size: TempFile.org (public) for small videos, a Cloudflare Quick Tunnel for large "
@@ -220,7 +245,7 @@ def _describe(provider: str) -> str:
     return "temporary PRIVATE object storage (S3) + presigned HTTPS URL"
 
 
-def delivery_provider(size: int | None = None) -> str | None:
+def delivery_provider(size: int | None = None, needs_cover: bool = False) -> str | None:
     """Name of the provider that will deliver a video of ``size`` bytes (no network). None = none can."""
     settings = StorageSettings.from_env()
     if settings.provider != "auto":
@@ -228,7 +253,7 @@ def delivery_provider(size: int | None = None) -> str | None:
     if size is None:
         return None
     try:
-        return build_router(settings).select(size).name
+        return build_router(settings).select(size, needs_cover).name
     except StorageNotConfiguredError:
         return None
 
