@@ -18,6 +18,7 @@ from src.media_storage.provider import (
     public_host_name,
 )
 from src.media_storage.service import StorageSettings, create_media_storage
+from src.media_storage.shared import SharedMediaSession
 
 __all__ = [
     "MediaHandle",
@@ -25,6 +26,7 @@ __all__ = [
     "MediaStorageError",
     "ObjectStorage",
     "ObjectStorageMediaProvider",
+    "SharedMediaSession",
     "StorageNotConfiguredError",
     "StorageObject",
     "StorageSettings",

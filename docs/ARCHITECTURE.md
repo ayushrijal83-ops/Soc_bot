@@ -109,9 +109,11 @@ Temporary private object + presigned HTTPS URL for platforms that fetch media fr
 Create Post: video + optional cover.jpg + caption ─► multi-select accounts (A/N/toggle) ─► plan (no network) ─► ONE confirmation
    └─► post (= batch) with one publish_job per account ─► PublisherEngine.publish_post
           └─► Instagram jobs: ThreadPoolExecutor(max INSTAGRAM_MAX_CONCURRENT_PUBLISHES=5); others sequential
-                 └─► each job: InstagramPublisher ─► MediaStorageRouter.select(size, needs_cover)
-                        └─► CloudflareTunnelMediaProvider: 127.0.0.1 server {/media/<t1>.mp4 → video, /media/<t2>.jpg → cover}
-                            + one Quick Tunnel ─► container(video_url, cover_url) ─► poll ─► media_publish ─► permalink ─► cleanup
+                 ├─► ONE SharedMediaSession per batch ─► MediaStorageRouter.select(size, needs_cover)
+                 │      └─► CloudflareTunnelMediaProvider: 127.0.0.1 server {/media/<t1>.mp4, /media/<t2>.jpg} + ONE Quick Tunnel
+                 ├─► each job: InstagramPublisher(ctx.media_provider = the session) ─► container(video_url, cover_url) ─► poll ─► publish ─► permalink
+                 ├─► initial round drained ─► automatic retry round for the batch's failed jobs (once, same pool, same session)
+                 └─► session.close() once
 ```
 The batch is only a coordinator (post id). Jobs keep their own state machine; resume = `publish_post` again (final jobs skipped). See API_INTEGRATIONS.md → Instagram multi-account fan-out.
 

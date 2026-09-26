@@ -8,6 +8,7 @@ media files, and downloading or scraping YouTube media violates its Terms of Ser
 """
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,7 @@ class MediaHandle:
     provider: object | None = field(default=None, repr=False, compare=False)
     # Live resources a provider keeps for this object (Cloudflare Tunnel: local server + cloudflared).
     session: object | None = field(default=None, repr=False, compare=False)
+    created_at: float = field(default_factory=time.monotonic, repr=False, compare=False)
 
 
 class MediaSourceProvider(ABC):
@@ -69,6 +71,10 @@ class MediaSourceProvider(ABC):
 
     def describe(self) -> str:
         return self.name
+
+    def is_alive(self, handle: MediaHandle) -> bool:
+        """Can this prepared object still be fetched? (Shared batch sessions replace dead ones.)"""
+        return not handle.cleaned
 
     def health_check(self) -> str:
         """Lightweight, upload-free check. Returns a message; raises MediaStorageError."""

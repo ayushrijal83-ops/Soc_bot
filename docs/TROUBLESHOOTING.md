@@ -497,3 +497,14 @@ The Reel's status is unaffected. If a `cloudflared.exe` is still running afterwa
 **Cause:** each Instagram account fetches its own copy (131.9 MB × 50 ≈ 6.6 GB); at most `INSTAGRAM_MAX_CONCURRENT_PUBLISHES` (default 5) run at once.
 
 **Solution:** keep the PC online until the batch finishes. Lower the limit on slow connections (each active job needs upload bandwidth). An interrupted batch continues from Publishing Queue → Continue open jobs: published accounts are skipped. Check the list of open jobs first: "Continue open jobs" resumes **every** open job, including old ones.
+
+### Problem: "cloudflared exited before the tunnel was ready (exit code 1): quick tunnel provisioning failed with status 429"
+
+**Cause:** Cloudflare rate-limits Quick Tunnel creation. Soc_bot opens one tunnel per Instagram job, so many jobs or batches in a short time can hit the limit (real case 2026-09-26: after about 45 tunnels in 1.5 hours, every new tunnel got 429 and a whole 11-account batch failed before contacting Instagram). Before this fix the message wrongly said "did not start within 90s".
+
+**Solution:** since 2026-09-26 a batch uses **one** shared tunnel (not one per account), and a failed start isn't retried by every job at once, which keeps provisioning low. If 429 still happens (for example after many batches in a short time), wait (the limit is Cloudflare's and undocumented), then Publishing Queue → Retry a failed job. Nothing reached Instagram, so a retry can't duplicate a Reel.
+
+### Note: a failed Instagram job was retried automatically
+
+Batches created by Create Post / Content Inbox retry their failed Instagram jobs **once**, after all other jobs of the batch finished (`INSTAGRAM_FAILURE_RETRY_DELAY_SECONDS`, default 5). A second failure stays FAILED; no third automatic attempt. Older posts and manually retried jobs are never retried automatically.
+

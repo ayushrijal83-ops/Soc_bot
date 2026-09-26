@@ -29,6 +29,7 @@ log = logging.getLogger("soc_bot.engine")
 # own container, own result). Everything else stays sequential.
 PARALLEL_PLATFORMS = ("instagram",)
 DEFAULT_MAX_CONCURRENT = 5
+DEFAULT_RETRY_ROUND_DELAY = 5.0  # INSTAGRAM_FAILURE_RETRY_DELAY_SECONDS: pause before the automatic retry round
 MAX_CONCURRENT_LIMIT = 20
 
 
@@ -205,66 +206,155 @@ class PublisherEngine:
     # --- publishing ------------------------------------------------------------
 
     def publish_post(self, post_id: int, on_update: UpdateCallback | None = None) -> PostResult:
-        """Publish every destination of a post independently and return the aggregate result.
+        """Publish every destination of a post (= one batch) independently and return the aggregate result.
 
-        Instagram jobs run in a pool of at most ``max_concurrent`` workers: the rest wait and start as
-        workers free up (retry waits keep their slot). Other platforms run one after another. Published
-        and failed jobs are never started again, so calling this again resumes a batch.
+        Instagram (PARALLEL_PLATFORMS) jobs:
+          1. share ONE media session for the whole batch (one Quick Tunnel, not one per account);
+          2. run in a pool of at most ``max_concurrent`` workers (a freed slot is refilled immediately);
+          3. when the initial round is fully drained, the batch's FAILED jobs get ONE automatic retry round
+             (posts created with auto_retry), in the same pool and on the same media session;
+          4. the session is closed once, after the retry round.
+        Other platforms run one after another. Published/failed jobs are never started again, so calling
+        this again resumes a batch (including a retry round that was owed when the app stopped).
         """
         post, video = self.store.get_post(post_id)
         media, media_errors = self._media(video)
         caption = post.caption or ""
         jobs = self.store.jobs_for_post(post_id)
         lock = threading.Lock()
+        results: dict[int, JobResult] = {}
 
         def notify(update: JobResult) -> None:  # one line at a time from concurrent workers
             if on_update:
                 with lock:
                     on_update(update)
 
-        def run(job: JobInfo) -> JobResult:
+        def run(job: JobInfo, media_provider=None) -> JobResult:
             try:
-                return self._run_job(job, media, media_errors, caption, notify)
+                return self._run_job(job, media, media_errors, caption, notify, media_provider)
             except Exception as e:  # noqa: BLE001 - isolate destinations: one bug must not stop the others
                 return self._fail(job, PublishError(f"Unexpected error: {type(e).__name__}", code="internal"),
                                   attempt_id=None, on_update=notify)
 
-        results: dict[int, JobResult] = {}
-        parallel = [job for job in jobs if job.platform in PARALLEL_PLATFORMS and job.status not in ("published", "failed")]
+        parallel = [job for job in jobs if job.platform in PARALLEL_PLATFORMS]
         parallel_ids = {job.id for job in parallel}
         for job in jobs:
             if job.id not in parallel_ids:
                 results[job.id] = run(job)
-        if parallel:
-            limit = self.max_concurrent or max_concurrent_publishes()
-            pool = ThreadPoolExecutor(max_workers=min(limit, len(parallel)), thread_name_prefix="soc_bot-publish")
-            try:
-                futures = {pool.submit(run, job): job.id for job in parallel}
-                for future in as_completed(futures):
-                    results[futures[future]] = future.result()
-            except KeyboardInterrupt:
-                # Queued jobs are not started (they stay pending: resume later). Running jobs finish their
-                # current step and clean up their own media session.
-                log.warning("Stopping: queued jobs stay pending; waiting for active jobs to finish and clean up.")
-                pool.shutdown(wait=True, cancel_futures=True)
-                raise
-            finally:
-                pool.shutdown(wait=True)
+
+        sessions = self._batch_sessions(parallel)
+        try:
+            initial = [job for job in parallel if job.status not in ("published", "failed")]
+            if initial:
+                log.info("Instagram batch #%s: %s job(s), at most %s at a time, one shared media session.",
+                         post_id, len(initial), self._limit())
+            self._run_pool(initial, run, sessions, results)
+            retry = self._retry_candidates(post_id)
+            if retry:
+                done = self.store.jobs_for_post(post_id)
+                log.info("Initial round complete: %s published, %s failed. Automatic retry round for %s job(s) "
+                         "in %ss (same media session).", sum(j.status == "published" for j in done if j.id in parallel_ids),
+                         sum(j.status == "failed" for j in done if j.id in parallel_ids), len(retry), self._retry_delay())
+                self.sleep(self._retry_delay())
+                for job in retry:
+                    self.store.mark_auto_retry_used(job.id)  # before running: a crash never earns a second one
+                    self.store.transition(job.id, "retrying", next_retry_at=None)
+                    self._notify(notify, job, "retrying", error="automatic retry")
+                self._run_pool([self.store.get_job(job.id) for job in retry], run, sessions, results)
+                final = {j.id: j.status for j in self.store.jobs_for_post(post_id)}
+                recovered = sum(final[job.id] == "published" for job in retry)
+                log.info("Retry round complete: %s recovered, %s still failed.", recovered, len(retry) - recovered)
+        finally:
+            for session in sessions.values():
+                session.close()
+        for job in parallel:
+            if job.id not in results:
+                results[job.id] = self._result(self.store.get_job(job.id))
         return PostResult(post_id, [results[job.id] for job in jobs])
 
+    def _limit(self) -> int:
+        return self.max_concurrent or max_concurrent_publishes()
+
+    @staticmethod
+    def _retry_delay() -> float:
+        try:
+            delay = float(os.environ.get("INSTAGRAM_FAILURE_RETRY_DELAY_SECONDS") or DEFAULT_RETRY_ROUND_DELAY)
+        except ValueError:
+            return DEFAULT_RETRY_ROUND_DELAY
+        return delay if 0 <= delay <= 300 else DEFAULT_RETRY_ROUND_DELAY
+
+    def _batch_sessions(self, jobs: list[JobInfo]) -> dict:
+        """One shared media session per platform for this batch (lazy: nothing starts until a job needs it)."""
+        sessions = {}
+        for platform in {job.platform for job in jobs}:
+            adapter = self.publishers.get(platform)
+            session = adapter.batch_media() if adapter is not None else None
+            if session is not None:
+                sessions[platform] = session
+        return sessions
+
+    def _run_pool(self, jobs: list[JobInfo], run, sessions: dict, results: dict[int, JobResult]) -> None:
+        """At most ``max_concurrent`` jobs at once; the next job starts as soon as any slot frees up."""
+        if not jobs:
+            return
+        pool = ThreadPoolExecutor(max_workers=min(self._limit(), len(jobs)), thread_name_prefix="soc_bot-publish")
+        try:
+            futures = {pool.submit(run, job, sessions.get(job.platform)): job.id for job in jobs}
+            for future in as_completed(futures):
+                results[futures[future]] = future.result()
+        except KeyboardInterrupt:
+            # Queued jobs are not started (they stay pending/retrying: resume later). Running jobs finish their
+            # current step; the shared media session is closed after them.
+            log.warning("Stopping: queued jobs stay pending; waiting for active jobs to finish.")
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        finally:
+            pool.shutdown(wait=True)
+
+    def _retry_candidates(self, post_id: int) -> list[JobInfo]:
+        """This batch's failed Instagram jobs that still have their one automatic retry.
+
+        Failures whose outcome is uncertain (the provider may have received the post) are not retried
+        automatically, they need a manual check; their automatic retry is marked as used.
+        """
+        if not self.store.post_auto_retry(post_id):
+            return []
+        candidates = []
+        for job in self.store.jobs_for_post(post_id):
+            if job.platform not in PARALLEL_PLATFORMS or job.status != "failed" or job.auto_retry_used:
+                continue
+            if self.store.last_error(job.id).get("uncertain"):
+                log.warning("Job %s: outcome uncertain, not retried automatically (check the account first).", job.id)
+                self.store.mark_auto_retry_used(job.id)
+                continue
+            candidates.append(job)
+        return candidates
+
     def retry_job(self, job_id: int, on_update: UpdateCallback | None = None) -> JobResult:
-        """Manually retry a failed job (failed -> retrying -> run)."""
+        """Manually retry a failed job (failed -> retrying -> run).
+
+        A manual retry takes over the job's automatic retry: automation never retries it afterwards.
+        """
         job = self.store.get_job(job_id)
         if job.status != "failed":
             raise JobError(f"Only failed jobs can be retried (job is {job.status})")
+        self.store.mark_auto_retry_used(job_id)
         self.store.transition(job_id, "retrying", retry_count=0, next_retry_at=None)
         post, video = self.store.get_post(job.post_id)
         media, media_errors = self._media(video)
-        return self._run_job(self.store.get_job(job_id), media, media_errors, post.caption or "", on_update)
+        adapter = self.publishers.get(job.platform)
+        session = adapter.batch_media() if adapter is not None else None
+        try:
+            return self._run_job(self.store.get_job(job_id), media, media_errors, post.caption or "", on_update,
+                                 session)
+        finally:
+            if session is not None:
+                session.close()
 
     def resume_open_jobs(self, on_update: UpdateCallback | None = None) -> list[PostResult]:
-        """Continue every post that still has pending/retrying/uploading/processing jobs."""
-        return [self.publish_post(post_id, on_update) for post_id in self.store.open_post_ids()]
+        """Continue every post with pending/retrying/uploading/processing jobs or an owed automatic retry round."""
+        post_ids = sorted(set(self.store.open_post_ids()) | set(self.store.retry_owed_post_ids(PARALLEL_PLATFORMS)))
+        return [self.publish_post(post_id, on_update) for post_id in post_ids]
 
     def _media(self, video) -> tuple[MediaInfo, list[str]]:
         """Validated media, or (recorded metadata, errors) when the file is gone or invalid.
@@ -278,7 +368,7 @@ class PublisherEngine:
 
     def _run_job(
         self, job: JobInfo, media: MediaInfo, media_errors: list[str], caption: str,
-        on_update: UpdateCallback | None,
+        on_update: UpdateCallback | None, media_provider=None,
     ) -> JobResult:
         if job.status in ("published", "failed"):
             return self._result(job)  # terminal here; never republish
@@ -325,6 +415,7 @@ class PublisherEngine:
                     platform_account_id=self.account_manager.get_account(job.account_id).platform_account_id,
                     media=media,
                     state=state,
+                    media_provider=media_provider,
                 )
                 outcome = adapter.publish(ctx, self._progress(job, attempt_id, on_update))
             except PublishError as e:

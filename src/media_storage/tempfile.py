@@ -14,6 +14,7 @@ The video is publicly downloadable by anyone with its link until deleted or expi
 
 import logging
 import re
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -105,6 +106,10 @@ class TempFileMediaStorage(MediaSourceProvider):
         if handle.cleaned or not handle.public_url:
             raise MediaStorageError("Temporary media was already cleaned up")
         return handle.public_url
+
+    def is_alive(self, handle: MediaHandle) -> bool:
+        # The upload expires after expiry_hours: a long batch re-uploads 10 minutes before that.
+        return not handle.cleaned and time.monotonic() - handle.created_at < self.expiry_hours * 3600 - 600
 
     def cleanup(self, handle: MediaHandle | None) -> None:
         if handle is None or handle.cleaned:

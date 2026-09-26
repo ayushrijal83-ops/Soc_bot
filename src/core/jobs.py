@@ -62,6 +62,7 @@ class JobInfo:
     options: dict[str, Any]
     cover_status: str | None = None
     cover_error: str | None = None
+    auto_retry_used: bool = False
 
 
 def _now() -> datetime:
@@ -76,8 +77,12 @@ class JobStore:
 
     # --- creation ------------------------------------------------------------
 
-    def create_post(self, video_path: str, caption: str, destinations: list[tuple[int, dict[str, Any]]]) -> int:
-        """Create video (deduplicated by checksum), post and one pending job per destination account."""
+    def create_post(self, video_path: str, caption: str, destinations: list[tuple[int, dict[str, Any]]],
+                    auto_retry: bool = False) -> int:
+        """Create video (deduplicated by checksum), post and one pending job per destination account.
+
+        auto_retry: the batch's failed Instagram jobs get one automatic retry round after the initial round.
+        """
         if not destinations:
             raise JobError("Select at least one destination account")
         account_ids = [account_id for account_id, _ in destinations]
@@ -111,7 +116,7 @@ class JobStore:
                 session.add(video)
                 session.flush()
 
-            post = Post(video_id=video.id, caption=caption)
+            post = Post(video_id=video.id, caption=caption, auto_retry=1 if auto_retry else None)
             session.add(post)
             session.flush()
             for account_id, options in destinations:
@@ -182,6 +187,46 @@ class JobStore:
             )
             return [r[0] for r in rows]
 
+    def post_auto_retry(self, post_id: int) -> bool:
+        with self.database.session() as session:
+            post = session.get(Post, post_id)
+            return bool(post and post.auto_retry)
+
+    def retry_owed_post_ids(self, platforms: tuple[str, ...]) -> list[int]:
+        """Auto-retry posts with failed jobs (on ``platforms``) whose automatic retry hasn't started yet.
+
+        This is how a crash between the initial round and the retry round is resumed. Posts created before
+        migration 004 (auto_retry NULL) never appear, so old historical failures are never retried.
+        """
+        with self.database.session() as session:
+            rows = (
+                session.query(PublishJob.post_id)
+                .join(Post, PublishJob.post_id == Post.id)
+                .join(Account, PublishJob.account_id == Account.id)
+                .filter(Post.auto_retry == 1, PublishJob.status == "failed", PublishJob.auto_retry_used == 0,
+                        Account.platform.in_(platforms))
+                .distinct()
+                .order_by(PublishJob.post_id)
+                .all()
+            )
+            return [r[0] for r in rows]
+
+    def mark_auto_retry_used(self, job_id: int) -> None:
+        with self.database.session() as session:
+            session.execute(update(PublishJob).where(PublishJob.id == job_id).values(auto_retry_used=1))
+            session.commit()
+
+    def last_error(self, job_id: int) -> dict[str, Any]:
+        """Safe error info of the most recent failed attempt ({} if none)."""
+        with self.database.session() as session:
+            attempt = (
+                session.query(PublishAttempt)
+                .filter(PublishAttempt.job_id == job_id, PublishAttempt.error_json.isnot(None))
+                .order_by(PublishAttempt.attempt_number.desc())
+                .first()
+            )
+            return json.loads(attempt.error_json) if attempt is not None else {}
+
     def already_published(self, video_path: str, account_id: int) -> bool:
         """True if this exact file (by checksum) was already published to this account."""
         checksum = file_checksum(video_path)
@@ -212,6 +257,7 @@ class JobStore:
             options=json.loads(job.options_json) if job.options_json else {},
             cover_status=job.cover_status,
             cover_error=job.cover_error,
+            auto_retry_used=bool(job.auto_retry_used),
         )
 
     # --- state machine -------------------------------------------------------

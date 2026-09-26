@@ -203,6 +203,17 @@
 - [x] **Real 5-account run ✅ (post 12, jobs 23-27):** `videos/1114(1).mp4` (40.0 MB, the user's chosen test video; `0612.mp4` is no longer in the project) + one cover → noxivra_02-06, all 5 concurrent (5 cloudflared), 5/5 published in 1 min 24 s, covers verified, sources unchanged. A >99 MB × 5 run was not repeated
 - [~] Real TEST 5 (resume): published jobs were not touched, but the run also resumed a **stale** RETRYING job from 2026-09-25 (post 4 / job 5) and published an unintended Reel (https://www.instagram.com/reel/DdvDNpKDoMk/)
 
+### Shared batch tunnel + automatic retry round: ✅ LOCKED architecture (2026-09-26)
+- [x] `SharedMediaSession`: one local server + ONE Quick Tunnel per batch (one video route + one cover route), replaced once if it dies, 30 s cooldown after a failed start, closed after the retry round
+- [x] One automatic retry round for the batch's failed Instagram jobs (migration 004: `posts.auto_retry`, `publish_jobs.auto_retry_used`); same pool limit, same tunnel; resume-safe; old posts never retried; manual retry takes over
+- [x] Real: TEST 1 (2 accounts, post 18), TEST 2 (5, post 19), TEST 3 (11, post 20), TEST 4 (131.9 MB, 2 accounts, post 21). **1 tunnel creation per batch** each time; max 5 running; all published; all covers verified by API readback; links saved
+- [x] 777 tests (23 new in `test_batch.py`)
+
+### Published-link finalization (2026-09-26)
+- [x] `.txt` exports (one permanent URL per line), OS file lock across processes, `permalink_missing` flag + warning, per-platform "Permanent links saved" summary after publishing
+- [x] Real: 1 account → 1 link (post 15), 5 accounts → 5 links (post 16), all with the right account, and the TXT matches the JSON. The 11-account run (post 17) **failed: Cloudflare Quick Tunnel 429**, so no container was created and no link was saved (correct behavior). Import from history run twice → 0 added. 754 tests
+- [x] Fixed: a cloudflared 429 was reported as "did not start within 90s"
+
 ### Published-Link Library — ✅ implemented (2026-09-25)
 - [x] `content/published_links/{youtube,instagram,tiktok}.json`, atomic UTF-8 writes, malformed-file quarantine, account+provider_id dedupe, temporary-URL rejection
 - [x] YouTube watch URL from the video id; Instagram `permalink` fetched after publish; TikTok: no link (no documented URL)

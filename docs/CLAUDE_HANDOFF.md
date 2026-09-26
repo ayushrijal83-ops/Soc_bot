@@ -586,6 +586,7 @@ See ARCHITECTURE.md → "Publishing (Phase 4)" for the state machine, engine flo
 | 2026-09-25 | **Phase 3B audit fixes** (TikTok hex PKCE + rotation, Instagram Login migration, dynamic loopback port, state/platform binding, expiry model, Ruff 0) |
 | 2026-09-25 | **Phase 4: Publishing engine** (engine, job state machine, 3 publishers, retries, idempotent resume, dry-run, minimal CLI; 305 tests) |
 | 2026-09-25 | **Cloudflare Quick Tunnel media provider** (`cloudflare_tunnel`, AUTO tier 2 for videos > 99 MB; local server + cloudflared; 701 tests). Real 131.9 MB tunnel test passed (SHA-256 match); real Instagram Reel published (job 9, https://www.instagram.com/reel/DduAxFSgaZt/) |
+| 2026-09-26 | **LOCKED batch architecture**: ONE shared media session/Quick Tunnel per Instagram batch (fixes Cloudflare 429), one automatic retry round for the batch's failures (migration 004), real 2/5/11-account + 131.9 MB tests: 1 tunnel each; 777 tests |
 | 2026-09-26 | **Instagram fan-out + custom cover**: `cover_url` via the tunnel (real-verified by thumbnail readback), multi-select accounts, one confirmation, 5 concurrent Instagram jobs, batch queue view; 746 tests. Real 11-account (max 5 concurrent) and 5-account runs passed with covers verified (posts 11-12) |
 | 2026-09-25 | **Published-Link Library**: per-platform JSON link files, menu 6 "Published Links", Instagram permalink fetch, TikTok not saved (no documented URL); 639 tests |
 

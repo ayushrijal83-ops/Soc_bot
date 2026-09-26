@@ -510,3 +510,17 @@ One video + one cover + caption must reach many Instagram accounts. Instagram fe
 - No schema change. Resume, duplicate rules and failure isolation are unchanged per job.
 - Bandwidth scales with accounts (each fetch is a full transfer); the confirmation shows the estimate.
 - TempFile/S3 can't carry covers yet. Add `supports_cover` there if a no-cloudflared setup needs covers.
+
+## ADR-028: One Shared Media Session per Instagram Batch + One Automatic Retry Round (2026-09-26)
+
+### Context
+Per-job Quick Tunnels triggered Cloudflare's provisioning limit (HTTP 429) after about 45 creations; an 11-account batch then failed entirely.
+
+### Decision
+- A batch (post) prepares its media ONCE (`SharedMediaSession`): one local server, one Quick Tunnel, one video route + one cover route, closed after the whole batch. A dead tunnel is replaced once per batch; failed starts have a 30 s cooldown.
+- After the initial round drains, the batch's failed Instagram jobs get ONE automatic retry (`posts.auto_retry`, `publish_jobs.auto_retry_used`, migration 004), same pool limit, same session.
+
+### Consequences
+- Tunnel creations per batch: 1 (plus at most a replacement if cloudflared dies).
+- All jobs of a batch share the same temporary URLs (same files; no per-account secret involved).
+- Old posts are never retried automatically; a manual retry disables the automatic one for that job.

@@ -277,7 +277,8 @@ class ContentIntake:
                             for d in self.plan(package, profile, skip=entry.done_accounts)}
 
         if item.post_id is None:
-            post_id = self.engine.store.create_post(str(package.video_path), package.caption_text or "", dests)
+            post_id = self.engine.store.create_post(str(package.video_path), package.caption_text or "", dests,
+                                                    auto_retry=True)
             # The video row is de-duplicated by checksum and may carry an older path.
             self.engine.store.update_video_path(post_id, str(package.video_path))
             self._link_post(item.id, post_id)

@@ -81,7 +81,7 @@ class TestDatabaseInitialization:
         """Test that schema_version table records migration."""
         with database.session() as session:
             versions = session.query(SchemaVersion).order_by(SchemaVersion.version).all()
-            assert [v.version for v in versions] == [1, 2, 3]
+            assert [v.version for v in versions] == [1, 2, 3, 4]
             assert versions[0].description == "001_initial_schema"
             assert versions[1].description == "002_publishing"
 
@@ -965,5 +965,5 @@ class TestMigrationUpgrade:
             indexes = {r[1] for r in session.execute(text("PRAGMA index_list(publish_jobs)"))}
         assert "options_json" in cols
         assert "uq_jobs_post_account" in indexes
-        assert db.get_applied_migrations() == [1, 2, 3]
+        assert db.get_applied_migrations() == [1, 2, 3, 4]
         db.engine.dispose()

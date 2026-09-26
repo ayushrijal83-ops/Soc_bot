@@ -133,6 +133,8 @@ class Post(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     video_id = Column(Integer, ForeignKey("videos.id", ondelete="CASCADE"), nullable=False)
     caption = Column(Text, nullable=True)
+    # 1 = failed Instagram jobs get one automatic retry round; NULL = never (migration 004)
+    auto_retry = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -161,6 +163,8 @@ class PublishJob(Base):
     cover_status = Column(String(20), nullable=True)
     cover_error = Column(Text, nullable=True)
     retry_count = Column(Integer, nullable=False, default=0)
+    # 1 once this job's single automatic batch retry started (or a manual retry took over) (migration 004)
+    auto_retry_used = Column(Integer, nullable=False, default=0)
     next_retry_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     published_at = Column(DateTime, nullable=True)

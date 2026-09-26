@@ -86,6 +86,8 @@ class PublishContext:
     media: MediaInfo
     # Provider references from earlier attempts (container id, publish_id, video id, ...).
     state: dict[str, Any] = field(default_factory=dict)
+    # Batch-wide media session (shared tunnel/upload) when the engine runs a batch; None = adapter's own.
+    media_provider: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -156,6 +158,10 @@ class PlatformPublisher(ABC):
             return []
         have = set(granted)
         return [" or ".join(group) for group in cls.REQUIRED_SCOPES if not have.intersection(group)]
+
+    def batch_media(self):
+        """A media session shared by all jobs of one batch (closed by the engine), or None if unused."""
+        return
 
     def published_url(self, platform_media_id: str | None, state: dict[str, Any]) -> str | None:
         """Permanent public URL of a published item, from the publish result only. None = not known."""

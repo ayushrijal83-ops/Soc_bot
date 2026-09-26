@@ -118,6 +118,12 @@ class InstagramPublisher(PlatformPublisher):
             return []
         return media_provider_problems(size, needs_cover)
 
+    def batch_media(self):
+        # ONE prepared video (+ cover) per batch: one Quick Tunnel for all accounts, not one per job.
+        from src.media_storage import SharedMediaSession
+
+        return SharedMediaSession(self._media_provider_factory)
+
     def supports_cover_upload(self) -> bool:
         return True  # via cover_url, served by the media provider next to the video
 
@@ -138,7 +144,8 @@ class InstagramPublisher(PlatformPublisher):
             return ["media delivery: explicit video_url override"]
         size = media.size_bytes if media is not None else None
         cover = bool(options.get("cover_path"))
-        when = ("tunnel started only after you confirm, stopped when Instagram is done"
+        when = ("tunnel started only after you confirm, ONE tunnel shared by all Instagram jobs of this batch, "
+                "stopped when the batch is done"
                 if delivery_provider(size, cover) == "cloudflare_tunnel" else "uploaded only when publishing")
         notes = [f"media delivery: {media_delivery_description(size, cover)} ({when})"]
         if cover:
@@ -160,7 +167,7 @@ class InstagramPublisher(PlatformPublisher):
         cover = ctx.options.get("cover_path")
         log.info("Preparing Instagram media%s.", " and cover" if cover else "")
         try:
-            provider = self._media_provider_factory()
+            provider = ctx.media_provider or self._media_provider_factory()
             if cover:
                 handle = provider.prepare(ctx.video_path, ctx.media.mime_type, cover_path=Path(cover))
             else:

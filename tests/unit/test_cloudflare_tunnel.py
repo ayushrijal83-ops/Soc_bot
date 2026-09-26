@@ -233,7 +233,7 @@ class TestServer:
 
     def test_other_methods_rejected(self, served):
         _, handle = served
-        assert httpx.post(local_url(handle), content=b"x").status_code == 501
+        assert httpx.post(local_url(handle)).status_code == 501  # no body: an unread body can reset the socket on Windows
         assert httpx.delete(local_url(handle)).status_code == 501
 
     def test_request_paths_are_never_logged(self, exe, video, capfd, caplog):
@@ -554,3 +554,31 @@ class TestInstagram:
         monkeypatch.setenv("INSTAGRAM_MAX_POLL_MINUTES", "1")
         assert pub.poll_attempts(290_000_000) == 5          # never below Meta's documented 5
 
+
+
+def test_rate_limited_quick_tunnel_reports_the_real_error(exe, video):
+    """Real case (2026-09-26): cloudflared prints an untagged 429 line and exits; its exit code arrives
+    after the output closes. The error must say 429, not "did not start within 90s"."""
+
+    class LateExit(FakeProcess):
+        def __init__(self):
+            super().__init__(["INF Requesting new quick Tunnel on trycloudflare.com...\n",
+                              "quick tunnel provisioning failed with status 429\n"])
+            self._done.set()  # output ends right away
+
+        def wait(self, timeout=None):
+            self.returncode = 1  # exit code only visible once waited for
+            return 1
+
+    popen = FakePopen()
+    popen_call = popen.__call__
+
+    def make(args, **kwargs):
+        popen_call(args, **kwargs)
+        process = LateExit()
+        popen.processes[-1] = process
+        return process
+
+    with pytest.raises(MediaStorageError, match="exited before the tunnel was ready.*status 429") as e:
+        provider(exe, make, startup_timeout=5).prepare(video, "video/mp4")
+    assert e.value.retryable and "did not start within" not in str(e.value)

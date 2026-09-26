@@ -93,7 +93,7 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
         return
 
     try:
-        post_id = engine.store.create_post(video_path, caption, valid)
+        post_id = engine.store.create_post(video_path, caption, valid, auto_retry=True)
     except JobError as e:
         print_error(str(e))
         return
@@ -101,7 +101,7 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
         if job.options.get("cover_path"):
             engine.store.set_cover_status(job.id, "pending")
     print_info(f"Publishing post #{post_id}...")
-    result = engine.publish_post(post_id, on_update=_print_update)
+    result = engine.publish_post(post_id, on_update=batch_progress(engine, post_id))
     _print_summary(result.jobs, engine)
 
 
@@ -183,11 +183,16 @@ def print_batch_summary(size: int, video_path: str, cover: str | None, destinati
         provider = delivery_provider(size, bool(cover)) or "none available"
         names = {"cloudflare_tunnel": "Cloudflare Quick Tunnel", "tempfile": "TempFile.org", "s3": "S3", "0x0": "0x0.st"}
         cover_size = Path(cover).stat().st_size if cover else 0
-        print(f"Instagram:    {len(instagram)} job(s), at most {limit} at a time (the rest wait in the queue)")
-        print(f"Media:        AUTO -> {names.get(provider, provider)}; temporary video{' + cover' if cover else ''} "
-              "URLs exist only while each job runs")
+        active = min(limit, len(instagram))
+        print(f"Instagram:    {len(instagram)} job(s), at most {limit} at a time "
+              f"(initial active: {active}, pending: {len(instagram) - active}; a freed slot starts the next job)")
+        print(f"Media:        AUTO -> {names.get(provider, provider)}; ONE shared temporary video{' + cover' if cover else ''} "
+              "URL for the whole batch, only while the batch runs")
         if provider == "cloudflare_tunnel":
+            print("Tunnel:       1 shared Cloudflare Quick Tunnel for this batch (not one per account)")
             print("Storage:      none (the files stay on this computer; nothing is uploaded permanently)")
+        print(f"Retry:        failed Instagram jobs are retried automatically ONCE after the initial round "
+              f"(after {PublisherEngine._retry_delay():g} s, same tunnel)")
         print(f"Transfer:     ~{fmt_mb((size + cover_size) * len(instagram))} outbound for Instagram "
               "(each account fetches its own copy)")
 
@@ -198,10 +203,10 @@ def _instagram_notice(size: int, cover: bool) -> None:
 
     host = public_host_name(size)
     if delivery_provider(size, cover) == "cloudflare_tunnel":
-        print_warning("Instagram: the video stays on this computer. After you confirm, Soc_bot opens a temporary "
-                      "Cloudflare Quick Tunnel (random public HTTPS URL for this one file) only while Instagram "
-                      "fetches it, then closes it. Quick Tunnels are a Cloudflare testing service (no uptime "
-                      "guarantee).")
+        print_warning("Instagram: the video stays on this computer. After you confirm, Soc_bot opens ONE temporary "
+                      "Cloudflare Quick Tunnel for the whole batch (random public HTTPS URLs for this video and "
+                      "cover only) and closes it when every account is done. Quick Tunnels are a Cloudflare testing "
+                      "service (no uptime guarantee).")
     elif host:
         print_warning(f"Instagram: the video will be temporarily uploaded to {host}, a PUBLIC third-party file "
                       "host. Anyone with the generated URL may be able to download it until the file expires or "
@@ -240,6 +245,22 @@ def print_plan(plan: list[PlanItem]) -> None:
         detail = "; ".join(item.errors) if item.errors else ("; ".join(item.notes) or "ok")
         rows.append([item.platform, item.account_label, "READY" if item.ready else "BLOCKED", detail])
     print_table(["Platform", "Account", "Check", "Details"], rows)
+
+
+def batch_progress(engine: PublisherEngine, post_id: int):
+    """Per-job lines plus the batch counts after each change. Never prints URLs."""
+    statuses = {job.id: job.status for job in engine.store.jobs_for_post(post_id)}
+
+    def update(result: JobResult) -> None:
+        _print_update(result)
+        statuses[result.job_id] = result.status
+        values = list(statuses.values())
+        running = sum(v in ("uploading", "processing") for v in values)
+        print(f"    [Total {len(values)} | Running {running} | Retrying {values.count('retrying')} | "
+              f"Pending {values.count('pending')} | Published {values.count('published')} | "
+              f"Failed {values.count('failed')}]")
+
+    return update
 
 
 def _print_update(update: JobResult) -> None:

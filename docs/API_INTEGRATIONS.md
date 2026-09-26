@@ -445,12 +445,36 @@ Publishing endpoints were verified 2026-09-25 (Phase 4). See each platform's Pub
 | TikTok | Direct Post `post_info.video_cover_timestamp_ms` (a frame of the video). No cover image upload | Cover image **not supported** (reported, not sent). Frame selection is not implemented yet |
 | Instagram | IG User `/media` reference: `cover_url` "For Reels only. The path to an image to use as the cover image for the Reels tab" (Meta fetches it from a public server). Reels cover spec: **JPEG, ≤ 8 MB, sRGB, 9:16 recommended**. `cover_url` takes precedence over `thumb_offset`. The Instagram Login publishing guide doesn't list it | **Supported**: sent as `cover_url` on the Reel container, served by the media provider next to the video (Cloudflare Quick Tunnel). Validated before confirmation (JPEG structure, ≤ 8 MB); an invalid cover **blocks** the destination. Works with Instagram Login tokens on graph.instagram.com v25.0: real-verified 2026-09-26 by API readback: the Reel's `thumbnail_url` is the chosen cover (TEST 1 https://www.instagram.com/reel/DdvCpWvEspn/, TEST 2 https://www.instagram.com/reel/DdvDAyhCGzR/, both thumbnails byte-identical); a Reel without `cover_url` shows a video frame |
 
+## Instagram batch architecture (LOCKED, 2026-09-26)
+
+```
+confirm ─► post (= batch, auto_retry=1) with one job per account
+        ─► ONE SharedMediaSession (lazy: started by the first job that needs media)
+               = ONE 127.0.0.1 server (1 video route + 1 cover route, random tokens) + ONE Quick Tunnel
+        ─► initial round: pool of INSTAGRAM_MAX_CONCURRENT_PUBLISHES (5); a freed slot starts the next job
+        ─► initial round fully drained ─► wait INSTAGRAM_FAILURE_RETRY_DELAY_SECONDS (5)
+        ─► automatic retry round: THIS batch's FAILED Instagram jobs, once each, same pool limit, SAME session
+        ─► session.close(): tunnel + server stopped ONCE
+```
+- **Why:** one tunnel per job hit Cloudflare's Quick Tunnel provisioning limit. On 2026-09-26, after about 45 tunnel creations in about 1.5 h, every new tunnel got `quick tunnel provisioning failed with status 429` and a whole 11-account batch failed before contacting Instagram. A batch now creates **one** tunnel for 1, 11 or 50 accounts.
+- **Shared URLs:** every job of the batch sends the same `video_url` / `cover_url` (same local files, same content). Permanent Reel URLs stay per account. A job's own cleanup is a no-op; the engine closes the session after the retry round (also on errors and Ctrl+C).
+- **Tunnel death:** the next job that needs media starts **one** replacement for the batch (never per job). A failed start (e.g. 429) is returned to the waiting jobs for 30 s instead of every job retrying provisioning.
+- **Automatic retry:** `posts.auto_retry = 1` (set by Create Post and Content Inbox) and `publish_jobs.auto_retry_used` (migration 004).
+  - The flag is set **before** the retry runs, so a crash never earns a second automatic retry.
+  - The retry resumes through the adapter's container recovery: an old container that is PUBLISHED is adopted, FINISHED is published, and ERROR/EXPIRED get a **new** container. Attempt history keeps the original failure.
+  - Failures marked `uncertain` are not retried automatically (manual check).
+  - Posts created before migration 004 have `auto_retry` NULL and are **never** retried automatically.
+- **Resume:** `resume_open_jobs` = open posts + posts with failed jobs whose automatic retry hasn't started (`retry_owed_post_ids`). Published jobs are never touched.
+- **Manual retry** (Publishing Queue → Retry a failed job) marks the automatic retry as used: automation never retries after a manual retry. It runs on its own one-job session.
+- **Engine retries inside a round** (30/60/120 s for transient errors) are unchanged and still count against the pool limit. `retry_count` is not reset by the automatic round.
+- **TempFile / S3 in a batch:** also one upload per batch (not per account). A TempFile upload is refreshed 10 min before its expiry during long batches.
+
 ## Instagram multi-account fan-out (one video + one cover → many accounts)
 
 - **Batch = post.** One post (video, caption, optional `cover_path` in each job's options) has one independent `publish_jobs` row per account. No new table. The aggregate status is computed as pending / running / completed / completed_with_failures / failed.
 - **Concurrency:** `PublisherEngine.publish_post` runs a post's Instagram jobs in a thread pool of `INSTAGRAM_MAX_CONCURRENT_PUBLISHES` (default **5**, allowed 1..20). The rest wait and start as workers free up; retry waits keep their slot, so active jobs never exceed the limit. YouTube/TikTok jobs stay sequential.
-- **One cover for all:** every job's options point at the **same local file**; it is never copied or converted. Each active job serves it under its **own** random path on its **own** local server + tunnel (the video and cover share that job's single tunnel).
-- **Isolation:** own media session, container, retries and result per job; one failure (or an unexpected exception) never stops the others. A cleanup warning never turns a published Reel into a failure.
+- **One cover for all:** every job's options point at the **same local file**; it is never copied or converted. The batch's ONE shared session serves it under one random path (see "Instagram batch architecture" above; per-job tunnels were replaced on 2026-09-26).
+- **Isolation:** own container, retries and result per job (the media session is shared by the batch); one failure (or an unexpected exception) never stops the others. A cleanup warning never turns a published Reel into a failure.
 - **Duplicates:** same video + same account needs an explicit "publish again" (asked once for all such accounts, default No); same video + different accounts is allowed. The DB still forbids the same account twice in one post.
 - **Resume:** published and failed jobs are never started again; pending/retrying/processing jobs continue (processing resumes by container id). Ctrl+C: queued jobs stay pending, and running jobs finish their step and clean up.
 - **Links:** one `instagram.json` record per successful account (writes are serialized with a lock); temporary video/cover URLs are never stored anywhere.

@@ -106,6 +106,9 @@ class MediaStorageRouter(MediaSourceProvider):
     def get_public_url(self, handle: MediaHandle) -> str:
         return self._owner(handle).get_public_url(handle)
 
+    def is_alive(self, handle: MediaHandle) -> bool:
+        return self._owner(handle).is_alive(handle)
+
     def cleanup(self, handle: MediaHandle | None) -> None:
         if handle is None:
             return

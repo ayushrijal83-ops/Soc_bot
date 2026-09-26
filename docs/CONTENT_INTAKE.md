@@ -107,7 +107,11 @@ After a destination is confirmed **published**, its permanent public URL is appe
 
     content/published_links/youtube.json | instagram.json | tiktok.json
 
-Record: `{"video", "account", "url", "provider_id", "published_at"}` (UTC). The files are created at startup and written atomically (temp file in the same folder, fsync, `os.replace`). A malformed file is renamed to `<platform>.corrupt-<timestamp>.json` and never deleted. Duplicates (same account + provider_id) are skipped, so the same video on two accounts gives two records. Failed jobs never produce a link, and a link problem never fails a job. Nothing is stored in the database.
+Next to each JSON file, `<platform>.txt` holds only the permanent URLs, one per line (for pasting into other tools). It is rebuilt from the JSON on every write and at startup. The JSON stays the source of truth.
+
+Record: `{"video", "account", "url", "provider_id", "published_at"}` (UTC). The files are created at startup and written atomically (temp file in the same folder, fsync, `os.replace`). Writers are serialized by a thread lock plus an OS file lock (`.lock`, `msvcrt`/`fcntl`), so concurrent fan-out jobs and a second Soc_bot process never lose records (tested: 5 threads and 3 processes writing at once).
+After each publish the result shows, per platform, "Permanent links saved: N" and both file paths. The clipboard is never touched automatically; copying is the manual "Copy link" action.
+If Instagram publishes but its permalink can't be read, the job stays PUBLISHED, gets `permalink_missing` in its provider state and a warning, and no URL is guessed. Import from publish history adds the link later. A malformed file is renamed to `<platform>.corrupt-<timestamp>.json` and never deleted. Duplicates (same account + provider_id) are skipped, so the same video on two accounts gives two records. Failed jobs never produce a link, and a link problem never fails a job. Nothing is stored in the database.
 
 | Platform | URL | Source |
 |---|---|---|

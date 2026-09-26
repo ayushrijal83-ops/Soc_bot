@@ -244,6 +244,11 @@ class CloudflareTunnelMediaProvider(MediaSourceProvider):
             raise MediaStorageError("Temporary media was already cleaned up")
         return handle.public_url
 
+    def is_alive(self, handle: MediaHandle) -> bool:
+        session = handle.session
+        return (not handle.cleaned and session is not None and session.thread.is_alive()
+                and (session.process is None or session.process.poll() is None))
+
     def cleanup(self, handle: MediaHandle | None) -> None:
         """Stop cloudflared and the local server. Never raises: a finished publish must stay finished."""
         if handle is None or handle.cleaned:
@@ -299,8 +304,11 @@ class CloudflareTunnelMediaProvider(MediaSourceProvider):
 
         def reader():  # drains output so cloudflared never blocks on a full pipe
             for line in process.stdout:
-                if " ERR " in line:  # kept for the error message, without any URL
-                    errors[:] = [re.sub(r"https?://\S+", "<url>", line.split(" ERR ", 1)[1]).strip()[:160]]
+                # Errors are kept (URLs removed) for the message: " ERR " lines, and untagged fatal lines such
+                # as "quick tunnel provisioning failed with status 429" (Cloudflare rate limit).
+                text = line.split(" ERR ", 1)[1] if " ERR " in line else line
+                if " ERR " in line or "failed" in line.lower():
+                    errors[:] = [re.sub(r"https?://\S+", "<url>", text).strip()[:160]]
                 if not found:
                     url = parse_tunnel_url(line)
                     if url:
@@ -310,6 +318,10 @@ class CloudflareTunnelMediaProvider(MediaSourceProvider):
 
         threading.Thread(target=reader, name="soc_bot-cloudflared-output", daemon=True).start()
         if not ready.wait(self.startup_timeout) or not found:
+            try:
+                process.wait(timeout=5)  # output closed first; let the exit code arrive before judging
+            except subprocess.TimeoutExpired:
+                pass
             if process.poll() is not None:
                 raise MediaStorageError(f"cloudflared exited before the tunnel was ready (exit code {process.returncode})"
                                         + (f": {errors[0]}" if errors else ""),

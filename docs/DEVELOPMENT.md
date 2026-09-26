@@ -80,7 +80,7 @@ winget install --id Cloudflare.cloudflared
 cloudflared --version
 ```
 
-Optional `.env` overrides: `CLOUDFLARED_PATH` (full path if not on PATH), `CLOUDFLARE_TUNNEL_STARTUP_TIMEOUT_SECONDS=90`, `CLOUDFLARE_MEDIA_TOKEN_BYTES=16`, `CLOUDFLARE_MEDIA_HOST=127.0.0.1` (must stay loopback), `INSTAGRAM_MAX_POLL_MINUTES=15`, `INSTAGRAM_MAX_CONCURRENT_PUBLISHES=5` (Instagram jobs running at once, 1..20). Quick Tunnels are a Cloudflare testing/development service with no uptime guarantee. Unit tests never find or start a real cloudflared (`tests/conftest.py` points `CLOUDFLARED_PATH` at a missing file).
+Optional `.env` overrides: `CLOUDFLARED_PATH` (full path if not on PATH), `CLOUDFLARE_TUNNEL_STARTUP_TIMEOUT_SECONDS=90`, `CLOUDFLARE_MEDIA_TOKEN_BYTES=16`, `CLOUDFLARE_MEDIA_HOST=127.0.0.1` (must stay loopback), `INSTAGRAM_MAX_POLL_MINUTES=15`, `INSTAGRAM_MAX_CONCURRENT_PUBLISHES=5` (Instagram jobs running at once, 1..20), `INSTAGRAM_FAILURE_RETRY_DELAY_SECONDS=5` (pause before the batch's automatic retry round, 0..300). One Quick Tunnel per batch. Quick Tunnels are a Cloudflare testing/development service with no uptime guarantee. Unit tests never find or start a real cloudflared (`tests/conftest.py` points `CLOUDFLARED_PATH` at a missing file).
 
 ## Database Setup
 
