@@ -309,7 +309,7 @@
 - YouTube: apps in Google "Testing" status need a Reconnect every 7 days; daily upload quota; custom thumbnails need a phone-verified channel.
 - TikTok `refresh_expires_in` is not persisted (no schema column).
 - ffprobe is optional; without it duration/resolution are not checked locally.
-- One Soc_bot process at a time (process lock); a running batch can't be cancelled mid-post, so quitting is blocked while publishing.
+- No single-instance lock for the app (only the published-link files are locked across processes): run one publishing session per database. A running batch can't be cancelled mid-post, so quitting is blocked while publishing.
 
 ## Next Recommended Task
 Real TikTok run once developer credentials exist (`setup_guide/03_TIKTOK_SETUP.md`). Otherwise only polish driven by daily use; the engine stays frozen.
