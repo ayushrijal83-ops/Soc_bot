@@ -508,3 +508,26 @@ The Reel's status is unaffected. If a `cloudflared.exe` is still running afterwa
 
 Batches created by Create Post / Content Inbox retry their failed Instagram jobs **once**, after all other jobs of the batch finished (`INSTAGRAM_FAILURE_RETRY_DELAY_SECONDS`, default 5). A second failure stays FAILED; no third automatic attempt. Older posts and manually retried jobs are never retried automatically.
 
+
+### Problem: "Connect" for a new Instagram account just reconnects the old one
+
+Fixed (2026-09-26): the Instagram authorize URL sends `force_reauth=true`, so Instagram always shows its login screen. Log in with the **new** account there. If the browser still jumps straight to "Allow" for the old account, log out on instagram.com (or use a private window) and press Connect again.
+
+### Problem: no place to paste the Instagram link in the terminal app
+
+Fixed (2026-09-26): the **CONNECTING INSTAGRAM** window shows a paste field under the instructions. After "Allow", copy the full address of the Soc_bot callback page and paste it there, then press Enter. The field is visible from 80×24 upward. Full walkthrough: `setup_guide/01_INSTAGRAM_SETUP.md`.
+
+### Problem: the app feels slow when picking a video / opening Review
+
+Fixed (2026-09-26): the SHA-256 checksum of a video is cached per (path, size, modified-time), so a big file is read once instead of on every step. Instagram status checks run every 15 s instead of every 60 s, so a ready Reel publishes sooner. If it's still slow, check the upload speed of your connection: Meta downloads the video from your PC through the tunnel.
+
+### How to: delete history entries
+
+History page → select a row → **Del** (or the **Delete selected** / **Delete all shown** buttons) → confirm. Only finished (published or failed) jobs can be deleted. Pending or running jobs are never touched. A post with no jobs left is removed too. Saved published links in `content/published_links/` are **not** deleted.
+
+### Problem: double-clicking `Start_Soc_bot.bat` closes immediately / shows an error
+
+- "Python was not found": install Python and tick "Add python.exe to PATH" (`setup_guide/00_MASTER_SETUP_GUIDE.md`).
+- "No .env file yet": copy `.env.example` to `.env` and fill it in.
+- Library install failed: run `pip install -r requirements.txt` in the project folder and read the error.
+- The window stays open with the error whenever Soc_bot exits with an error, so the message can be read.

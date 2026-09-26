@@ -1,272 +1,307 @@
-# Social Publisher (SOC_BOT)
+<div align="center">
 
-A terminal-based multi-platform social media publishing bot for distributing finished videos with captions to Instagram, TikTok, and YouTube using official platform APIs.
+# ◆ SOC_BOT
 
-## What This Bot Does
+### One video. One caption. One cover. **Every account.**
 
-- Publishes **finished videos** with **user-provided captions** to multiple social media platforms
-- Supports **multiple connected accounts** per platform (e.g., multiple Instagram pages, TikTok accounts, YouTube channels)
-- Uses **official OAuth/authorization flows** — never asks for or stores platform passwords
-- Creates **independent publishing jobs** per destination — one failure doesn't block others
-- Provides a **terminal-based menu interface** for selecting video, caption, platforms, and accounts
-- Tracks publishing **history** and **job status** (PENDING → UPLOADING → PROCESSING → PUBLISHED / FAILED → RETRYING)
+A terminal app that publishes a finished video to **many Instagram, YouTube and TikTok accounts at once**,
+with official APIs only. No passwords, no scraping, no browser automation.
 
-## What This Bot Does NOT Do
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Terminal UI" src="https://img.shields.io/badge/UI-Textual%20%2B%20Rich-a78bfa">
+  <img alt="Instagram" src="https://img.shields.io/badge/Instagram-Reels-E4405F?logo=instagram&logoColor=white">
+  <img alt="YouTube" src="https://img.shields.io/badge/YouTube-Data%20API%20v3-FF0000?logo=youtube&logoColor=white">
+  <img alt="TikTok" src="https://img.shields.io/badge/TikTok-Content%20Posting%20API-000000?logo=tiktok&logoColor=white">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-800%2B%20passing-4ade80">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
 
-- ❌ AI video generation
-- ❌ AI caption generation
-- ❌ Web scraping or browser automation
-- ❌ Fake engagement (likes, views, follows)
-- ❌ Automated account creation
-- ❌ Password-based social media login
-- ❌ Unofficial or private APIs
+<img src="docs/images/dashboard.svg" alt="SOC_BOT dashboard" width="900">
 
-## Current Implementation Status
+<sub>All screenshots use demo accounts and demo files.</sub>
 
-| Component | Status |
-|-----------|--------|
-| Project structure & documentation | ✅ **IMPLEMENTED** |
-| Terminal CLI menu system | ✅ **IMPLEMENTED** |
-| Account management core (CRUD, listing, status) | ✅ **IMPLEMENTED** |
-| OAuth authentication (Instagram, TikTok, YouTube) | ✅ **IMPLEMENTED**; real OAuth done for Instagram (11 accounts) and YouTube (2 accounts); TikTok real run pending app credentials |
-| OAuth callback server (dynamic loopback port) & PKCE | ✅ **IMPLEMENTED** |
-| Job management, queue, resume, one automatic retry round per batch | ✅ **IMPLEMENTED**, real-tested |
-| Instagram publishing (Reels + custom cover) with multi-account batches: ONE shared Cloudflare Quick Tunnel per batch, max 5 concurrent jobs | ✅ **IMPLEMENTED**, real-tested (up to 11 accounts, 131.9 MB videos) |
-| Published-link library (`content/published_links/*.json` + `.txt`) | ✅ **IMPLEMENTED**, real-tested |
-| TikTok publishing adapter (Direct Post) | ✅ **IMPLEMENTED**, mock-tested (real run pending TikTok app credentials) |
-| YouTube publishing adapter (resumable upload) | ✅ **IMPLEMENTED**, real-tested |
-| SQLite database layer | ✅ **IMPLEMENTED** |
-| Video validation | ✅ **IMPLEMENTED** |
-| Dry-run mode | ✅ **IMPLEMENTED** (plan only, no API calls) |
-| Content Inbox (drop folders in `content/incoming/`) | ✅ **IMPLEMENTED** (Phase 5A) |
-| Publishing profile (VERIFY / AUTO) | ✅ **IMPLEMENTED** (Phase 5A) |
-| Cover/thumbnail (YouTube `thumbnails.set`) | ✅ **IMPLEMENTED**, real-tested on YouTube |
-| Unit/integration tests | ✅ **IMPLEMENTED** (780 unit tests, Ruff clean) |
+</div>
 
-**Legend:** ✅ IMPLEMENTED | 🔄 IN PROGRESS | 📋 PLANNED | 🚫 BLOCKED
+---
 
-## Supported Platforms
+## ✨ What it does
 
-| Platform | API | Status |
-|----------|-----|--------|
-| Instagram | Instagram API with Instagram Login | OAuth docs verified 2026-09-25 |
-| TikTok | Login Kit for Desktop + Content Posting API | OAuth docs verified 2026-09-25 |
-| YouTube | YouTube Data API v3 (Google OAuth installed app) | OAuth docs verified 2026-09-25 |
+<table>
+<tr>
+<td width="33%" valign="top">
 
-## Requirements
+### 🎯 One post, many accounts
+Pick one video, one caption and one optional cover, tick as many accounts as you like, and confirm
+**once**. Every account becomes its own independent job, so one failure never blocks the others.
 
-- Python 3.11+
-- Virtual environment (recommended)
-- Platform developer accounts:
-  - Meta Developer Account (for Instagram)
-  - TikTok Developer Account
-  - Google Cloud Project (for YouTube)
+</td>
+<td width="33%" valign="top">
 
-## Installation
+### ⚡ 5 at a time, automatically
+Instagram jobs run **5 in parallel**, and the next one starts as soon as a slot frees up. Accounts that
+failed get **one automatic retry** at the end.
 
-```bash
-# Clone the repository
+</td>
+<td width="33%" valign="top">
+
+### 🖼️ Same cover everywhere
+One `cover.jpg` is used for **every** selected Instagram account (and as the YouTube thumbnail). This
+was verified on real Reels.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🚀 Big videos, no cloud upload
+Large videos are served straight from your PC through **one** temporary Cloudflare Quick Tunnel per
+batch. Nothing is uploaded to cloud storage. Tested with 131.9 MB videos.
+
+</td>
+<td valign="top">
+
+### 🔗 Links saved automatically
+Every published Reel and video link is saved to `content/published_links/*.json` and `.txt`, ready to
+copy with one key press.
+
+</td>
+<td valign="top">
+
+### 🔐 Private by design
+Official OAuth only. Tokens are **encrypted** locally. Temporary URLs and secrets are never stored or
+logged.
+
+</td>
+</tr>
+</table>
+
+**What it deliberately does NOT do:** AI video/caption generation · scraping or browser automation ·
+fake engagement · account creation · password logins · unofficial APIs.
+
+---
+
+## 🧭 How it works
+
+```mermaid
+flowchart LR
+    A["🎬 video.mp4<br/>📝 caption<br/>🖼️ cover.jpg"] --> B["Create Post<br/>(one confirmation)"]
+    B --> C{"One batch<br/>= one job per account"}
+    C --> IG["📸 Instagram jobs<br/>max 5 at a time"]
+    C --> YT["▶️ YouTube jobs"]
+    C --> TT["🎵 TikTok jobs"]
+    IG --> T["🌐 ONE shared Cloudflare tunnel<br/>serves video + cover from your PC"]
+    T --> IGAPI["Instagram API"]
+    YT --> YTAPI["YouTube API<br/>(resumable upload)"]
+    TT --> TTAPI["TikTok API<br/>(direct post)"]
+    IGAPI --> L["🔗 Permanent links saved<br/>content/published_links"]
+    YTAPI --> L
+```
+
+### An Instagram batch, step by step
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant You
+    participant SB as SOC_BOT
+    participant CF as Cloudflare tunnel (1 per batch)
+    participant IG as Instagram API
+    You->>SB: Publish to 11 accounts
+    SB->>CF: start ONE tunnel (video + cover)
+    loop at most 5 accounts at the same time
+        SB->>IG: create Reel container (video_url, cover_url, caption)
+        IG->>CF: download video + cover
+        SB->>IG: check status every 15 s, then publish
+        IG-->>SB: permanent Reel link
+    end
+    SB->>SB: failed accounts get ONE automatic retry
+    SB->>CF: close tunnel
+    SB-->>You: ✓ Published / ✗ Failed / links saved
+```
+
+### Job lifecycle
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> pending
+    pending --> uploading
+    uploading --> processing
+    processing --> published
+    uploading --> failed
+    processing --> failed
+    failed --> retrying: automatic retry round / press r
+    retrying --> uploading
+    published --> [*]
+```
+
+---
+
+## 🖥️ Screenshots
+
+<table>
+<tr>
+<td align="center"><img src="docs/images/create_media.svg" alt="Choose media" width="440"><br><b>1 · Media:</b> one video and one optional cover</td>
+<td align="center"><img src="docs/images/create_accounts.svg" alt="Select accounts" width="440"><br><b>2 · Destinations:</b> search, select all, toggle</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/images/create_review.svg" alt="Review" width="440"><br><b>3 · Review:</b> one summary, one confirmation</td>
+<td align="center"><img src="docs/images/publishing_complete.svg" alt="Publishing complete" width="440"><br><b>4 · Live publishing:</b> retry round and final result</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/images/queue.svg" alt="Queue" width="440"><br><b>Queue:</b> every batch with its progress</td>
+<td align="center"><img src="docs/images/links.svg" alt="Published links" width="440"><br><b>Published Links:</b> copy one or all</td>
+</tr>
+<tr>
+<td align="center" colspan="2"><img src="docs/images/accounts.svg" alt="Accounts" width="440"><br><b>Accounts:</b> connect, reconnect, disconnect</td>
+</tr>
+</table>
+
+---
+
+## 🚀 Quick start
+
+> **New computer? Follow the step-by-step guides in [`setup_guide/`](setup_guide/).**
+> They explain every click, from installing Python to connecting each account.
+
+| Step | Guide |
+|---|---|
+| 1. Install Python, Git, `cloudflared` and Soc_bot, then create `.env` | [`00_MASTER_SETUP_GUIDE.md`](setup_guide/00_MASTER_SETUP_GUIDE.md) |
+| 2. Create the Instagram app and connect every Instagram account | [`01_INSTAGRAM_SETUP.md`](setup_guide/01_INSTAGRAM_SETUP.md) |
+| 3. Set up YouTube (Google Cloud) and connect every channel | [`02_YOUTUBE_SETUP.md`](setup_guide/02_YOUTUBE_SETUP.md) |
+| 4. Create the TikTok developer app and connect | [`03_TIKTOK_SETUP.md`](setup_guide/03_TIKTOK_SETUP.md) |
+
+Short version (Windows):
+
+```powershell
 git clone https://github.com/ayushrijal83-ops/Soc_bot.git
 cd Soc_bot
-
-# Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Copy environment template
-cp .env.example .env
-# Edit .env with your API credentials
+winget install --id Cloudflare.cloudflared      # needed for Instagram videos
+Copy-Item .env.example .env                     # then fill it in (see the master guide)
 ```
 
-## Environment Configuration
+Then **double-click `Start_Soc_bot.bat`** (or the **SOC_BOT** desktop shortcut). It opens the project
+folder, installs any missing libraries on the first run and starts the app, so there is nothing to type.
 
-Create a `.env` file from `.env.example` with the following variables:
+From a terminal instead:
 
-```env
-# Database
-DATABASE_URL=sqlite:///data/publisher.db
-
-# Encryption key for token storage (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-ENCRYPTION_KEY=
-
-# Instagram (Instagram API with Instagram Login; use the Instagram app ID/secret)
-INSTAGRAM_APP_ID=your_instagram_app_id
-INSTAGRAM_APP_SECRET=your_instagram_app_secret
-INSTAGRAM_REDIRECT_URI=http://127.0.0.1:8765/callback/instagram   # fixed; must be registered
-
-# TikTok (Login Kit for Desktop; register http://127.0.0.1:*/callback/tiktok)
-TIKTOK_CLIENT_KEY=your_client_key
-TIKTOK_CLIENT_SECRET=your_client_secret
-TIKTOK_REDIRECT_URI=          # blank = dynamic port
-
-# YouTube (Google OAuth client type "Desktop app")
-YOUTUBE_CLIENT_ID=your_client_id
-YOUTUBE_CLIENT_SECRET=your_client_secret
-YOUTUBE_REDIRECT_URI=         # blank = dynamic port
-
-# Application
-LOG_LEVEL=INFO
-DRY_RUN=false
-
-# Optional: callback host/port (default 127.0.0.1, port 0 = OS picks a free port per flow)
-# OAUTH_CALLBACK_HOST=127.0.0.1
-# OAUTH_CALLBACK_PORT=0
+```powershell
+python main.py            # full-screen terminal app
+python main.py --plain    # classic text menu
+python main.py --dry-run  # show what would be published, publish nothing
+python main.py --scan     # publish ready Content Inbox packages (AUTO profiles)
 ```
 
-**⚠️ Never commit `.env` to version control.** It is protected by `.gitignore`.
+> **⚠️ Never commit `.env`.** It holds your app secrets and the token encryption key, and it is git-ignored.
 
-Note: `main.py` does not load `.env` automatically yet. Export these variables in your shell before running.
+---
 
-## Running the Application
+## ⌨️ Keyboard
 
-```bash
-# Normal mode
-python main.py
+| Key | Page | | Key | Action |
+|:---:|---|---|:---:|---|
+| **D** | Dashboard | | **/** | Search |
+| **C** | Create Post | | **Space** | Tick / untick |
+| **Q** | Queue | | **Enter** | Open / confirm |
+| **H** | History | | **Esc** | Back |
+| **A** | Accounts | | **P** | Publish (on Review) |
+| **L** | Published Links | | **Del** | Delete history (on History) |
+| **T** | Content | | **Ctrl+P** | Command palette |
+| **S** | Settings | | **?** / **X** | Help / Exit |
 
-# Dry-run: validate unpublished posts and show the plan (never contacts a platform)
-python main.py --dry-run
+In **Queue**, open a batch to use **o** (open the post), **c** (copy the link) and **r** (retry a failed job).
+In **Links**, **C** copies the selected link and **A** copies all visible links.
+Every page works down to 80×24. Below 100 columns the sidebar hides.
 
-# Help
-python main.py --help
-```
+---
 
-## Content Inbox (Phase 5A)
+## 📊 Platform support
+
+| | Instagram | YouTube | TikTok |
+|---|:---:|:---:|:---:|
+| Connect accounts (official OAuth) | ✅ | ✅ | ✅ |
+| Add many accounts (fresh login each time) | ✅ | ✅ | ✅ |
+| Publish video | ✅ Reels | ✅ | ✅ Direct Post |
+| Custom cover | ✅ `cover_url` | ✅ thumbnail | ➖ not offered by the API |
+| Many accounts in one batch | ✅ 5 at a time | ✅ | ✅ |
+| Automatic retry round | ✅ | ➖ manual retry (**r**) | ➖ manual retry (**r**) |
+| Permanent link saved | ✅ | ✅ | ➖ no public URL for private posts |
+| Tested against the real platform | ✅ 11 accounts | ✅ 2 channels | ⏳ waiting for developer credentials |
+
+---
+
+## 📥 Content Inbox (optional)
+
+Drop finished posts into folders and publish them from the **Content** page, or automatically with `--scan`:
 
 ```
 content/incoming/post_001/
-    video.mp4        # one video (.mp4 / .mov / .webm)
-    caption.txt      # UTF-8 caption, sent as-is
-    cover.jpg        # optional (YouTube thumbnail; Instagram Reel cover, JPEG <= 8 MB; TikTok: not supported)
-    title.txt        # optional YouTube title
+    video.mp4        one video (.mp4 / .mov / .webm)
+    caption.txt      UTF-8 caption, sent as-is
+    cover.jpg        optional cover (Instagram Reel cover / YouTube thumbnail)
+    title.txt        optional YouTube title
 ```
-
-1. **Settings → Create/Edit Publishing Profile** (once): choose accounts, privacy, cover, VERIFY/AUTO
-2. **Content Inbox**: pick a package, review the plan, confirm **once**. It moves to `published/` (or `failed/`)
-3. `python main.py --scan`: AUTO profiles publish ready packages; `--dry-run` previews without doing anything
 
 Full guide: [docs/CONTENT_INTAKE.md](docs/CONTENT_INTAKE.md).
 
-## Terminal UI
+---
 
-`python main.py` opens the full-screen terminal UI (Textual + Rich). It is still a terminal app: no browser, no web server.
-
-| Key | Page | | Key | Action |
-|---|---|---|---|---|
-| D | Dashboard | | / | Search (lists) |
-| C | Create Post | | Space | Toggle selection |
-| Q | Queue | | Enter | Open / confirm |
-| H | History | | Esc | Back / close |
-| A | Accounts | | Ctrl+P | Command palette |
-| L | Published Links | | ? | Help |
-| T | Content | | Ctrl+Q / X | Exit |
-| S | Settings | | | |
-
-- **Create Post:** Media (video + one optional cover) → Caption → Destinations (platform cards, searchable account list, A all / N none) → Options (only what the chosen platforms need) → Review → one confirmation → live progress (initial round, automatic retry round, final result).
-- **Queue:** batches with progress; Enter opens a batch (o open post, c copy link, r retry a failed job, Enter details). **Links:** C copy selected, A copy all visible (permanent URLs only).
-- Terminals under 100 columns hide the sidebar. Every page works down to 80×24.
-- `python main.py --plain` starts the classic text menu. It is also used automatically when there is no interactive terminal. `--dry-run`, `--scan` and `--version` are unchanged.
-- In the TUI, log lines go to `logs/soc_bot.log` (no tokens or temporary URLs are ever logged).
-
-## Classic menu (`--plain`)
+## 🗂️ Project layout
 
 ```
-SOCIAL PUBLISHER v1
-
-1. Create Post
-2. Connected Accounts
-3. Publishing Queue
-4. History
-5. Content Inbox
-6. Published Links
-7. Settings
-8. Exit
+Soc_bot/
+├── Start_Soc_bot.bat        ← double-click to start
+├── main.py                  ← entry point (TUI, --plain, --dry-run, --scan)
+├── setup_guide/             ← step-by-step setup for a new computer
+├── src/
+│   ├── tui/                 ← terminal UI (Textual): screens, theme, widgets
+│   ├── services/            ← thin layer the UI uses (plan / publish / accounts / links)
+│   ├── core/                ← publishing engine, jobs, retries, published links
+│   ├── platforms/           ← Instagram / YouTube / TikTok adapters (official APIs)
+│   ├── media_storage/       ← shared media session, Cloudflare tunnel, temp hosting
+│   ├── auth/                ← OAuth, callback server, token refresh
+│   └── storage/             ← SQLite database + migrations (encrypted tokens)
+├── content/                 ← drop folders and published links (not in git)
+├── docs/                    ← architecture, API notes, troubleshooting, decisions
+└── tests/                   ← 800+ automated tests
 ```
 
-**Connected Accounts Submenu:**
-```
-CONNECTED ACCOUNTS
+---
 
-1. List Accounts
-2. Account Details
-3. Connect Instagram
-4. Connect TikTok
-5. Connect YouTube
-6. Create Development Account
-7. Update Account
-8. Disconnect Account
-9. Enable Account
-10. Back to Main Menu
-```
+## 📚 Documentation
 
-## Authentication Concept
+| Document | For |
+|---|---|
+| [setup_guide/](setup_guide/) | Installing and connecting everything, step by step |
+| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | What's done, verified and still open |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit together |
+| [docs/API_INTEGRATIONS.md](docs/API_INTEGRATIONS.md) | Exact platform API behavior and limits |
+| [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | OAuth flows and token handling |
+| [docs/CONTENT_INTAKE.md](docs/CONTENT_INTAKE.md) | Drop-folder publishing, covers, published links |
+| [docs/DATABASE.md](docs/DATABASE.md) | Schema and migrations |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Error messages and fixes |
+| [docs/SECURITY.md](docs/SECURITY.md) | Tokens, secrets, what is stored |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer setup, tests, TUI structure, screenshots |
+| [docs/TESTING.md](docs/TESTING.md) | Test strategy |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Why things are built the way they are |
+| [docs/CLAUDE_HANDOFF.md](docs/CLAUDE_HANDOFF.md) | Handoff notes for AI assistants |
 
-- Uses **official OAuth 2.0 / OAuth 2.1 flows** for each platform
-- User authorizes via platform's official login page
-- Application receives access tokens, plus refresh tokens where the platform issues them (TikTok, YouTube). Instagram issues long-lived access tokens that are re-exchanged instead.
-- Tokens stored securely in encrypted SQLite database
-- Token expiry recorded from the provider's `expires_in`; the publishing engine renews expiring tokens before each job
-- No passwords ever requested or stored
+---
 
-## OAuth Implementation Details
+## 🔐 Security
 
-- **PKCE (S256)**: YouTube (RFC 7636 base64url), TikTok (hex, per TikTok docs). Instagram Login does not document PKCE.
-- **State Parameter**: CSRF protection, cryptographically random, single-use, bound to the platform
-- **Callback Server**: `http://127.0.0.1:<dynamic-port>/callback/{platform}` (or a fixed `*_REDIRECT_URI`)
-- **Token Storage**: Fernet encryption at rest
-- **Token Renewal**: TikTok/YouTube refresh token (rotated TikTok tokens are persisted); Instagram `ig_refresh_token` re-exchange
-- **Token Revocation**: TikTok and YouTube revoke endpoints; Instagram has none documented (local disconnect only)
+- Only **official** OAuth flows are used. Soc_bot never sees or stores your passwords.
+- Tokens are **encrypted** (Fernet) in a local SQLite database, and the key lives only in your `.env`.
+- Temporary media URLs, tokens and secrets are **never** saved or logged.
+- The local media server listens on `127.0.0.1` only and serves just the prepared video and cover.
+- `.env`, `data/`, `content/`, `videos/` and the logs are git-ignored.
 
-### Platform-Specific OAuth
+---
 
-| Platform | Auth Product | Auth Flow | Scopes |
-|----------|--------------|-----------|--------|
-| Instagram | Business Login for Instagram | Auth Code (no PKCE) → long-lived token | instagram_business_basic, instagram_business_content_publish |
-| TikTok | Login Kit for Desktop | Auth Code + PKCE (hex) | video.upload, video.publish, user.info.basic |
-| YouTube | Google OAuth 2.0 (Installed App) | Auth Code + PKCE (base64url), loopback | youtube.upload, youtube, youtube.readonly |
+<div align="center">
 
-## Security Rules
+MIT License · see [LICENSE](LICENSE)
 
-- ✅ Official OAuth only
-- ✅ Tokens encrypted at rest (Fernet AES-128-GCM)
-- ✅ `.env` in `.gitignore`
-- ✅ No credentials in logs
-- ✅ HTTPS for all API calls
-- ✅ Input validation on all user data
-- ✅ File size/type validation before upload
-
-## Development Status
-
-The publishing engine is **complete and frozen for UI development (2026-09-26 audit)**. The repository contains:
-- ✅ SQLite database layer with migrations (schema v4) and encrypted tokens
-- ✅ Terminal CLI (Create Post with one cover + multi-account selection, Publishing Queue, History, Content Inbox, Published Links, Settings)
-- ✅ Official-API OAuth for Instagram, TikTok and YouTube (loopback callback, PKCE where documented)
-- ✅ Publishing engine: independent per-account jobs, retries, resume, dry-run; Instagram batches with ONE shared Cloudflare Quick Tunnel, at most 5 active jobs, and one automatic retry round for the batch's failures
-- ✅ Instagram Reels (incl. custom cover via `cover_url`) and YouTube: real-tested; TikTok: mock-tested, real run pending app credentials
-- ✅ Automatic permanent-link library (JSON + TXT); temporary media URLs are never stored
-- ✅ 780 unit tests passing; `ruff check .` clean
-
-See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, components, data flow |
-| [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Current progress, completed/planned/blocked work |
-| [API_INTEGRATIONS.md](docs/API_INTEGRATIONS.md) | Platform API details, OAuth flows, publishing workflows (VERIFIED) |
-| [AUTHENTICATION.md](docs/AUTHENTICATION.md) | OAuth architecture, token management, security |
-| [DATABASE.md](docs/DATABASE.md) | Schema design, models, relationships (**IMPLEMENTED**) |
-| [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer setup, commands, debugging |
-| [TESTING.md](docs/TESTING.md) | Test strategy, frameworks, test types |
-| [SECURITY.md](docs/SECURITY.md) | Security practices, threat model |
-| [DECISIONS.md](docs/DECISIONS.md) | Architecture Decision Records (ADRs) |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
-| [CLAUDE_HANDOFF.md](docs/CLAUDE_HANDOFF.md) | Agent handoff context for AI assistants |
-
-## License
-
-MIT License — see [LICENSE](LICENSE) for details.
+</div>

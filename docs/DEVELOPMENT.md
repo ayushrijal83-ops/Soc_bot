@@ -89,6 +89,8 @@ Optional `.env` overrides: `CLOUDFLARED_PATH` (full path if not on PATH), `CLOUD
 - `src/tui/`: `app.py` (modes, global keys, command palette, quit guard), `theme.py` (THE color/icon/CSS definitions), `widgets.py` (page layout, modals, file picker), `screens/` (dashboard, create_post, publishing, lists).
 - Engine callbacks arrive on worker threads; the TUI runs batches in a Textual thread worker and hands events to the UI with `call_from_thread`.
 - Tests: `tests/unit/test_tui.py` (headless `App.run_test` pilot + service tests). For visual checks, `app.save_screenshot()` writes an SVG; headless Edge (`msedge --headless=new --screenshot=out.png file.svg`) turns it into a PNG.
+- README screenshots: `python tools/readme_screenshots.py` rebuilds `docs/images/*.svg` from demo data only (temp DB in `C:/SocBotDemo`, fake accounts and publishers, no network; the folder is deleted afterwards). Rerun it after visible UI changes and check the pictures for personal data before committing.
+- Performance notes: `file_checksum` is cached per (path, size, mtime) so a big video is hashed once; Instagram status polls run every 15 s (`POLL_INTERVAL`).
 
 ## Database Setup
 
@@ -105,11 +107,19 @@ python -m src.storage.database health
 
 ## Running the Application
 
+**Windows, no typing:** double-click `Start_Soc_bot.bat` in the project root (or a desktop shortcut to it). It
+`cd`s to its own folder, uses `.venv\Scripts\python.exe` when present (else `python`), installs
+`requirements.txt` once if `textual/httpx/sqlalchemy/dotenv/cryptography` can't be imported, warns when `.env`
+is missing, runs `main.py` (extra arguments are passed through) and keeps the window open on errors.
+
 ```bash
-# Normal mode (interactive menu)
+# Full-screen terminal UI
 python main.py
 
-# Dry-run mode (placeholder)
+# Classic text menu
+python main.py --plain
+
+# Dry-run: show the plan, publish nothing
 python main.py --dry-run
 
 # Help

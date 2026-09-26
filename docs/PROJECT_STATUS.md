@@ -1,6 +1,22 @@
 # Project Status
 
 ## Current Phase
+**Usable daily tool (2026-09-26): TUI polished, setup guides, one-click launcher, new README.**
+
+### Latest work (2026-09-26, after the TUI)
+| Change | What it means for the user |
+|---|---|
+| TUI OAuth fix | Connect/Disconnect run on a worker thread (`AccountService.connect` → `asyncio.run` off the UI loop); no more "event loop is already running". |
+| Add another Instagram account | Authorize URL sends `force_reauth=true`: Instagram always shows its login screen, so a 2nd/3rd account can be connected instead of silently reconnecting the first. |
+| Paste field in Connect window | The CONNECTING INSTAGRAM window shows the paste box (spinner shrunk to 1 line, hidden while pasting); works at 80×24. |
+| Speed | Video checksum cached per (path, size, mtime) → a big file is hashed once instead of on every step; Instagram status polled every 15 s instead of 60 s (same 5-minute window). |
+| Delete history | History page: **Del** / "Delete selected" / "Delete all shown" with confirmation. Only published/failed jobs; empty posts removed; link files untouched. |
+| Review → PUBLISH NOW | Docked action bar with a clear publish button (P / Ctrl+Enter). Active sidebar item readable (accent only on the ▌ marker). |
+| `setup_guide/` | 4 step-by-step guides: master (install, `.env`, Cloudflare, first start, moving PCs, troubleshooting), Instagram, YouTube, TikTok. |
+| `Start_Soc_bot.bat` | Double-click launcher (installs libraries on first run, warns about missing `.env`); desktop shortcut possible. |
+| README | Rewritten with screenshots (`docs/images/*.svg`, demo data only), mermaid diagrams, platform table, keyboard map. `tools/readme_screenshots.py` regenerates the pictures. |
+
+### Terminal UI (2026-09-26)
 **Terminal UI complete (2026-09-26)**: Textual/Rich TUI over a thin service layer (`src/services`); engine unchanged and frozen. Classic menu kept as `--plain`.
 - 792 tests (12 new TUI/service tests), Ruff clean; visual QA at 80×24, 100×30, 120×40, 160×50.
 - Real user flow through the TUI: Create Post (fresh video + cover.jpg) → @noxivra_07 → live progress → PUBLISH COMPLETE → Published Links → copy. Post 25: https://www.instagram.com/reel/Ddvf586AGkE/ (cover verified by API readback; clipboard held only the permanent URL).
@@ -284,21 +300,16 @@
 | `.env` | Environment config | 🔧 CONFIGURED |
 
 ## Current Tests
-- **746 unit tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
+- **823 tests passing** in `tests/unit/` (see TESTING.md for the breakdown); `ruff check .`: 0 errors
 
 ## Known Limitations
-- Real OAuth: NOT RUN for any platform (no credentials configured). Mocked tests are not provider verification.
-- Instagram needs a fixed, registered `INSTAGRAM_REDIRECT_URI`. Meta may require HTTPS for it, which a plain loopback server cannot serve; check before the first real login.
-- `.env` loading: done in Phase 5 (`main.load_environment`, real environment wins)
-- TikTok `refresh_expires_in` is not persisted (no schema column)
-- Real publishing: NOT RUN for any platform. Mocked tests verified; real provider publishing NOT verified.
-- Instagram publishing needs a public https `video_url` (no local upload with Instagram Login; ADR-012)
-- TikTok: unaudited apps can only post `SELF_ONLY`; the CLI does not yet render TikTok's full creator-info export screen
-- YouTube: unverified Google projects upload as private; daily upload quota; a 401 during a very long upload is not handled
-- Jobs run sequentially (ADR-011); a single CLI process is assumed (a job found `uploading` at start is treated as crashed)
-- Retry back-off (30/60/120 s) runs in the foreground while the CLI waits
-- ffprobe is optional; without it duration/resolution are not checked locally
-- No logging setup yet; History and Settings menus not implemented
+- TikTok: real OAuth + publish NOT RUN (no TikTok developer credentials yet). Unaudited apps can only post `SELF_ONLY`; TikTok returns no public URL, so no TikTok links are saved.
+- Instagram needs a public https `video_url` (ADR-012): the PC must stay online while Meta downloads through the Cloudflare Quick Tunnel (a free testing service without uptime guarantee).
+- Instagram redirect goes through the GitHub Pages callback page, so the final link is pasted into the Connect window (YouTube/TikTok use a loopback callback, no pasting).
+- YouTube: apps in Google "Testing" status need a Reconnect every 7 days; daily upload quota; custom thumbnails need a phone-verified channel.
+- TikTok `refresh_expires_in` is not persisted (no schema column).
+- ffprobe is optional; without it duration/resolution are not checked locally.
+- One Soc_bot process at a time (process lock); a running batch can't be cancelled mid-post, so quitting is blocked while publishing.
 
 ## Next Recommended Task
-**User interface** on top of the frozen engine. First step: a thin service facade (plan batch / create batch / run batch with progress events / list queue and links), so the UI never touches media providers, tunnels, containers, tokens or workers (see CLAUDE_HANDOFF.md → UI boundary). Still open outside the UI: real TikTok run (needs developer credentials).
+Real TikTok run once developer credentials exist (`setup_guide/03_TIKTOK_SETUP.md`). Otherwise only polish driven by daily use; the engine stays frozen.

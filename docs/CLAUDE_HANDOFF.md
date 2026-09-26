@@ -6,7 +6,9 @@
 
 ## Current Objective
 
-**Phase 5B (real TikTok verification): code complete, real run BLOCKED on credentials (2026-09-25).** All TikTok code is verified against current docs and exercised end-to-end against a mocked TikTok API (402 tests, Ruff clean). The **real** TikTok OAuth + SELF_ONLY publish has **not** run: `.env` has no `TIKTOK_CLIENT_KEY/SECRET` and no TikTok account is connected. YouTube remains real-verified. Instagram is Phase 5C.
+**Daily-use polish is DONE (2026-09-26).** Engine frozen; Textual TUI is the default UI. Instagram (11 accounts) and YouTube (2 channels) are real-verified; TikTok is mock-tested only (no developer credentials). Latest work: TUI OAuth worker thread, `force_reauth=true` for adding more Instagram accounts, visible paste field in the Connect window, checksum cache + 15 s Instagram polling, History delete, `setup_guide/` (4 guides), `Start_Soc_bot.bat` launcher, rewritten README with demo screenshots (`tools/readme_screenshots.py`). Details: PROJECT_STATUS.md → "Latest work".
+
+Working rules from the user: never commit or push (the user does), never print/modify secrets or `.env`, never ask for credentials, no unnecessary real posts, official APIs only, and list open jobs + ask about stale ones before any real resume.
 
 ---
 
@@ -588,6 +590,9 @@ See ARCHITECTURE.md → "Publishing (Phase 4)" for the state machine, engine flo
 | 2026-09-25 | **Cloudflare Quick Tunnel media provider** (`cloudflare_tunnel`, AUTO tier 2 for videos > 99 MB; local server + cloudflared; 701 tests). Real 131.9 MB tunnel test passed (SHA-256 match); real Instagram Reel published (job 9, https://www.instagram.com/reel/DduAxFSgaZt/) |
 | 2026-09-26 | **LOCKED batch architecture**: ONE shared media session/Quick Tunnel per Instagram batch (fixes Cloudflare 429), one automatic retry round for the batch's failures (migration 004), real 2/5/11-account + 131.9 MB tests: 1 tunnel each; 777 tests |
 | 2026-09-26 | **Instagram fan-out + custom cover**: `cover_url` via the tunnel (real-verified by thumbnail readback), multi-select accounts, one confirmation, 5 concurrent Instagram jobs, batch queue view; 746 tests. Real 11-account (max 5 concurrent) and 5-account runs passed with covers verified (posts 11-12) |
+| 2026-09-26 | **Terminal UI** (Textual/Rich over `src/services`), Review PUBLISH NOW bar, TUI OAuth on a worker thread |
+| 2026-09-26 | **Add-account + speed + history**: Instagram `force_reauth=true`, paste field fix, checksum cache, 15 s polling, History delete |
+| 2026-09-26 | **Docs & launcher**: `setup_guide/` (master/Instagram/YouTube/TikTok), `Start_Soc_bot.bat`, new README with screenshots, `tools/readme_screenshots.py` |
 | 2026-09-25 | **Published-Link Library**: per-platform JSON link files, menu 6 "Published Links", Instagram permalink fetch, TikTok not saved (no documented URL); 639 tests |
 
 ---
@@ -697,7 +702,7 @@ Migration system: versioned SQL files in `src/storage/migrations/`
 
 ## Tests
 
-**746 unit tests passing; Ruff clean; 0 skipped.** `tests/conftest.py` hides any real cloudflared from tests. TESTING.md defines strategy:
+**823 unit tests passing; Ruff clean; 0 skipped.** `tests/conftest.py` hides any real cloudflared from tests. TESTING.md defines strategy:
 - Unit: validation, models, encryption, state machine, CLI parsing
 - Integration: database, account manager, publisher engine
 - Platform: mocked API tests per adapter
@@ -711,16 +716,11 @@ Run: `pytest tests/unit/ -v`
 
 | Issue | Impact | Workaround |
 |-------|--------|------------|
-| Real OAuth not run on any platform | Provider behaviour unconfirmed | Configure dev apps + credentials, connect each platform once |
-| Real publishing not run on any platform | Upload/publish behaviour unconfirmed | One private test post per platform (Phase 5) |
-| Instagram needs a public https `video_url` | Local files can't go to Instagram | Host the file (ADR-012) |
+| TikTok real OAuth/publish not run | Provider behaviour unconfirmed | Create the TikTok app (`setup_guide/03_TIKTOK_SETUP.md`), one SELF_ONLY test post |
 | TikTok unaudited app | Only `SELF_ONLY` posts | TikTok app audit |
-| YouTube unverified project | Uploads forced private | Google API project verification |
-| Instagram redirect URI: Meta may require HTTPS | Plain loopback callback may be rejected | Check the dashboard; use an HTTPS tunnel/redirect if required |
-| TikTok / Instagram not configured | No real verification | Phase 5B |
+| YouTube app in Google "Testing" | Login expires after 7 days | Reconnect, or publish the app |
+| Cloudflare Quick Tunnel | Free testing service, may rate-limit (429) or be slow | Retry later; S3 provider as fallback |
 | TikTok `refresh_expires_in` not persisted | Can't warn before the refresh token expires | Add a column in a later migration |
-| No logging setup | No observability | Add in Phase 5 |
-| History / Settings menus | Show "not implemented" | Phase 6 |
 
 ---
 
@@ -730,7 +730,6 @@ Run: `pytest tests/unit/ -v`
 - No web UI (terminal only)
 - No scheduling (publish now only)
 - No analytics/insights
-- No bulk operations beyond multi-account select
 - Platform API limits apply (quotas, rate limits)
 - Instagram videos > 99 MB use a Cloudflare Quick Tunnel (testing/development service, no uptime guarantee; PC must stay online while Meta fetches) or S3
 - TikTok published links are not saved: the Content Posting API documents no post URL (see CONTENT_INTAKE.md → Published Links)

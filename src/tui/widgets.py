@@ -67,7 +67,7 @@ class Sidebar(Vertical):
         yield Static("◆ SOC_BOT", classes="brand")
         # The ACTIVE page is marked in its own text (▌ + accent), independent of the cursor, which the user
         # may move with arrows/mouse; the cursor is also put back on the active page whenever it's shown.
-        options = [Option(f"[b $accent]▌{key}  {label}[/]" if mode == self.current else f" [b]{key}[/]  {label}",
+        options = [Option(f"[$accent]▌[/][b]{key}  {label}[/]" if mode == self.current else f" [b]{key}[/]  {label}",
                           id=mode) for mode, key, label in NAV]
         nav = OptionList(*options, id="nav")
         yield nav

@@ -33,7 +33,7 @@ local video (unchanged, never deleted)
    ↓  MediaSourceProvider.prepare()      upload to private bucket, key instagram/temp/<random>/video.mp4
    ↓  get_public_url()                   presigned HTTPS GET URL, TTL = MEDIA_STORAGE_PRESIGNED_URL_TTL (900 s)
    ↓  POST /{ig_id}/media  (REELS, video_url)      Meta downloads the object
-   ↓  poll status_code (60 s × 5, per Meta)        object kept alive during processing
+   ↓  poll status_code (every 15 s, 5 min)         object kept alive during processing
    ↓  POST /{ig_id}/media_publish
    ↓  cleanup()                          object deleted (success, failure or Ctrl+C)
 ```
@@ -238,6 +238,7 @@ A dedicated YouTube channel can serve as an **archive, backup and debugging hub*
   - The earlier audit named `graph.instagram.com/access_token` as the code-exchange endpoint. Meta's docs use `api.instagram.com/oauth/access_token` for the code exchange; `graph.instagram.com/access_token` is the long-lived exchange below.
 - **Short → long-lived token:** `GET https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=…&access_token=<short>` → `{access_token, token_type, expires_in}` (~60 days). If this step fails, the connection fails; the 1-hour token is never stored.
 - **"Refresh" is a token re-exchange, not an OAuth refresh token:** `GET https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=<long-lived>` → a **new** long-lived token plus `expires_in`. Allowed only when the current token is ≥ 24 h old and not expired, and `instagram_business_basic` was granted. Instagram issues no refresh token. The new token replaces the stored one.
+- **Adding another account (`force_reauth=true`):** the authorize URL carries `force_reauth=true`, so Instagram always shows its login screen instead of silently re-authorizing the account already logged in to instagram.com. Without it, "Connect" for a second account just reconnected the first one.
 - **Account identity:** `GET https://graph.instagram.com/v25.0/me?fields=user_id,username,name,profile_picture_url`, with the token sent in the `Authorization` header. `user_id` is the Instagram professional account ID and is stored as `platform_account_id`; `id` is only app-scoped.
 - **PKCE:** not documented for Instagram Login, so it is not sent.
 - **Revocation:** Instagram Login documents no token-revocation endpoint. Soc_bot disconnects locally only (`revoke_tokens()` returns `False` without a request). Users remove access in Instagram → Settings → Apps and websites. Meta's Deauthorize Callback URL is an app-dashboard setting that needs a public HTTPS endpoint, so it is not implemented.
@@ -266,7 +267,7 @@ Sources: https://developers.facebook.com/docs/instagram-platform/content-publish
 - **Auth:** Instagram user access token (Instagram Login) with `instagram_business_basic` + `instagram_business_content_publish`. Sent as `Authorization: Bearer`, never in the URL.
 - **Account types:** Instagram professional (Business or Creator) accounts. An account connected to a Page that requires Page Publishing Authorization can't be published to until PPA is complete.
 - **Upload method:** with Instagram Login, video publishing is documented only via `video_url`. Meta's docs list the resumable `rupload.facebook.com` upload for **Facebook Login only** (NOT VERIFIED whether it works with Instagram Login tokens, so it isn't used). Soc_bot therefore delivers the local file through temporary private storage and a presigned HTTPS URL (see "Instagram Media Delivery" above); the user never enters a URL.
-- **Polling:** Meta recommends checking status "once per minute, for no more than 5 minutes". Soc_bot polls every 60 s, 5 times. If the container is still `IN_PROGRESS`, the job stays `processing` and is re-checked later; this is not a failure.
+- **Polling:** Meta recommends checking status "once per minute, for no more than 5 minutes". Soc_bot checks every **15 s** over the same 5-minute window (20 light GET requests; a ready Reel is published up to 45 s sooner; `POLL_INTERVAL` / `POLL_ATTEMPTS` in `src/platforms/instagram/publisher.py`, where `POLL_ATTEMPTS` means minutes). If the container is still `IN_PROGRESS`, the job stays `processing` and is re-checked later; this is not a failure.
 - **Containers** expire after 24 h (`EXPIRED`). Soc_bot then creates a new container on the next attempt.
 - **Rate limit:** 100 API-published posts per account per 24-hour moving window (`GET /{ig_user_id}/content_publishing_limit` shows usage; not called by Soc_bot).
 - **Caption:** max 2,200 characters, 30 hashtags, 20 @ tags.
