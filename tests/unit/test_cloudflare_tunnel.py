@@ -546,13 +546,14 @@ class TestInstagram:
 
     def test_polling_window_grows_with_size(self, monkeypatch):
         pub = InstagramPublisher()
-        assert pub.poll_attempts(10_000_000) == 5
-        assert pub.poll_attempts(131_925_281) == 9          # 5 + ceil(81.9 / 25)
-        assert pub.poll_attempts(290_000_000) == 15         # capped
+        per_minute = 4  # a check every 15 s over the same window (in minutes)
+        assert pub.poll_attempts(10_000_000) == 5 * per_minute
+        assert pub.poll_attempts(131_925_281) == 9 * per_minute   # 5 + ceil(81.9 / 25) minutes
+        assert pub.poll_attempts(290_000_000) == 15 * per_minute  # capped
         monkeypatch.setenv("INSTAGRAM_MAX_POLL_MINUTES", "7")
-        assert pub.poll_attempts(290_000_000) == 7
+        assert pub.poll_attempts(290_000_000) == 7 * per_minute
         monkeypatch.setenv("INSTAGRAM_MAX_POLL_MINUTES", "1")
-        assert pub.poll_attempts(290_000_000) == 5          # never below Meta's documented 5
+        assert pub.poll_attempts(290_000_000) == 5 * per_minute   # never below 5 minutes
 
 
 

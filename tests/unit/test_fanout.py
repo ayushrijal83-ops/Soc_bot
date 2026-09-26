@@ -322,9 +322,10 @@ class ProbeInstagram(PlatformPublisher):
 
     PLATFORM = "instagram"
 
-    def __init__(self, fail_accounts=(), hold=0.03):
+    def __init__(self, fail_accounts=(), hold=0.03, until_active=None):
         super().__init__(client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500))))
         self.fail_accounts, self.hold = set(fail_accounts), hold
+        self.until_active = until_active  # hold each job until this many run at once (max 3 s): no timing flakes
         self.lock = threading.Lock()
         self.active = self.max_active = 0
         self.events, self.calls = [], []
@@ -341,6 +342,9 @@ class ProbeInstagram(PlatformPublisher):
         try:
             on_progress("processing", {"container_id": f"C-{ctx.platform_account_id}"})
             time.sleep(self.hold)
+            deadline = time.monotonic() + 3
+            while self.until_active and self.max_active < self.until_active and time.monotonic() < deadline:
+                time.sleep(0.01)
             if ctx.platform_account_id in self.fail_accounts:
                 raise PublishError("Instagram said no", code="permission_denied")
             media_id = f"M-{ctx.platform_account_id}"
@@ -396,7 +400,7 @@ class TestFanOut:
     @pytest.mark.parametrize("limit", [1, 2, 5, 10])
     def test_never_more_than_the_limit(self, env, limit):
         post_id, _ = instagram_batch(env, 12)
-        probe = ProbeInstagram(hold=0.4)  # long enough that every free worker is busy at the same time
+        probe = ProbeInstagram(hold=0.05, until_active=min(limit, 12))
         result = make_engine(env, probe, limit=limit).publish_post(post_id)
         assert result.count("published") == 12
         assert probe.max_active == min(limit, 12)

@@ -75,6 +75,12 @@ class SharedMediaSession(MediaSourceProvider):
             log.info("Shared media session: ACTIVE (used by every job of this batch).")
             return handle
 
+    def reset_failed_starts(self) -> None:
+        """Forget cached start failures. Called before the automatic retry round: the round must make ONE
+        real (shared) start attempt instead of inheriting an error cached < FAILED_START_COOLDOWN ago."""
+        with self._lock:
+            self._failed.clear()
+
     def get_public_url(self, handle: MediaHandle) -> str:
         return self._owner(handle).get_public_url(handle)
 

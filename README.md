@@ -28,19 +28,20 @@ A terminal-based multi-platform social media publishing bot for distributing fin
 | Project structure & documentation | ✅ **IMPLEMENTED** |
 | Terminal CLI menu system | ✅ **IMPLEMENTED** |
 | Account management core (CRUD, listing, status) | ✅ **IMPLEMENTED** |
-| OAuth authentication (Instagram, TikTok, YouTube) | ✅ **IMPLEMENTED**, mock-tested; real OAuth NOT RUN |
+| OAuth authentication (Instagram, TikTok, YouTube) | ✅ **IMPLEMENTED**; real OAuth done for Instagram (11 accounts) and YouTube (2 accounts); TikTok real run pending app credentials |
 | OAuth callback server (dynamic loopback port) & PKCE | ✅ **IMPLEMENTED** |
-| Job management & queue | ✅ **IMPLEMENTED** (mocked tests; real publishing NOT RUN) |
-| Instagram publishing adapter (Reels; the local file goes via temporary private storage + presigned URL) | ✅ **IMPLEMENTED**, mock-tested; needs `MEDIA_STORAGE_*` |
-| TikTok publishing adapter (Direct Post) | ✅ **IMPLEMENTED**, mock-tested |
-| YouTube publishing adapter (resumable upload) | ✅ **IMPLEMENTED**, mock-tested |
+| Job management, queue, resume, one automatic retry round per batch | ✅ **IMPLEMENTED**, real-tested |
+| Instagram publishing (Reels + custom cover) with multi-account batches: ONE shared Cloudflare Quick Tunnel per batch, max 5 concurrent jobs | ✅ **IMPLEMENTED**, real-tested (up to 11 accounts, 131.9 MB videos) |
+| Published-link library (`content/published_links/*.json` + `.txt`) | ✅ **IMPLEMENTED**, real-tested |
+| TikTok publishing adapter (Direct Post) | ✅ **IMPLEMENTED**, mock-tested (real run pending TikTok app credentials) |
+| YouTube publishing adapter (resumable upload) | ✅ **IMPLEMENTED**, real-tested |
 | SQLite database layer | ✅ **IMPLEMENTED** |
 | Video validation | ✅ **IMPLEMENTED** |
 | Dry-run mode | ✅ **IMPLEMENTED** (plan only, no API calls) |
 | Content Inbox (drop folders in `content/incoming/`) | ✅ **IMPLEMENTED** (Phase 5A) |
 | Publishing profile (VERIFY / AUTO) | ✅ **IMPLEMENTED** (Phase 5A) |
 | Cover/thumbnail (YouTube `thumbnails.set`) | ✅ **IMPLEMENTED**, real-tested on YouTube |
-| Unit/integration tests | ✅ **IMPLEMENTED** (305 unit tests, Ruff clean) |
+| Unit/integration tests | ✅ **IMPLEMENTED** (780 unit tests, Ruff clean) |
 
 **Legend:** ✅ IMPLEMENTED | 🔄 IN PROGRESS | 📋 PLANNED | 🚫 BLOCKED
 
@@ -149,7 +150,28 @@ content/incoming/post_001/
 
 Full guide: [docs/CONTENT_INTAKE.md](docs/CONTENT_INTAKE.md).
 
-## CLI Workflow (Implemented V1 Menu)
+## Terminal UI
+
+`python main.py` opens the full-screen terminal UI (Textual + Rich). It is still a terminal app: no browser, no web server.
+
+| Key | Page | | Key | Action |
+|---|---|---|---|---|
+| D | Dashboard | | / | Search (lists) |
+| C | Create Post | | Space | Toggle selection |
+| Q | Queue | | Enter | Open / confirm |
+| H | History | | Esc | Back / close |
+| A | Accounts | | Ctrl+P | Command palette |
+| L | Published Links | | ? | Help |
+| T | Content | | Ctrl+Q / X | Exit |
+| S | Settings | | | |
+
+- **Create Post:** Media (video + one optional cover) → Caption → Destinations (platform cards, searchable account list, A all / N none) → Options (only what the chosen platforms need) → Review → one confirmation → live progress (initial round, automatic retry round, final result).
+- **Queue:** batches with progress; Enter opens a batch (o open post, c copy link, r retry a failed job, Enter details). **Links:** C copy selected, A copy all visible (permanent URLs only).
+- Terminals under 100 columns hide the sidebar. Every page works down to 80×24.
+- `python main.py --plain` starts the classic text menu. It is also used automatically when there is no interactive terminal. `--dry-run`, `--scan` and `--version` are unchanged.
+- In the TUI, log lines go to `logs/soc_bot.log` (no tokens or temporary URLs are ever logged).
+
+## Classic menu (`--plain`)
 
 ```
 SOCIAL PUBLISHER v1
@@ -159,8 +181,9 @@ SOCIAL PUBLISHER v1
 3. Publishing Queue
 4. History
 5. Content Inbox
-6. Settings
-7. Exit
+6. Published Links
+7. Settings
+8. Exit
 ```
 
 **Connected Accounts Submenu:**
@@ -217,20 +240,14 @@ CONNECTED ACCOUNTS
 
 ## Development Status
 
-This project is in **Phase 5A (Content Intake + Profiles + Covers): COMPLETE (2026-09-25)**. YouTube is verified against the real API; TikTok and Instagram are not configured yet. The repository contains:
-- ✅ SQLite database layer with migrations and token encryption
-- ✅ Terminal CLI menu system with input validation
-- ✅ Account management core (CRUD, listing, status, filtering)
-- ✅ OAuth authentication for Instagram, TikTok, YouTube
-- ✅ OAuth callback server (dynamic loopback port) with platform-specific PKCE and platform-bound state
-- ✅ Connected Accounts CLI submenu (list, details, connect, update, disconnect, enable)
-- ✅ Publishing engine: independent per-destination jobs, retries, idempotent resume, dry-run
-- ✅ Instagram / TikTok / YouTube publishers (official APIs, docs verified 2026-09-25)
-- ✅ Content Inbox, publishing profile, VERIFY/AUTO, YouTube thumbnails (Phase 5A)
-- ✅ 402 unit tests passing; `ruff check .` clean
-- 🔄 TikTok (Phase 5B): code ready and verified against a mocked API; real run needs a TikTok developer app (see docs/API_INTEGRATIONS.md → TikTok Setup)
-- ✅ Real YouTube OAuth, publishing and thumbnail verified; ⚠️ TikTok/Instagram real runs NOT done
-- Project structure and documentation
+The publishing engine is **complete and frozen for UI development (2026-09-26 audit)**. The repository contains:
+- ✅ SQLite database layer with migrations (schema v4) and encrypted tokens
+- ✅ Terminal CLI (Create Post with one cover + multi-account selection, Publishing Queue, History, Content Inbox, Published Links, Settings)
+- ✅ Official-API OAuth for Instagram, TikTok and YouTube (loopback callback, PKCE where documented)
+- ✅ Publishing engine: independent per-account jobs, retries, resume, dry-run; Instagram batches with ONE shared Cloudflare Quick Tunnel, at most 5 active jobs, and one automatic retry round for the batch's failures
+- ✅ Instagram Reels (incl. custom cover via `cover_url`) and YouTube: real-tested; TikTok: mock-tested, real run pending app credentials
+- ✅ Automatic permanent-link library (JSON + TXT); temporary media URLs are never stored
+- ✅ 780 unit tests passing; `ruff check .` clean
 
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed progress tracking.
 

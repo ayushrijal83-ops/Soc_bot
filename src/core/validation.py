@@ -4,6 +4,7 @@ Only checks that hold for every platform live here. Platform limits (duration, s
 caption length, ...) live in each platform's publisher ``validate()``.
 """
 
+import functools
 import hashlib
 import json
 import mimetypes
@@ -103,7 +104,17 @@ def _probe_into(media: MediaInfo) -> bool:
 
 
 def file_checksum(path: str | os.PathLike) -> str:
-    """SHA-256 of the file, streamed (large videos are never loaded whole)."""
+    """SHA-256 of the file, streamed (large videos are never loaded whole).
+
+    Cached per (path, size, modification time): planning checks every account against the same video,
+    and hashing a 132 MB file once per account made the review step slow. A changed file is re-hashed.
+    """
+    stat = os.stat(path)
+    return _checksum(os.path.abspath(path), stat.st_size, stat.st_mtime_ns)
+
+
+@functools.lru_cache(maxsize=32)
+def _checksum(path: str, size: int, mtime_ns: int) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):

@@ -356,3 +356,18 @@ def test_media_info_size_drives_instagram_validation(monkeypatch, tmp_path):
     pub = InstagramPublisher()
     assert pub.validate("c", {}, MediaInfo("v.mp4", 10_000_000, "video/mp4")) == []
     assert "150.0 MB" in pub.validate("c", {}, MediaInfo("v.mp4", 150_000_000, "video/mp4"))[0]
+
+
+def test_checksum_is_cached_until_the_file_changes(tmp_path):
+    import os
+
+    from src.core import validation
+
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"a" * 1000)
+    first = validation.file_checksum(video)
+    with patch("src.core.validation.hashlib.sha256", side_effect=AssertionError("hashed again")):
+        assert validation.file_checksum(video) == first  # same file: no re-hash
+    video.write_bytes(b"b" * 1000)
+    os.utime(video, ns=(0, 10**18))  # a real edit also changes the modification time
+    assert validation.file_checksum(video) != first

@@ -310,3 +310,12 @@ def test_permissions_string_form_also_supported(env):
     m.redirect_prompt = lambda message: f"{PAGES_REDIRECT}?code=C&state={seen['query']['state']}"
     result = run(m, meta, paste_browser(seen))
     assert result["account"]["scopes"] == ["instagram_business_basic", "instagram_business_content_publish"]
+
+
+
+def test_authorization_url_forces_login_so_another_account_can_be_added():
+    from src.platforms.instagram.auth import InstagramAuth
+
+    config = InstagramAuth.create_config("app", "secret", "https://example.github.io/cb")
+    # PlatformAuth.get_authorization_url merges additional_params into the authorize URL.
+    assert config.additional_params == {"force_reauth": "true"}

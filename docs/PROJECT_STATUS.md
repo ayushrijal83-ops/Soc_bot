@@ -1,16 +1,25 @@
 # Project Status
 
 ## Current Phase
-**Phase 5B: Real TikTok OAuth + SELF_ONLY Publishing Verification**: 🔄 **CODE READY; REAL TEST BLOCKED on TikTok developer credentials (2026-09-25)**
+**Terminal UI complete (2026-09-26)**: Textual/Rich TUI over a thin service layer (`src/services`); engine unchanged and frozen. Classic menu kept as `--plain`.
+- 792 tests (12 new TUI/service tests), Ruff clean; visual QA at 80×24, 100×30, 120×40, 160×50.
+- Real user flow through the TUI: Create Post (fresh video + cover.jpg) → @noxivra_07 → live progress → PUBLISH COMPLETE → Published Links → copy. Post 25: https://www.instagram.com/reel/Ddvf586AGkE/ (cover verified by API readback; clipboard held only the permanent URL).
+
+**Publishing engine: FROZEN (final engine audit, 2026-09-26).**
 
 | Claim | Status |
 |-------|--------|
-| TikTok docs re-verified | ✅ 2026-09-25 |
-| TikTok OAuth / publishing tested with a mocked TikTok API | ✅ (402 tests, Ruff clean) |
-| Real TikTok OAuth | ❌ NOT RUN: `TIKTOK_CLIENT_KEY/SECRET` empty, no developer app yet |
-| Real TikTok SELF_ONLY publish | ❌ NOT RUN (depends on the above) |
-| Real YouTube OAuth / publishing / thumbnail | ✅ (Phase 5, 5A) |
-| Real Instagram | ❌ NOT RUN (Phase 5C) |
+| Instagram OAuth + Reels + custom cover, real | ✅ 11 accounts connected; batches of 1/2/5/11 accounts, 10 MB and 131.9 MB videos |
+| ONE Cloudflare Quick Tunnel per Instagram batch, max 5 active jobs, one automatic retry round | ✅ real (1 tunnel per batch every time) + unit tests (incl. 50 jobs) |
+| YouTube OAuth / publishing / thumbnail, real | ✅ |
+| TikTok OAuth / publishing | ✅ mock-tested; ❌ real run NOT done (no TikTok developer credentials) |
+| Tests / Ruff | ✅ 780 passing (3 consecutive full runs), Ruff clean |
+
+### Final engine audit (2026-09-26)
+- Fixed (HIGH): a tunnel start failure cached for 30 s could make the automatic retry round fail instantly without a real attempt. The retry round now clears the cached failure and makes ONE fresh shared start (regression test fails without the fix).
+- Docs: stale per-job-tunnel statements and an outdated README status corrected.
+- Instagram size limit: 300 MB = the current IG User Media reference ("File size: 300MB maximum", 15 min max). Kept (computed as 300 MiB; Meta writes "300MB"; files between 300,000,000 and 314,572,800 bytes are the only ambiguity).
+- Real regression: post 22 (1 account), post 23 (5 accounts), post 24 (131.9 MB, 2 accounts). All published, covers verified, 1 tunnel per batch, links saved, sources unchanged.
 
 ## Implementation State
 
@@ -191,7 +200,7 @@
 - [x] **Real Instagram publish through the tunnel ✅ (2026-09-25):** Create Post (AUTO) → `videos/0612.mp4` (131.9 MB) → Cloudflare Quick Tunnel → Reel on noxivra_01. Post 8 / job 9, media id 18155048788569324, https://www.instagram.com/reel/DduAxFSgaZt/, 84 s end to end. Link saved to `instagram.json`; no cloudflared left; tunnel URL in no log, DB or link file; source unchanged (same SHA-256)
 
 ### Instagram fan-out + one cover for all accounts: ✅ implemented (2026-09-26)
-- [x] Instagram `cover_url` (JPEG ≤ 8 MB, stdlib structure check; invalid cover BLOCKS), served with the video on the same per-job tunnel
+- [x] Instagram `cover_url` (JPEG ≤ 8 MB, stdlib structure check; invalid cover BLOCKS), served with the video on the same tunnel (one tunnel per batch since ADR-028)
 - [x] Router is cover-aware (`supports_cover`; only the Cloudflare Quick Tunnel today)
 - [x] Create Post: cover prompt, multi-select accounts (A/N/toggle/ranges), one batch summary (valid/invalid, concurrency, provider, bandwidth), ONE confirmation, grouped duplicate question
 - [x] Engine: Instagram jobs in a pool of `INSTAGRAM_MAX_CONCURRENT_PUBLISHES` (default 5); failure isolation; resume skips published/failed; Ctrl+C leaves queued jobs pending; published-links writes locked
@@ -292,4 +301,4 @@
 - No logging setup yet; History and Settings menus not implemented
 
 ## Next Recommended Task
-**Phase 5B: real TikTok (then Instagram) verification.** Configure a TikTok Login Kit for Desktop + Content Posting API app, connect a test account, and publish a `SELF_ONLY` package through the Content Inbox. For Instagram, decide how videos get a public `video_url`. Optional: a background inbox watcher that calls `ContentIntake.scan()` / `publish_ready()`.
+**User interface** on top of the frozen engine. First step: a thin service facade (plan batch / create batch / run batch with progress events / list queue and links), so the UI never touches media providers, tunnels, containers, tokens or workers (see CLAUDE_HANDOFF.md → UI boundary). Still open outside the UI: real TikTok run (needs developer credentials).

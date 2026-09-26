@@ -7,8 +7,9 @@
 
 Quick Tunnels need no Cloudflare account, API key or domain. Cloudflare documents them as intended
 for testing and development, with no uptime guarantee (https://developers.cloudflare.com/cloudflare-one/
-connections/connect-networks/do-more-with-tunnels/trycloudflare/). Each prepared media object gets its
-own server, token and tunnel, so concurrent jobs (two Instagram accounts) never share or break a URL.
+connections/connect-networks/do-more-with-tunnels/trycloudflare/). One prepare() = one server + one tunnel
+serving the video (+ cover). Publishing batches wrap this provider in a SharedMediaSession (shared.py), so a
+whole batch (any number of accounts) uses ONE prepared object, i.e. ONE tunnel.
 """
 
 import atexit
@@ -183,7 +184,7 @@ class TunnelSession:
 
 class CloudflareTunnelMediaProvider(MediaSourceProvider):
     name = ("Cloudflare Quick Tunnel to this computer (temporary public URL, nothing is uploaded; "
-            "runs only while Instagram fetches the video)")
+            "one tunnel per batch, runs only while the batch publishes)")
     max_file_size = None  # streamed from disk; Instagram's own 300 MB limit is checked by the adapter
     supports_cover = True  # the cover is served next to the video, on the same server and tunnel
 

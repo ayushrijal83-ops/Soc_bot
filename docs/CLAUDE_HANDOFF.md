@@ -745,14 +745,22 @@ Run: `pytest tests/unit/ -v`
 
 ## Next Recommended Task
 
-### Phase 5B: Real TikTok Verification (then Instagram)
-1. TikTok developer app: Login Kit for Desktop + Content Posting API; register `http://127.0.0.1:*/callback/tiktok`; put the client key/secret in `.env`
-2. Connect a test account; add it to the profile with privacy `SELF_ONLY`
-3. Publish one package from Content Inbox; confirm `cover_status=not_supported` and the post appears (private)
-4. Instagram: decide on video hosting for `video_url.txt`, then do the same
-5. Optional: background watcher calling `ContentIntake.scan()` / `publish_ready()`; TikTok frame-cover option
+### Terminal UI: DONE (2026-09-26)
+`python main.py` opens the Textual TUI (`src/tui`), which uses only `src/services` (plan / create_batch / publish_batch with events, accounts, links, content, settings). `--plain` keeps the classic menu. OAuth Connect, the classic Content Inbox and the profile editor run inside the TUI through `App.suspend()`, reusing the tested terminal flows. Quit is blocked while a batch publishes (engine workers can't be cancelled mid-post).
+Next: real TikTok run (credentials), optional polish.
 
----
+### User interface (engine is FROZEN since the 2026-09-26 audit)
+Change engine code only for a genuine service-layer or API defect found while integrating the UI.
+
+**UI boundary (what the UI consumes; build this facade first):** today `src/cli/publish_menu.py` assembles batch facts itself from engine and media internals (`engine.store.*`, `engine.publishers[...].cover_plan`, `media_storage.delivery_provider`, `PublisherEngine._retry_delay`, `max_concurrent_publishes`). A UI should call one service instead:
+- `list_accounts()` (AccountManager, token-free views)
+- `plan_batch(video_path, caption, cover_path, account_ids) -> BatchPlan` (valid/invalid accounts with reasons, provider, shared-tunnel flag, jobs, initial active/pending, retry policy, transfer estimate; no network)
+- `create_batch(...) -> post_id` (`JobStore.create_post(..., auto_retry=True)` + cover status)
+- `run_batch(post_id, on_event)`: runs `PublisherEngine.publish_post` in a background thread. Events are `JobResult` updates plus round/final summaries. `on_update` is called from worker threads (already serialized by a lock), so a UI must hand events over to its own thread.
+- `queue()` / `batch_status(post_id)` / `retry_job(job_id)` / `published_links(platform)`
+
+The UI must never see temporary URLs, tokens, tunnel or container details; the engine already keeps them internal.
+
 
 ## How To Continue
 

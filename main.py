@@ -27,6 +27,43 @@ from src.storage.tokens import TokenEncryption
 ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 
+def configure_file_logging() -> Path:
+    """TUI mode: the screen belongs to the UI, so Soc_bot's log lines go to logs/soc_bot.log instead."""
+    import logging
+
+    log_dir = Path(__file__).resolve().parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    path = log_dir / "soc_bot.log"
+    logger = logging.getLogger("soc_bot")
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return path
+
+
+def tui_available() -> bool:
+    """A real interactive terminal and an importable Textual; otherwise the classic menu is used."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    try:
+        import textual  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def run_tui(account_manager, auth_manager, engine, intake) -> None:
+    from src.services import build_services
+    from src.tui.app import run_tui as start
+
+    configure_file_logging()
+    start(build_services(account_manager, auth_manager, engine, intake, ENV_FILE))
+
+
 def configure_logging() -> None:
     """Show Soc_bot's own progress messages as "[INFO] ..." (third-party loggers stay quiet)."""
     import logging
@@ -54,7 +91,8 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py                 # Start interactive menu
+  python main.py                 # Start the terminal UI (TUI)
+  python main.py --plain         # Start the classic text menu instead
   python main.py --help          # Show this help
   python main.py --dry-run       # Preview unpublished posts and content packages (no API calls)
   python main.py --scan          # Scan content/incoming; AUTO profiles publish, VERIFY only lists
@@ -69,6 +107,11 @@ Examples:
         "--scan",
         action="store_true",
         help="Scan the content inbox. With an AUTO profile, publish ready packages; with VERIFY, only list them.",
+    )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="Use the classic text menu instead of the full-screen terminal UI.",
     )
     parser.add_argument(
         "--version",
@@ -173,6 +216,11 @@ def main() -> int:
         account_manager, auth_manager, engine, intake = initialize_services()
         if args.scan:
             return run_scan(intake)
+        if not args.plain and tui_available():
+            run_tui(account_manager, auth_manager, engine, intake)
+            return 0
+        if not args.plain:
+            print("[INFO] Full-screen UI not available here (no interactive terminal); using the classic menu.")
         run_menu(account_manager=account_manager, auth_manager=auth_manager, engine=engine, intake=intake)
         return 0
     except KeyboardInterrupt:

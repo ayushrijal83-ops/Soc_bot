@@ -55,8 +55,11 @@ class InstagramPublisher(PlatformPublisher):
     # Long-lived tokens last ~60 days and can only be re-exchanged once >= 24h old: renew early.
     TOKEN_REFRESH_MARGIN = 7 * 24 * 3600
     # Meta: "query a container's status once per minute, for no more than 5 minutes".
-    POLL_INTERVAL = 60.0
-    POLL_ATTEMPTS = 5
+    # Meta suggests checking about once a minute for up to 5 minutes. Real Reels finished processing well
+    # inside the first minute, so a 60 s wait made every job ~60 s slower than needed: check every 15 s
+    # over the SAME time window (a few extra light GET calls per job).
+    POLL_INTERVAL = 15.0
+    POLL_ATTEMPTS = 5  # minutes (the window); see poll_attempts()
     # Large files: one extra poll per 25 MB above 50 MB (Meta downloads them first), capped by
     # INSTAGRAM_MAX_POLL_MINUTES. The media URL stays alive for the whole window.
     DEFAULT_MAX_POLL_MINUTES = 15
@@ -158,7 +161,9 @@ class InstagramPublisher(PlatformPublisher):
         except ValueError:
             cap = self.DEFAULT_MAX_POLL_MINUTES
         extra = math.ceil(max(0, (size or 0) - 50_000_000) / 25_000_000)
-        return max(self.POLL_ATTEMPTS, min(self.POLL_ATTEMPTS + extra, cap))
+        minutes = max(self.POLL_ATTEMPTS, min(self.POLL_ATTEMPTS + extra, cap))
+        per_minute = max(1, int(60 // self.POLL_INTERVAL)) if self.POLL_INTERVAL > 0 else 1
+        return minutes * per_minute
 
     def _media_url(self, ctx: PublishContext, stack: ExitStack) -> tuple[str, str | None]:
         """Direct HTTPS URLs (video, cover or None) for this attempt. Cleaned up when ``stack`` closes."""

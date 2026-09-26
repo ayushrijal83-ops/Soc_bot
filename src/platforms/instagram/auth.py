@@ -178,6 +178,10 @@ class InstagramAuth(PlatformAuth):
             authorization_url=InstagramAuth.AUTHORIZATION_URL,
             token_url=InstagramAuth.TOKEN_URL,
             pkce_required=False,
+            # Meta: force_reauth=true "forces an app user to use their Instagram professional account credentials
+            # to log into your app even if the user is logged into Instagram". Without it the browser's current
+            # Instagram session is reused, so Connect can only ever re-authorize that one account.
+            additional_params={"force_reauth": "true"},
         )
 
 

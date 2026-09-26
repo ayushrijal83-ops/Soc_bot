@@ -257,6 +257,10 @@ class PublisherEngine:
                          sum(j.status == "published" for j in done if j.id in parallel_ids),
                          sum(j.status == "failed" for j in done if j.id in parallel_ids), len(retry), self._retry_delay())
                 self.sleep(self._retry_delay())
+                for session in sessions.values():  # the retry round gets one fresh shared start, not a cached error
+                    reset = getattr(session, "reset_failed_starts", None)
+                    if reset:
+                        reset()
                 for job in retry:
                     self.store.mark_auto_retry_used(job.id)  # before running: a crash never earns a second one
                     self.store.transition(job.id, "retrying", next_retry_at=None)

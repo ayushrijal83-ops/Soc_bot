@@ -209,9 +209,10 @@ class TestInstagramPublisher:
         unknown = MediaInfo("v", 1, "video/mp4")  # unknown duration is not rejected
         assert pub.validate("ok", IG_OPTS, unknown) == []
 
-    def test_poll_defaults_follow_meta_guidance(self):
-        assert InstagramPublisher.POLL_INTERVAL == 60
-        assert InstagramPublisher.POLL_ATTEMPTS == 5
+    def test_poll_defaults_keep_metas_five_minute_window(self):
+        pub = InstagramPublisher()
+        assert InstagramPublisher.POLL_INTERVAL == 15  # checked more often than Meta's once a minute...
+        assert pub.poll_attempts(10_000_000) * pub.POLL_INTERVAL == 5 * 60  # ...over the same 5 minutes
 
 
 # ---------------------------------------------------------------------------------------------

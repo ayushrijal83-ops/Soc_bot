@@ -493,3 +493,26 @@ def test_dry_run_shows_batch_facts_and_starts_nothing(env, exe, monkeypatch, cov
     assert "accounts 50, jobs 50, concurrency 5, shared tunnels 1, provider cloudflare_tunnel" in out
     assert "cover cover.jpg" in out and "1 final retry round" in out and "trycloudflare" not in out
     assert all(j.status == "pending" for j in eng.store.jobs_for_post(post_id))
+
+
+def test_retry_round_makes_one_fresh_shared_start_after_a_failed_start(env, cover):
+    """Audit fix: a start failure (e.g. Cloudflare 429) cached for 30 s must not make the automatic retry
+    round fail instantly. The round gets ONE fresh shared start for all its jobs (still one per batch)."""
+    starts = []
+
+    class FlakyStart(CountingProvider):
+        def prepare(self, video_path, content_type, cover_path=None):
+            starts.append(1)
+            if len(starts) == 1:
+                raise MediaStorageError("cloudflared exited: quick tunnel provisioning failed with status 429",
+                                        retryable=True)
+            return MediaHandle(video_path, content_type, public_url="https://h.example/v.mp4",
+                               cover_url="https://h.example/c.jpg" if cover_path else None)
+
+    graph = Graph()
+    post_id, _ = batch(env, 5, cover)
+    eng = ig_engine(env, graph, FlakyStart)
+    result = eng.publish_post(post_id)
+    assert result.count("published") == 5 and result.status == "completed"
+    assert len(starts) == 2  # the failed initial start + ONE fresh start for the whole retry round
+    assert all(j.auto_retry_used for j in eng.store.jobs_for_post(post_id))
