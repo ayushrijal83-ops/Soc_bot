@@ -246,14 +246,15 @@ class PublisherEngine:
         try:
             initial = [job for job in parallel if job.status not in ("published", "failed")]
             if initial:
-                log.info("Instagram batch #%s: %s job(s), at most %s at a time, one shared media session.",
-                         post_id, len(initial), self._limit())
+                log.info("INSTAGRAM BATCH #%s: %s job(s), at most %s active at a time, ONE shared media session "
+                         "(started by the first job that needs it).", post_id, len(initial), self._limit())
             self._run_pool(initial, run, sessions, results)
             retry = self._retry_candidates(post_id)
             if retry:
                 done = self.store.jobs_for_post(post_id)
-                log.info("Initial round complete: %s published, %s failed. Automatic retry round for %s job(s) "
-                         "in %ss (same media session).", sum(j.status == "published" for j in done if j.id in parallel_ids),
+                log.info("INITIAL ROUND COMPLETE: Published %s, Failed %s. Starting automatic retry round for %s "
+                         "job(s) in %ss (same shared media session).",
+                         sum(j.status == "published" for j in done if j.id in parallel_ids),
                          sum(j.status == "failed" for j in done if j.id in parallel_ids), len(retry), self._retry_delay())
                 self.sleep(self._retry_delay())
                 for job in retry:
@@ -263,7 +264,7 @@ class PublisherEngine:
                 self._run_pool([self.store.get_job(job.id) for job in retry], run, sessions, results)
                 final = {j.id: j.status for j in self.store.jobs_for_post(post_id)}
                 recovered = sum(final[job.id] == "published" for job in retry)
-                log.info("Retry round complete: %s recovered, %s still failed.", recovered, len(retry) - recovered)
+                log.info("RETRY ROUND COMPLETE: Recovered %s, Still failed %s.", recovered, len(retry) - recovered)
         finally:
             for session in sessions.values():
                 session.close()

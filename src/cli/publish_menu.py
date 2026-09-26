@@ -15,7 +15,12 @@ from src.cli.display import (
 )
 from src.cli.prompts import prompt_choice, prompt_int, prompt_text
 from src.core.jobs import JobError
-from src.core.publisher import JobResult, PlanItem, PublisherEngine
+from src.core.publisher import (
+    JobResult,
+    PlanItem,
+    PublisherEngine,
+    max_concurrent_publishes,
+)
 from src.core.validation import validate_video_file
 from src.platforms.base import redact
 from src.platforms.tiktok.publisher import PRIVACY_LEVELS
@@ -250,13 +255,14 @@ def print_plan(plan: list[PlanItem]) -> None:
 def batch_progress(engine: PublisherEngine, post_id: int):
     """Per-job lines plus the batch counts after each change. Never prints URLs."""
     statuses = {job.id: job.status for job in engine.store.jobs_for_post(post_id)}
+    limit = engine.max_concurrent or max_concurrent_publishes()
 
     def update(result: JobResult) -> None:
         _print_update(result)
         statuses[result.job_id] = result.status
         values = list(statuses.values())
         running = sum(v in ("uploading", "processing") for v in values)
-        print(f"    [Total {len(values)} | Running {running} | Retrying {values.count('retrying')} | "
+        print(f"    [Total {len(values)} | Running {running} (active {running}/{limit}) | Retrying {values.count('retrying')} | "
               f"Pending {values.count('pending')} | Published {values.count('published')} | "
               f"Failed {values.count('failed')}]")
 
@@ -271,7 +277,7 @@ def _print_update(update: JobResult) -> None:
 
 
 def _print_summary(jobs: list[JobResult], engine: PublisherEngine | None = None) -> None:
-    print_header("RESULT")
+    print_header("FINAL RESULT")
     for job in jobs:
         _print_update(job)
     published = sum(j.status == "published" for j in jobs)

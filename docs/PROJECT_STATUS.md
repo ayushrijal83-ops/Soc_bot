@@ -207,7 +207,7 @@
 - [x] `SharedMediaSession`: one local server + ONE Quick Tunnel per batch (one video route + one cover route), replaced once if it dies, 30 s cooldown after a failed start, closed after the retry round
 - [x] One automatic retry round for the batch's failed Instagram jobs (migration 004: `posts.auto_retry`, `publish_jobs.auto_retry_used`); same pool limit, same tunnel; resume-safe; old posts never retried; manual retry takes over
 - [x] Real: TEST 1 (2 accounts, post 18), TEST 2 (5, post 19), TEST 3 (11, post 20), TEST 4 (131.9 MB, 2 accounts, post 21). **1 tunnel creation per batch** each time; max 5 running; all published; all covers verified by API readback; links saved
-- [x] 777 tests (23 new in `test_batch.py`)
+- [x] 779 tests (25 in `test_batch.py`, incl. 50 jobs → 1 tunnel); CLI shows INSTAGRAM BATCH / INITIAL ROUND COMPLETE / RETRY ROUND COMPLETE / FINAL RESULT and "active x/5"; `--dry-run` prints per-batch accounts/jobs/concurrency/shared tunnels/provider/cover/automatic retry
 
 ### Published-link finalization (2026-09-26)
 - [x] `.txt` exports (one permanent URL per line), OS file lock across processes, `permalink_missing` flag + warning, per-platform "Permanent links saved" summary after publishing

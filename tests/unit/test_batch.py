@@ -105,7 +105,7 @@ def ig_engine(services, graph, factory, limit=5, links=None):
 # A/B/I/K. One shared tunnel per batch, shared URLs, cleanup only after the whole batch
 # ---------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("accounts", [2, 5, 11])
+@pytest.mark.parametrize("accounts", [2, 5, 11, 50])
 def test_one_batch_one_tunnel_shared_urls(env, exe, cover, tmp_path, accounts):
     popen = FakePopen()
     alive_at_publish = []
@@ -476,3 +476,20 @@ def test_plan_mentions_shared_tunnel_and_starts_nothing(env, exe, monkeypatch, c
     assert all(item.ready for item in plan)
     assert "ONE tunnel shared by all Instagram jobs of this batch" in " ".join(plan[0].notes)
     assert eng.store.recent_jobs() == []
+
+
+def test_dry_run_shows_batch_facts_and_starts_nothing(env, exe, monkeypatch, cover, capsys):
+    from unittest.mock import patch
+
+    import main as main_module
+
+    monkeypatch.setenv("MEDIA_STORAGE_PROVIDER", "auto")
+    post_id, _ = batch(env, 50, cover)
+    db, accounts, _, _ = env
+    eng = PublisherEngine(db, accounts, publishers={"instagram": InstagramPublisher()}, probe_media=False)
+    with patch("src.media_storage.cloudflare_tunnel.subprocess.Popen", side_effect=AssertionError("cloudflared")):
+        main_module.print_batch_dry_run(eng, post_id, eng.plan_post(post_id))
+    out = capsys.readouterr().out
+    assert "accounts 50, jobs 50, concurrency 5, shared tunnels 1, provider cloudflare_tunnel" in out
+    assert "cover cover.jpg" in out and "1 final retry round" in out and "trycloudflare" not in out
+    assert all(j.status == "pending" for j in eng.store.jobs_for_post(post_id))

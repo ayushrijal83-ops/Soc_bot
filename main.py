@@ -111,7 +111,9 @@ def run_dry_run() -> int:
         print("No unpublished posts. Nothing would be published.")
     for post_id in post_ids:
         print(f"\nPost #{post_id}")
-        print_plan(engine.plan_post(post_id))
+        plan = engine.plan_post(post_id)
+        print_plan(plan)
+        print_batch_dry_run(engine, post_id, plan)
 
     # Content inbox: scan + validate + plan only. Nothing is moved, saved or sent.
     intake = ContentIntake(db, engine.account_manager, engine)
@@ -120,6 +122,24 @@ def run_dry_run() -> int:
     for entry in entries:
         print_entry(entry)
     return 0
+
+
+def print_batch_dry_run(engine, post_id: int, plan) -> None:
+    """Instagram batch facts for dry-run (no tunnel, no server, no network, nothing created)."""
+    from src.core.publisher import max_concurrent_publishes
+    from src.media_storage import delivery_provider
+
+    jobs = [j for j in engine.store.jobs_for_post(post_id) if j.platform == "instagram"
+            and j.status not in ("published", "failed")]
+    if not jobs:
+        return
+    _, video = engine.store.get_post(post_id)
+    covers = sorted({Path(j.options["cover_path"]).name for j in jobs if j.options.get("cover_path")})
+    provider = delivery_provider(video.size_bytes, bool(covers)) or "none available"
+    print(f"Instagram batch: accounts {len(jobs)}, jobs {len(jobs)}, concurrency {max_concurrent_publishes()}, "
+          f"shared tunnels {1 if provider == 'cloudflare_tunnel' else 0}, provider {provider}, "
+          f"cover {', '.join(covers) or 'none'}, automatic retry: "
+          f"{'1 final retry round' if engine.store.post_auto_retry(post_id) else 'off (older post)'}")
 
 
 def run_scan(intake) -> int:
