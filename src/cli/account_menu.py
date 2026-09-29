@@ -183,7 +183,18 @@ class AccountMenuHandler:
             self._pause()
             return True
 
+        force_reauth = False
         if platform == "instagram":
+            choice = prompt_choice("Which Instagram account?", [
+                "Use currently logged-in Instagram account",
+                "Add a different Instagram account (Instagram asks for username/password)",
+                "Cancel",
+            ])
+            if choice not in (1, 2):
+                print_info("Cancelled.")
+                self._pause()
+                return True
+            force_reauth = choice == 2
             print_info("Instagram uses the INSTAGRAM App ID/secret from App Dashboard > Instagram > "
                        "API setup with Instagram login (not the Meta App ID shown in App settings).")
             self.auth_manager.redirect_prompt = lambda message: prompt_text(message)
@@ -193,7 +204,7 @@ class AccountMenuHandler:
 
         try:
             # Run the async connect_account method
-            result = asyncio.run(self.auth_manager.connect_account(platform))
+            result = asyncio.run(self.auth_manager.connect_account(platform, force_reauth=force_reauth))
 
             if result.get("success"):
                 account = result.get("account", {})

@@ -149,10 +149,16 @@ The Dashboard's **Instagram** card should no longer say "Not set up".
 
 1. Press **A** (Accounts). Click the **Instagram** tab.
 2. Click **Connect** (or **Reconnect** for an account that's already listed: same flow).
-3. A window **CONNECTING INSTAGRAM** appears, and your **web browser opens** Instagram's official
-   login page.
-4. In the browser: **log in with the account you want to add** (Soc_bot always asks Instagram to show
-   the login screen, so you can pick any account, even if another one is logged in).
+   Soc_bot asks which account:
+   - **Use logged-in account**: the account your browser is already logged in to on instagram.com.
+     Instagram usually skips the password and goes straight to step 5.
+   - **Add a different account**: Instagram always shows its login screen, even if another
+     account is logged in.
+   - **Cancel**: nothing happens.
+3. A window **CONNECTING INSTAGRAM** appears, and your **web browser opens** Instagram's official page.
+4. In the browser: if Instagram shows a login screen, **log in with the account you want to add**.
+   Instagram can still ask for the password (or a security check) even with "Use logged-in account",
+   e.g. when its session expired or the browser that opened isn't the one you're logged in with.
 5. Instagram shows what Soc_bot may do. **Keep both permissions ON** (basic info + content
    publishing) and click **Allow** / **Continue**.
 6. The browser lands on a page titled **"Instagram authorization received"**.
@@ -166,9 +172,8 @@ The Dashboard's **Instagram** card should no longer say "Not set up".
    **● Ready**, with "Login valid until" about 60 days ahead.
 10. Close the browser tab.
 
-**To add the next account:** click **Connect** again and log in with the next account in step 4.
-If the browser keeps using the previous account, click "Not you?/Switch accounts" on Instagram's page,
-or log out at instagram.com first.
+**To add the next account:** click **Connect** → **Add a different account** and log in with the next
+account in step 4. If the browser keeps using the previous account, log out at instagram.com first.
 
 Notes:
 - The code in the address works **once** and expires within **1 hour**. If you wait too long or paste
@@ -217,7 +222,7 @@ are done, failed accounts are retried **once** automatically; a second failure s
 | "Invalid redirect_uri" / "URL blocked" | `.env` `INSTAGRAM_REDIRECT_URI` isn't **exactly** the saved Business-login redirect URI (STEP 3.3). |
 | "Invalid platform app" | Same as the first row. |
 | Login works but "user is not a tester"/"insufficient developer role" | The account isn't an accepted **Instagram Tester** (STEP 4). |
-| Same account gets connected again | Log in with the other account on Instagram's login page; log out at instagram.com if needed. |
+| Same account gets connected again | Use **Add a different account** and log in with the other account; log out at instagram.com if needed. |
 | "Missing required permission: instagram_business_content_publish" | You turned a permission off. **Reconnect** and keep both ON. |
 | Paste window says the address is wrong | Paste the **full** address from the callback page, not the Instagram login page. |
 | "Instagram media processing failed (status ERROR)" | Instagram couldn't process that video for that account (it gets one automatic retry). Check the video rules above. |

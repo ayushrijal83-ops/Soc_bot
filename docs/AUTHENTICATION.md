@@ -111,6 +111,16 @@ Instagram (`InstagramAuth.REQUIRES_REGISTERED_REDIRECT = True`) never uses a dyn
 | `http://127.0.0.1:<port>/callback/instagram` | local | the existing `OAuthCallbackServer` on that fixed port (same validation as other platforms) |
 | any `https://` non-loopback URI (e.g. `https://ayushrijal83-ops.github.io/Soc_bot/oauth/instagram-callback.html`) | paste | the browser lands on the static page; the user pastes the full address; `AuthManager._read_pasted_redirect` checks the base URI, `error`, code and state (single-use, unexpired, platform = instagram) before any token exchange |
 
+### Existing Instagram session vs. adding another account
+
+`AuthManager.connect_account(platform, force_reauth=False)`. Both UIs ask before an Instagram flow starts:
+
+1. **Use currently logged-in Instagram account**: no `force_reauth`. Instagram reuses the browser's instagram.com session (usually just the Allow screen).
+2. **Add a different Instagram account**: `force_reauth=true`, so Instagram asks for username/password even if an account is logged in.
+3. **Cancel**: no OAuth flow, no browser, no callback server.
+
+The flag is set on the cached config for each flow (so it never leaks into the next one) and is refused for TikTok/YouTube. The stored account is decided by the `/me` `user_id`, not by the choice: if either option returns an account that is already stored, that row is updated, not duplicated. Instagram and the browser control the session, not Soc_bot: an expired session, a different browser/Chrome profile, or an Instagram login/security checkpoint can still show the login screen. Silent reuse is not guaranteed.
+
 Paste mode needs the interactive CLI (`AuthManager.redirect_prompt`, set by Connected Accounts). TikTok and YouTube never use it; for them, non-loopback redirect URIs are still rejected.
 
 Security note: in paste mode the one-time code reaches the static host (GitHub Pages) in the request URL. The code expires within an hour, can be used once, and is useless without the app secret, which exists only in the local `.env`. The page is plain HTML (no JavaScript, `no-referrer`, `noindex`).

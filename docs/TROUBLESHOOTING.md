@@ -511,7 +511,11 @@ Batches created by Create Post / Content Inbox retry their failed Instagram jobs
 
 ### Problem: "Connect" for a new Instagram account just reconnects the old one
 
-Fixed (2026-09-26): the Instagram authorize URL sends `force_reauth=true`, so Instagram always shows its login screen. Log in with the **new** account there. If the browser still jumps straight to "Allow" for the old account, log out on instagram.com (or use a private window) and press Connect again.
+Connect → choose **Add a different Instagram account**. That sends `force_reauth=true`, so Instagram shows its login screen; log in with the **new** account there. (*Use currently logged-in Instagram account* intentionally reconnects whatever account the browser is logged in to.) If the browser still jumps straight to "Allow" for the old account, log out on instagram.com and press Connect again.
+
+### Problem: Instagram asks for the password although I'm logged in
+
+Choose **Use currently logged-in Instagram account** (since 2026-09-29 it no longer forces a login). Make sure you're logged in to instagram.com in the browser/Chrome profile that opens (Windows' default browser, most recently used profile). Instagram and the browser control the session, not Soc_bot: an expired session, a different browser/Chrome profile, or an Instagram login/security checkpoint can still show the login screen. Silent reuse is not guaranteed.
 
 ### Problem: no place to paste the Instagram link in the terminal app
 

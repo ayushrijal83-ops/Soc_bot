@@ -313,9 +313,75 @@ def test_permissions_string_form_also_supported(env):
 
 
 
-def test_authorization_url_forces_login_so_another_account_can_be_added():
+# ---------------------------------------------------------------------------------------------
+# Session reuse (default Connect) vs. "Add a different Instagram account" (force_reauth=true)
+# ---------------------------------------------------------------------------------------------
+
+def test_config_does_not_force_login_by_default():
     from src.platforms.instagram.auth import InstagramAuth
 
-    config = InstagramAuth.create_config("app", "secret", "https://example.github.io/cb")
+    assert InstagramAuth.create_config("app", "secret", "https://example.github.io/cb").additional_params == {}
     # PlatformAuth.get_authorization_url merges additional_params into the authorize URL.
-    assert config.additional_params == {"force_reauth": "true"}
+    forced = InstagramAuth.create_config("app", "secret", "https://example.github.io/cb", force_reauth=True)
+    assert forced.additional_params == {"force_reauth": "true"}
+
+
+def authorize_query(m, force_reauth=None):
+    """Start a paste-mode flow, abort at the paste prompt; return the authorize URL's query."""
+    m.redirect_prompt = lambda msg: None
+    seen = {}
+    kwargs = {} if force_reauth is None else {"force_reauth": force_reauth}
+    with patch("src.auth.manager.webbrowser.open", paste_browser(seen)), pytest.raises(OAuthCallbackError):
+        asyncio.run(m.connect_account("instagram", **kwargs))
+    return seen["query"]
+
+
+def test_default_connect_reuses_browser_session(env):
+    m = manager(env, PAGES_REDIRECT)
+    q = authorize_query(m)
+    assert "force_reauth" not in q
+    assert m._get_auth_adapter("instagram").config.additional_params == {}
+
+
+def test_add_different_account_forces_login_and_keeps_other_params(env):
+    m = manager(env, PAGES_REDIRECT)
+    q = authorize_query(m, force_reauth=True)
+    assert q["force_reauth"] == "true"
+    assert m._get_auth_adapter("instagram").config.additional_params == {"force_reauth": "true"}
+    # Everything else identical to the default flow.
+    assert (q["client_id"], q["redirect_uri"], q["response_type"]) == (APP_ID, PAGES_REDIRECT, "code")
+    assert q["scope"] == "instagram_business_basic,instagram_business_content_publish"
+    assert len(q["state"]) >= 32 and "code_challenge" not in q
+
+
+def test_force_reauth_does_not_leak_into_the_next_flow(env):
+    m = manager(env, PAGES_REDIRECT)  # the adapter/config is cached across flows
+    assert "force_reauth" in authorize_query(m, force_reauth=True)
+    assert "force_reauth" not in authorize_query(m, force_reauth=False)
+    assert "force_reauth" not in authorize_query(m)
+
+
+def test_force_reauth_refused_for_other_platforms_before_browser_opens(env):
+    db, accounts = env
+    m = AuthManager(db, db.encryption, accounts)
+    m.configure_platform("youtube", "cid", "csecret")
+    opened = []
+    with patch("src.auth.manager.webbrowser.open", opened.append), pytest.raises(ValueError, match="Instagram"):
+        asyncio.run(m.connect_account("youtube", force_reauth=True))
+    assert opened == []
+    assert "force_reauth" not in m._get_auth_adapter("youtube").config.additional_params
+
+
+def test_add_different_account_returning_same_identity_updates_not_duplicates(env):
+    """/me decides the account: if "Add a different account" comes back as an already-stored one, it is updated."""
+    _, accounts = env
+    results = []
+    for force in (False, True):
+        m = manager(env, PAGES_REDIRECT)
+        seen = {}
+        m.redirect_prompt = lambda message, seen=seen: f"{PAGES_REDIRECT}?code=C&state={seen['query']['state']}"
+        with patch("src.auth.manager.webbrowser.open", paste_browser(seen)),                 patch("src.platforms.instagram.auth.httpx.AsyncClient", FakeMeta()):
+            results.append(asyncio.run(m.connect_account("instagram", force_reauth=force)))
+        assert ("force_reauth" in seen["query"]) is force
+    assert results[0]["account"]["id"] == results[1]["account"]["id"]
+    assert len([a for a in accounts.list_accounts() if a.platform == "instagram"]) == 1

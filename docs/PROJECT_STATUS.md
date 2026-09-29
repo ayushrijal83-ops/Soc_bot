@@ -7,7 +7,7 @@
 | Change | What it means for the user |
 |---|---|
 | TUI OAuth fix | Connect/Disconnect run on a worker thread (`AccountService.connect` → `asyncio.run` off the UI loop); no more "event loop is already running". |
-| Add another Instagram account | Authorize URL sends `force_reauth=true`: Instagram always shows its login screen, so a 2nd/3rd account can be connected instead of silently reconnecting the first. |
+| Instagram Connect choice (2026-09-29) | Connect asks: *Use currently logged-in account* (no `force_reauth`: reuses the browser's Instagram session, normally just Allow) / *Add a different account* (`force_reauth=true`: login screen) / *Cancel*. Silent reuse is not guaranteed: Instagram decides. |
 | Paste field in Connect window | The CONNECTING INSTAGRAM window shows the paste box (spinner shrunk to 1 line, hidden while pasting); works at 80×24. |
 | Speed | Video checksum cached per (path, size, mtime) → a big file is hashed once instead of on every step; Instagram status polled every 15 s instead of 60 s (same 5-minute window). |
 | Delete history | History page: **Del** / "Delete selected" / "Delete all shown" with confirmation. Only published/failed jobs; empty posts removed; link files untouched. |

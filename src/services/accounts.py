@@ -78,11 +78,13 @@ class AccountService:
         except Exception:  # noqa: BLE001 - a status display must not crash
             return False
 
-    def connect(self, platform: str, redirect_prompt: Callable[[str], str | None] | None = None) -> ConnectResult:
+    def connect(self, platform: str, redirect_prompt: Callable[[str], str | None] | None = None,
+                force_reauth: bool = False) -> ConnectResult:
         """Run the existing OAuth flow (AuthManager.connect_account, the single implementation) to the end.
 
         Blocking: call it from a worker thread. ``redirect_prompt`` answers the paste-mode question for
         platforms with a registered non-loopback redirect (Instagram); the CLI passes its terminal prompt.
+        ``force_reauth`` (Instagram): "Add a different account" -- Instagram asks for credentials.
         """
         require_worker_thread()
         name = {"instagram": "Instagram", "youtube": "YouTube", "tiktok": "TikTok"}.get(platform, platform)
@@ -91,7 +93,7 @@ class AccountService:
         previous = self.auth.redirect_prompt
         self.auth.redirect_prompt = redirect_prompt
         try:
-            result = asyncio.run(self.auth.connect_account(platform))  # own loop, in THIS (worker) thread
+            result = asyncio.run(self.auth.connect_account(platform, force_reauth=force_reauth))  # own loop, in THIS (worker) thread
         except TimeoutError as e:
             return ConnectResult(False, f"{name} connection failed: no answer from the browser in time.",
                                  details=redact(str(e)))

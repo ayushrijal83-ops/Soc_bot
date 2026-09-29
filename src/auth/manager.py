@@ -162,12 +162,21 @@ class AuthManager:
         server.start()
         return server, server.redirect_uri(platform)
 
-    async def connect_account(self, platform: str) -> dict[str, Any]:
-        """Run the OAuth flow for a platform and store the account."""
+    async def connect_account(self, platform: str, force_reauth: bool = False) -> dict[str, Any]:
+        """Run the OAuth flow for a platform and store the account.
+
+        ``force_reauth`` (Instagram only): make Instagram ask for credentials even if the browser is
+        logged in, to add a different account. Default: reuse the browser's Instagram session.
+        """
         if not self.is_configured(platform):
             raise ValueError(f"Platform {platform} is not configured. Set credentials in .env first.")
+        if force_reauth and platform != "instagram":
+            raise ValueError("force_reauth is only supported for Instagram")
 
         auth = self._get_auth_adapter(platform)
+        if platform == "instagram":
+            # Per flow, like the redirect URI below: the cached config must not keep a previous flow's choice.
+            auth.config.additional_params = auth.reauth_params(force_reauth)
         fixed = self._fixed_redirect_uris.get(platform)
         if getattr(auth, "REQUIRES_REGISTERED_REDIRECT", False) and not fixed:
             raise OAuthConfigurationError(

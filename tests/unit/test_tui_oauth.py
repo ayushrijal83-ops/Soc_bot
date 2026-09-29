@@ -23,12 +23,13 @@ class FakeAuth:
     def __init__(self, accounts, configured=("instagram", "youtube"), fail=None, paste=False):
         self.accounts, self.configured, self.fail, self.paste = accounts, configured, fail, paste
         self.redirect_prompt = None
-        self.threads, self.answers = [], []
+        self.threads, self.answers, self.force_reauth = [], [], []
 
     def is_configured(self, platform):
         return platform in self.configured
 
-    async def connect_account(self, platform):
+    async def connect_account(self, platform, force_reauth=False):
+        self.force_reauth.append(force_reauth)
         asyncio.get_running_loop()  # a loop of its own...
         self.threads.append(threading.current_thread().name)  # ...on a non-UI thread
         if self.paste:
@@ -63,6 +64,14 @@ async def wait_until(pilot, condition, rounds=100):
     return False
 
 
+async def press_connect(app, pilot, choice=None):
+    """Connect; for Instagram answer the account-choice modal (ig-session / ig-new / ig-cancel)."""
+    app.screen.query_one("#connect").press()
+    if choice:
+        assert await wait_until(pilot, lambda: type(app.screen).__name__ == "InstagramAccountChoiceModal")
+        app.screen.query_one(f"#{choice}").press()
+
+
 async def open_accounts(app, pilot, platform):
     from textual.widgets import TabbedContent
 
@@ -77,7 +86,7 @@ def test_connect_runs_on_a_worker_and_returns_to_accounts(services, env):
 
     async def script(app, pilot):
         await open_accounts(app, pilot, "instagram")
-        app.screen.query_one("#connect").press()
+        await press_connect(app, pilot, "ig-session")
         assert await wait_until(pilot, lambda: type(app.screen).__name__ == "AccountsScreen" and auth.threads)
         await wait_until(pilot, lambda: not [w for w in app.workers if w.is_running])
         assert auth.threads and auth.threads[0] != "MainThread"
@@ -100,7 +109,7 @@ def test_instagram_paste_mode_through_the_modal(services, env):
 
     async def script(app, pilot):
         await open_accounts(app, pilot, "instagram")
-        app.screen.query_one("#connect").press()
+        await press_connect(app, pilot, "ig-session")
         assert await wait_until(pilot, lambda: type(app.screen).__name__ == "ConnectModal" and app.screen.pasting)
         app.screen.query_one("#paste-url", Input).value = "https://example.github.io/cb?code=X&state=Y"
         app.screen.query_one("#paste-ok").press()
@@ -115,7 +124,7 @@ def test_failure_shows_a_clean_message(services, env):
 
     async def script(app, pilot):
         await open_accounts(app, pilot, "instagram")
-        app.screen.query_one("#connect").press()
+        await press_connect(app, pilot, "ig-session")
         assert await wait_until(pilot, lambda: type(app.screen).__name__ == "MessageModal")
         modal = app.screen
         assert modal.message == "✗ Instagram connection failed." and "access_denied" in modal.details
@@ -124,6 +133,40 @@ def test_failure_shows_a_clean_message(services, env):
         assert type(app.screen).__name__ == "AccountsScreen"
 
     run_app(services, script)
+
+
+@pytest.mark.parametrize(("choice", "expected"), [("ig-session", [False]), ("ig-new", [True])])
+def test_instagram_account_choice_sets_force_reauth(services, env, choice, expected):
+    auth = with_auth(services, env)
+
+    async def script(app, pilot):
+        await open_accounts(app, pilot, "instagram")
+        await press_connect(app, pilot, choice)
+        assert await wait_until(pilot, lambda: type(app.screen).__name__ == "AccountsScreen" and auth.threads)
+
+    run_app(services, script)
+    assert auth.force_reauth == expected
+
+
+@pytest.mark.parametrize("cancel", ["button", "escape"])
+def test_instagram_account_choice_cancel_starts_nothing(services, env, cancel):
+    auth = with_auth(services, env)
+
+    async def script(app, pilot):
+        await open_accounts(app, pilot, "instagram")
+        if cancel == "button":
+            await press_connect(app, pilot, "ig-cancel")
+        else:
+            await press_connect(app, pilot)
+            assert await wait_until(pilot, lambda: type(app.screen).__name__ == "InstagramAccountChoiceModal")
+            await pilot.press("escape")
+        assert await wait_until(pilot, lambda: type(app.screen).__name__ == "AccountsScreen")
+        await pilot.pause(0.2)
+        assert type(app.screen).__name__ == "AccountsScreen"
+        assert not [w for w in app.workers if w.is_running]
+
+    run_app(services, script)
+    assert auth.force_reauth == [] and auth.threads == []
 
 
 def test_youtube_connects_and_tiktok_reports_not_set_up(services, env):
@@ -180,6 +223,20 @@ def test_classic_cli_connect_unchanged(services, env):
         assert handler.handle_connect_account("youtube") is True
     assert auth.threads == ["MainThread"]  # the CLI still runs it directly (no event loop there)
     assert any(a.username == "new_youtube" for a in services.accounts.list("youtube"))
+    assert auth.force_reauth == [False]  # YouTube: never asked, never forced
+
+
+@pytest.mark.parametrize(("answer", "expected"), [("1", [False]), ("2", [True]), ("3", [])])
+def test_classic_cli_instagram_account_choice(services, env, answer, expected):
+    from src.cli.account_menu import AccountMenuHandler
+
+    auth = with_auth(services, env)
+    handler = AccountMenuHandler(services.account_manager, auth)
+    answers = iter([answer])
+    with patch("builtins.input", lambda *_: next(answers, "")), patch("src.cli.account_menu.clear_screen"):
+        assert handler.handle_connect_account("instagram") is True
+    assert auth.force_reauth == expected  # "3" = cancel: OAuth never started
+    assert auth.threads == (["MainThread"] if expected else [])
 
 
 def test_run_classic_runs_the_flow_off_the_loop_thread():
@@ -214,7 +271,7 @@ def test_paste_field_is_visible_on_screen(services, env, size):
 
     async def script(app, pilot):
         await open_accounts(app, pilot, "instagram")
-        app.screen.query_one("#connect").press()
+        await press_connect(app, pilot, "ig-session")
         assert await wait_until(pilot, lambda: type(app.screen).__name__ == "ConnectModal" and app.screen.pasting)
         modal = app.screen
         await pilot.pause()

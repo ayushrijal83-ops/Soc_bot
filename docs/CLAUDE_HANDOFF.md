@@ -592,6 +592,7 @@ See ARCHITECTURE.md → "Publishing (Phase 4)" for the state machine, engine flo
 | 2026-09-26 | **Instagram fan-out + custom cover**: `cover_url` via the tunnel (real-verified by thumbnail readback), multi-select accounts, one confirmation, 5 concurrent Instagram jobs, batch queue view; 746 tests. Real 11-account (max 5 concurrent) and 5-account runs passed with covers verified (posts 11-12) |
 | 2026-09-26 | **Terminal UI** (Textual/Rich over `src/services`), Review PUBLISH NOW bar, TUI OAuth on a worker thread |
 | 2026-09-26 | **Add-account + speed + history**: Instagram `force_reauth=true`, paste field fix, checksum cache, 15 s polling, History delete |
+| 2026-09-29 | **Instagram session reuse**: `force_reauth` only for "Add a different Instagram account" (TUI modal + CLI choice); default Connect reuses the browser session; ConnectModal paste-box race fixed; 835 tests |
 | 2026-09-26 | **Docs & launcher**: `setup_guide/` (master/Instagram/YouTube/TikTok), `Start_Soc_bot.bat`, new README with screenshots, `tools/readme_screenshots.py` |
 | 2026-09-25 | **Published-Link Library**: per-platform JSON link files, menu 6 "Published Links", Instagram permalink fetch, TikTok not saved (no documented URL); 639 tests |
 

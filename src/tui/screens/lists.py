@@ -304,7 +304,8 @@ class ConnectModal(ModalScreen[None]):
     PASTE_TIMEOUT = 600
     # LoadingIndicator is height:100% by default; in this auto-height modal that pushed the paste field
     # below the screen. Keep it one line.
-    DEFAULT_CSS = "ConnectModal #spinner { height: 1; }"
+    # The paste box starts hidden in CSS, not in on_mount: a fast flow can ask to paste before on_mount runs.
+    DEFAULT_CSS = "ConnectModal #spinner { height: 1; } ConnectModal #paste-box { display: none; }"
 
     def __init__(self, platform: str):
         super().__init__()
@@ -326,9 +327,6 @@ class ConnectModal(ModalScreen[None]):
                 with Horizontal(classes="buttons"):
                     yield Button("Continue", variant="primary", id="paste-ok")
                     yield Button("Cancel", id="paste-cancel")
-
-    def on_mount(self) -> None:
-        self.query_one("#paste-box").display = False
 
     # Called on the OAuth helper thread (never the UI thread): blocks that thread until answered.
     def ask(self, message: str) -> str | None:
@@ -365,6 +363,29 @@ class ConnectModal(ModalScreen[None]):
             self._reply("")  # safe: the flow ends with "cancelled" and cleans up
         else:
             self.app.notify("Waiting for the browser. The attempt ends by itself (max 5 minutes).")
+
+
+class InstagramAccountChoiceModal(ModalScreen[bool | None]):
+    """Before Instagram OAuth: reuse the browser's session (False), force a fresh login (True) or cancel (None)."""
+
+    BINDINGS: ClassVar[list] = [Binding("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modal"):
+            yield Label("CONNECT INSTAGRAM", classes="modal-title")
+            yield Static("Which Instagram account? \"Use logged-in account\" reuses the account your browser is "
+                         "logged in to (usually just an Allow screen). \"Add a different account\" makes Instagram "
+                         "ask for username and password.")
+            with Horizontal(classes="buttons"):
+                yield Button("Use logged-in account", variant="primary", id="ig-session")
+                yield Button("Add a different account", id="ig-new")
+                yield Button("Cancel", id="ig-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss({"ig-session": False, "ig-new": True}.get(event.button.id))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class AccountsScreen(Page):
@@ -438,12 +459,20 @@ class AccountsScreen(Page):
 
     def connect(self, platform: str) -> None:
         """Existing OAuth flow on a worker thread (it runs its own event loop there); the UI stays live."""
+        if platform == "instagram":
+            self.app.push_screen(InstagramAccountChoiceModal(),
+                                 lambda force: None if force is None else self._start_connect(platform, force))
+        else:
+            self._start_connect(platform, False)
+
+    def _start_connect(self, platform: str, force_reauth: bool) -> None:
         modal = ConnectModal(platform)
         self.app.push_screen(modal)
-        self.run_worker(lambda: self._connect_worker(platform, modal), thread=True, exclusive=True, group="oauth")
+        self.run_worker(lambda: self._connect_worker(platform, modal, force_reauth), thread=True, exclusive=True,
+                        group="oauth")
 
-    def _connect_worker(self, platform: str, modal: ConnectModal) -> None:
-        result = self.app.services.accounts.connect(platform, redirect_prompt=modal.ask)
+    def _connect_worker(self, platform: str, modal: ConnectModal, force_reauth: bool = False) -> None:
+        result = self.app.services.accounts.connect(platform, redirect_prompt=modal.ask, force_reauth=force_reauth)
         self.app.call_from_thread(self._connected, result, modal)
 
     def _connected(self, result, modal: ConnectModal) -> None:

@@ -225,7 +225,7 @@ Line counts are from `wc -l` at `49ce462`. The whole tracked tree is about 28.9k
 | `src/core/published_links.py` (202) | Link library: JSON + TXT, locks, atomic writes, quarantine, clipboard | engine, LinkService | filesystem | Temporary URLs (it rejects them) |
 | `src/media_storage/` | `base`, `provider` (interface, S3 provider, factory, router builder), `router` (AUTO), `shared` (SharedMediaSession), `cloudflare_tunnel`, `tempfile`, `zerox0`, `s3`, `service` (settings) | InstagramPublisher, services (status) | httpx, boto3, cloudflared | DB, Instagram calls |
 | `src/platforms/base.py` (260) | `PlatformPublisher` interface, `PublishError` (retryable / uncertain), `PublishOutcome`, `redact()` | engine, adapters | none | none |
-| `src/platforms/instagram/` | `auth.py` (Instagram Login, `force_reauth`), `publisher.py` (Reels) | AuthManager, engine | httpx, media_storage | none |
+| `src/platforms/instagram/` | `auth.py` (Instagram Login, `force_reauth` only for "Add a different account"), `publisher.py` (Reels) | AuthManager, engine | httpx, media_storage | none |
 | `src/platforms/youtube/` | Google OAuth (installed-app loopback, PKCE), resumable upload, `thumbnails.set` | same | httpx | none |
 | `src/platforms/tiktok/` | Login Kit (hex PKCE), Direct Post (creator_info → init → chunked PUT → status) | same | httpx | none |
 | `src/services/` | `publishing.py`, `accounts.py`, `library.py` (links, content, settings), `build_services()` | TUI | engine, AccountManager, AuthManager, PublishedLinks, intake | See §8 |
@@ -316,7 +316,7 @@ Startup order in `main()`:
 | **Sidebar active-page bug** | The only "active" signal was the OptionList cursor highlight, which moves with the arrows or mouse. The highlight could sit on a different item than the page shown. A later contrast issue: accent-colored text on the violet highlight was unreadable. | The active page is marked in its own label (`▌` + bold), independent of the cursor. `reset_highlight()` puts the cursor back on the active page on mount, on resume and on blur. Only the `▌` marker uses the accent color. | `test_sidebar_marks_the_active_page` (parametrized over the modes) |
 | **OAuth asyncio event-loop bug** | Textual runs an asyncio loop on the main thread. The existing connect path called `asyncio.run(auth.connect_account(...))`, which fails inside a running loop ("asyncio.run() cannot be called from a running event loop"). | `AccountService.connect` / `disconnect` call `require_worker_thread()` and run `asyncio.run(...)` in a **worker thread**, which gets its own loop. The Accounts screen uses `run_worker(thread=True)`. Classic flows run through `run_classic` (suspended app, joined plain thread). The OAuth implementation itself is unchanged and still centralized in `AuthManager.connect_account`. | `tests/unit/test_tui_oauth.py`: `test_connect_runs_on_a_worker_and_returns_to_accounts`, `test_service_refuses_to_run_on_a_running_loop`, `test_run_classic_runs_the_flow_off_the_loop_thread`, `test_disconnect_runs_on_a_worker`, … |
 | Paste field not visible (Instagram add-account) | In `ConnectModal`, a `LoadingIndicator` defaulted to `height: 100%` and pushed the paste `Input` off-screen. | Spinner height 1 (DEFAULT_CSS), hidden while pasting. The prompt is handed across threads with a `threading.Event`. | `test_paste_field_is_visible_on_screen`, `test_instagram_paste_mode_through_the_modal` |
-| "Connect" couldn't add a *second* Instagram account | Instagram reused the browser's logged-in session and silently re-authorized the same account. | `force_reauth=true` in the authorize URL (`InstagramAuth.create_config`) | `test_instagram_oauth.py` (force_reauth config test) |
+| "Connect" couldn't add a *second* Instagram account | Instagram reused the browser's logged-in session and silently re-authorized the same account. | 2026-09-29: Connect asks; `force_reauth=true` only for "Add a different Instagram account" (`connect_account(force_reauth=)`), default reuses the browser session | `test_instagram_oauth.py` (force_reauth config test) |
 | Slow on large videos | The full-file SHA-256 was recomputed on every wizard step; Instagram polling waited 60 s per check. | `@lru_cache` `_checksum(path, size, mtime_ns)`; `POLL_INTERVAL = 15.0` | `test_checksum_is_cached_until_the_file_changes`; the poll test in `test_publishers.py` |
 
 ---
@@ -371,7 +371,7 @@ Real state at the time of writing [HISTORY]: 11 Instagram accounts and 2 YouTube
 | | Instagram | YouTube | TikTok |
 |---|---|---|---|
 | Product | Instagram API with **Instagram Login** (Business Login) | Google OAuth, installed app | Login Kit for Desktop |
-| Authorize | `instagram.com/oauth/authorize` + `force_reauth=true` | Google authorize endpoint | TikTok authorize endpoint |
+| Authorize | `instagram.com/oauth/authorize` (+ `force_reauth=true` only for "Add a different account") | Google authorize endpoint | TikTok authorize endpoint |
 | PKCE | None (not documented by Meta) | S256, base64url | S256, **hex** challenge (TikTok's own format) |
 | Redirect | **Fixed, registered** `INSTAGRAM_REDIRECT_URI`. Recommended: the https GitHub Pages page (**paste mode**). A loopback URI on a fixed port also works if Meta accepts it. | Dynamic loopback `http://127.0.0.1:<free port>/callback/youtube` | Dynamic loopback; `http://127.0.0.1:*/callback/tiktok` is registered |
 | Scopes | `instagram_business_basic`, `instagram_business_content_publish` | `youtube.upload`, `youtube`, `youtube.readonly` | `user.info.basic`, `video.publish` (ADR-019) |
@@ -882,7 +882,7 @@ Chronological. "Test" means a regression test was added (✅), or the table says
 | 31 | **TUI Review button hidden** | See §7.3 | Buttons inside the scroll area | Docked action bar | ✅ | Test at 80×24 |
 | 32 | **Sidebar active state** | See §7.3 | Cursor highlight used as the "active" marker | Text marker + `reset_highlight` | ✅ | none |
 | 33 | **TUI OAuth `asyncio.run`** | See §7.3 | Nested event loop | Worker thread | ✅ | Blocking or loop-owning code must run off the UI loop |
-| 34 | Can't add a second Instagram account | Instagram reused the browser session | Missing `force_reauth` | `force_reauth=true` | ✅ | none |
+| 34 | Can't add a second Instagram account | Instagram reused the browser session | Missing `force_reauth` | `force_reauth=true` for "Add a different account" only (2026-09-29) | ✅ | none |
 | 35 | Paste field invisible | LoadingIndicator took 100% height | Textual default CSS | Height 1, hidden while pasting | ✅ | none |
 | 36 | Connect test hung when an assertion failed | The worker waited forever for the paste answer | Missing teardown | try/finally answers the prompt | ✅ | none |
 | 37 | "Tiktok" capitalization in messages | `str.title()` | none | Explicit name map | ✅ | none |
@@ -1003,7 +1003,7 @@ Verified with `git log` at the time of writing (dates are author dates):
 | Area | Status | Evidence |
 |---|---|---|
 | Backend / engine | **READY, FROZEN** (change only for real defects) | Final audit; 823 tests pass |
-| Instagram OAuth | **READY** | 11 real accounts; `force_reauth`; paste mode tested |
+| Instagram OAuth | **READY** | 11 real accounts; session reuse / `force_reauth` choice (manual test pending); paste mode tested |
 | Instagram publishing | **READY** | Many real Reels (§28) |
 | Large video (up to Instagram's limit) | **READY** via the Cloudflare tunnel | Real 131.9 MB publishes |
 | Custom cover | **READY** (tunnel provider only) | Real `thumbnail_url` readbacks |

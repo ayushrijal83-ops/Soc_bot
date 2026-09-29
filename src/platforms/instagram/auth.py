@@ -167,6 +167,7 @@ class InstagramAuth(PlatformAuth):
         app_secret: str,
         redirect_uri: str | None,
         scopes: list | None = None,
+        force_reauth: bool = False,
     ) -> OAuthConfig:
         """Create OAuth configuration for Instagram (app_id/app_secret = the *Instagram* app ID/secret)."""
         return OAuthConfig(
@@ -178,11 +179,19 @@ class InstagramAuth(PlatformAuth):
             authorization_url=InstagramAuth.AUTHORIZATION_URL,
             token_url=InstagramAuth.TOKEN_URL,
             pkce_required=False,
-            # Meta: force_reauth=true "forces an app user to use their Instagram professional account credentials
-            # to log into your app even if the user is logged into Instagram". Without it the browser's current
-            # Instagram session is reused, so Connect can only ever re-authorize that one account.
-            additional_params={"force_reauth": "true"},
+            additional_params=InstagramAuth.reauth_params(force_reauth),
         )
+
+    @staticmethod
+    def reauth_params(force_reauth: bool) -> dict[str, str]:
+        """Authorize-URL extras for one flow.
+
+        Default: none, so Instagram reuses the browser's logged-in session (Allow screen, no password).
+        Meta: force_reauth=true "forces an app user to use their Instagram professional account credentials
+        to log into your app even if the user is logged into Instagram" -- used only for "Add a different
+        Instagram account", otherwise Connect could only ever re-authorize the logged-in account.
+        """
+        return {"force_reauth": "true"} if force_reauth else {}
 
 
 def _meta_error(response: httpx.Response) -> str:
