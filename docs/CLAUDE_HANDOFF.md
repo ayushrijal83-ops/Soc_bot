@@ -12,6 +12,36 @@ Working rules from the user: never commit or push (the user does), never print/m
 
 ---
 
+## V2.2 Real Scheduling — read this first (2026-10-02, phases 1–3 uncommitted)
+
+- **Model**: post-level hold. `posts.schedule_status` NULL / scheduled / missed / cancelled / released (migration 006).
+  Held = scheduled, missed, cancelled: `JobStore.claim`, `open_post_ids` and `retry_owed_post_ids` exclude them in
+  the same SQL statement, so `publish_post` on a held post publishes nothing. Do NOT add a job status for scheduling
+  (`_run_job` would publish an unknown status without a claim).
+- **Code**: `src/services/scheduling.py` (SchedulingService: schedule / schedule_from_suggestion / cancel /
+  reschedule / publish_now / view / scheduled), `src/services/due_scheduler.py` (DueScheduler.run_due: missed after
+  60 min grace, otherwise release one post at a time and call `PublishingService.publish_batch`). Both in
+  `AppServices` (`scheduling`, `due_scheduler`). All transitions are conditional UPDATEs with compare-and-swap on
+  `schedule_json`.
+- **Publishing lock (phase 4)**: `src/core/publish_lock.py`, `data/publishing.lock`, OS lock (msvcrt / fcntl),
+  non-blocking, re-entrant per thread, released by the OS on process death. Held by `PublishingService.publish_batch`
+  / `retry_job` / `resume_open`, `DueScheduler.run_due` (whole pass), CLI Create Post / Queue, `ContentIntake.publish`.
+  Any NEW publishing entry point must take it (`with default_lock():`). Tests get a private lock file
+  (`tests/conftest.py`), so a running Soc_bot window never makes tests busy.
+- **Callers (phase 5)**: TUI timer in `SocBotApp` (`run_scheduler` / `_scheduler_pass`, worker group "scheduler",
+  `has_work()` before taking the lock, `publishing_active` = manual OR scheduler publishing) and
+  `main.py --run-due` (`report_due_run`: exit 0 / 3 busy / 1 error). Task Scheduler steps: setup guide PART 8.
+- **UI (phase 6)**: `src/tui/screens/schedule.py` (`ScheduleModal` for schedule + reschedule,
+  `ScheduledActionsModal`), Queue SCHEDULED section in `lists.py`, Review `⏰ Schedule…` in `create_post.py`,
+  Publish now = `PublishingScreen(release=True)` (lock first, then `publish_now`, then `publish_batch`), CLI in
+  `src/cli/schedule_menu.py`. Presentation of held posts lives in `PublishingService` (`_held()`, `batches()`
+  excludes them, statuses mapped). UI/CLI must never write schedule columns (`test_scheduling_ui.py` scans them).
+- **Next**: commit/review V2.2; possible follow-ups: Content Inbox scheduling, a choice for the second occurrence of
+  an ambiguous DST time.
+- **Known**: `publish_batch` refuses held posts (closes the engine's pre-claim error path for UI callers); calling
+  `PublisherEngine.publish_post` directly on a held post can still mark a job failed if an adapter crashes before
+  the claim (never publishes).
+
 ## Audience Strategy V2.1 timing suggestions — read this first (2026-10-02, uncommitted)
 
 - **What**: `src/content/timezones.py` (country -> weighted IANA zones: `CURATED_ZONES` + tzdata `zone.tab`

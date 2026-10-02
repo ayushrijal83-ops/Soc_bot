@@ -12,6 +12,10 @@ State machine (publish_jobs.status):
 
 ``published`` is terminal. Transitions are checked and applied with a conditional UPDATE
 (``WHERE status = <current>``) so two workers can never both move a job forward.
+
+Scheduling hold (migration 006): jobs of a post whose ``schedule_status`` is scheduled / missed /
+cancelled are never claimed, resumed or auto-retried. The condition is part of the same SQL statement
+(no check-then-act race), so even a direct ``publish_post`` on a held post cannot start an upload.
 """
 
 import json
@@ -19,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, update
+from sqlalchemy import func, select, update
 
 from src.core.validation import file_checksum, validate_video_file
 from src.storage.database import (
@@ -69,6 +73,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _not_held():
+    """SQL condition: the job's post is not held by a schedule (NULL / released pass)."""
+    held = select(Post.id).where(Post.schedule_status.in_(Post.HELD_SCHEDULE_STATUSES))
+    return PublishJob.post_id.not_in(held)
+
+
 class JobStore:
     """All database access for posts, publish jobs and publish attempts."""
 
@@ -78,11 +88,21 @@ class JobStore:
     # --- creation ------------------------------------------------------------
 
     def create_post(self, video_path: str, caption: str, destinations: list[tuple[int, dict[str, Any]]],
-                    auto_retry: bool = False) -> int:
+                    auto_retry: bool = False, scheduled_at: datetime | None = None,
+                    schedule_status: str | None = None, schedule_json: dict[str, Any] | None = None) -> int:
         """Create video (deduplicated by checksum), post and one pending job per destination account.
 
         auto_retry: the batch's failed Instagram jobs get one automatic retry round after the initial round.
+        scheduled_at / schedule_status / schedule_json: written in the SAME transaction as the jobs, so a
+        scheduled post is never committed with publishable jobs. scheduled_at is stored as naive UTC
+        (an aware value is converted; a naive one is taken as UTC, the project convention).
         """
+        if schedule_status is not None and schedule_status not in Post.SCHEDULE_STATUSES:
+            raise JobError(f"Unknown schedule status {schedule_status!r}")
+        if schedule_status is not None and scheduled_at is None:
+            raise JobError("A scheduled post needs scheduled_at")
+        if scheduled_at is not None and scheduled_at.tzinfo is not None:
+            scheduled_at = scheduled_at.astimezone(timezone.utc).replace(tzinfo=None)
         if not destinations:
             raise JobError("Select at least one destination account")
         account_ids = [account_id for account_id, _ in destinations]
@@ -116,7 +136,9 @@ class JobStore:
                 session.add(video)
                 session.flush()
 
-            post = Post(video_id=video.id, caption=caption, auto_retry=1 if auto_retry else None)
+            post = Post(video_id=video.id, caption=caption, auto_retry=1 if auto_retry else None,
+                        scheduled_at=scheduled_at, schedule_status=schedule_status,
+                        schedule_json=json.dumps(schedule_json) if schedule_json is not None else None)
             session.add(post)
             session.flush()
             for account_id, options in destinations:
@@ -176,11 +198,11 @@ class JobStore:
             return [self._info(job, account) for job, account in rows]
 
     def open_post_ids(self) -> list[int]:
-        """Posts with at least one job that is not published or failed."""
+        """Posts with at least one job that is not published or failed (held scheduled posts excluded)."""
         with self.database.session() as session:
             rows = (
                 session.query(PublishJob.post_id)
-                .filter(PublishJob.status.in_(("pending", "retrying", "uploading", "processing")))
+                .filter(PublishJob.status.in_(("pending", "retrying", "uploading", "processing")), _not_held())
                 .distinct()
                 .order_by(PublishJob.post_id)
                 .all()
@@ -204,7 +226,7 @@ class JobStore:
                 .join(Post, PublishJob.post_id == Post.id)
                 .join(Account, PublishJob.account_id == Account.id)
                 .filter(Post.auto_retry == 1, PublishJob.status == "failed", PublishJob.auto_retry_used == 0,
-                        Account.platform.in_(platforms))
+                        Account.platform.in_(platforms), _not_held())
                 .distinct()
                 .order_by(PublishJob.post_id)
                 .all()
@@ -312,11 +334,12 @@ class JobStore:
             session.commit()
 
     def claim(self, job_id: int) -> bool:
-        """Atomically move a pending/retrying job to uploading. False if someone else owns it."""
+        """Atomically move a pending/retrying job to uploading. False if someone else owns it or its post
+        is held by a schedule (checked in the same UPDATE)."""
         with self.database.session() as session:
             result = session.execute(
                 update(PublishJob)
-                .where(PublishJob.id == job_id, PublishJob.status.in_(("pending", "retrying")))
+                .where(PublishJob.id == job_id, PublishJob.status.in_(("pending", "retrying")), _not_held())
                 .values(status="uploading", error_message=None)
             )
             session.commit()

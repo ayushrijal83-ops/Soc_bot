@@ -47,8 +47,8 @@ def run(setup, answers, fake):
 
 def test_create_post_publishes_after_confirmation(setup, capsys):
     fake = FakePublisher("tiktok", PublishOutcome("published", "TT1", {}))
-    # video, no cover, caption, audience (Enter = Global), toggle account 1, continue, privacy (4 = SELF_ONLY), confirm
-    engine = run(setup, [setup[2], "", "Hello", "", "1", "", "4", "y"], fake)
+    # video, no cover, caption, audience (Enter = Global), toggle account 1, continue, privacy (4 = SELF_ONLY), publish 1 = Now
+    engine = run(setup, [setup[2], "", "Hello", "", "1", "", "4", "1"], fake)
     out = capsys.readouterr().out
     assert "PUBLISHING PLAN" in out and "READY" in out
     assert "PUBLISHED" in out and "1 published" in out
@@ -59,7 +59,7 @@ def test_create_post_publishes_after_confirmation(setup, capsys):
 
 def test_create_post_cancel_publishes_nothing(setup, capsys):
     fake = FakePublisher("tiktok")
-    engine = run(setup, [setup[2], "", "Hello", "", "1", "", "4", "n"], fake)
+    engine = run(setup, [setup[2], "", "Hello", "", "1", "", "4", "3"], fake)
     assert fake.calls == []
     assert engine.store.recent_jobs() == []
     assert "Nothing was published" in capsys.readouterr().out
@@ -82,7 +82,7 @@ def test_queue_lists_jobs(setup, capsys):
     db, accounts, video = setup
     JobStore(db).create_post(video, "c", [(accounts.list_accounts()[0].id, {"privacy_level": "SELF_ONLY"})])
     engine = PublisherEngine(db, accounts, publishers={"tiktok": FakePublisher("tiktok")}, probe_media=False)
-    with patch("builtins.input", side_effect=["3"]), patch("src.cli.publish_menu.clear_screen"):
+    with patch("builtins.input", side_effect=["4"]), patch("src.cli.publish_menu.clear_screen"):
         run_publishing_queue(engine)
     out = capsys.readouterr().out
     assert "PENDING" in out and "tiktok" in out

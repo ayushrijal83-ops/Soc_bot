@@ -16,6 +16,7 @@ client_secret*.json
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+data/publishing.lock
 
 # Logs
 logs/

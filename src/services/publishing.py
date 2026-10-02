@@ -23,6 +23,7 @@ from src.content.scheduling import (
     default_manual_zone,
 )
 from src.core.jobs import JobInfo
+from src.core.publish_lock import PublishLock, default_lock
 from src.core.publisher import (
     JobResult,
     PublisherEngine,
@@ -33,6 +34,7 @@ from src.core.validation import jpeg_info, validate_video_file
 from src.platforms.base import redact
 
 ACTIVE = ("uploading", "processing")
+HELD = ("scheduled", "missed", "cancelled")   # Post.HELD_SCHEDULE_STATUSES: waiting for / stopped by a schedule
 OPEN = ("pending", "retrying", "uploading", "processing")
 PROVIDER_NAMES = {"cloudflare_tunnel": "Cloudflare Quick Tunnel", "tempfile": "TempFile.org", "s3": "S3",
                   "0x0": "0x0.st"}
@@ -173,6 +175,8 @@ class BatchView:
     status: str
     jobs: list[JobView] = field(default_factory=list)
     audience: dict | None = None          # snapshot taken when the post was created; None = no strategy
+    schedule_status: str | None = None    # scheduled | missed | cancelled | released; None = ordinary post
+    scheduled_at: datetime | None = None  # aware UTC
 
     @property
     def total(self) -> int:
@@ -205,8 +209,10 @@ class BatchEvent:
 # ----------------------------------------------------------------------------------------------
 
 class PublishingService:
-    def __init__(self, engine: PublisherEngine, account_manager):
+    def __init__(self, engine: PublisherEngine, account_manager, lock: PublishLock | None = None):
         self.engine = engine
+        # Held for every publishing operation below (raises PublishLockBusy when another window publishes).
+        self.lock = lock or default_lock()
         self.accounts = account_manager
         self.store = engine.store
         self.audiences = AudienceStore(engine.store.database)
@@ -264,15 +270,20 @@ class PublishingService:
                          self.engine.max_concurrent or max_concurrent_publishes(), provider,
                          provider == "cloudflare_tunnel", PublisherEngine._retry_delay())
 
-    def create_batch(self, plan: BatchPlan, include_already_published: bool = False) -> int:
-        """One post (= batch) with one job per valid destination. Duplicates are skipped unless asked."""
+    def create_batch(self, plan: BatchPlan, include_already_published: bool = False, **schedule) -> int:
+        """One post (= batch) with one job per valid destination. Duplicates are skipped unless asked.
+
+        ``schedule`` (scheduled_at / schedule_status / schedule_json) is only passed by SchedulingService: the
+        post, its schedule hold and its jobs are then created in one transaction.
+        """
         destinations = [(d.account_id, plan.options[d.account_id]) for d in plan.valid
                         if include_already_published or not d.already_published]
         if plan.audience_id is not None:
             audience = self.audiences.get(plan.audience_id)
             if audience is None or not audience.enabled:
                 raise ValueError("The selected audience strategy is no longer available. Choose another one.")
-        post_id = self.store.create_post(plan.video_path, plan.caption, destinations, auto_retry=plan.auto_retry)
+        post_id = self.store.create_post(plan.video_path, plan.caption, destinations, auto_retry=plan.auto_retry,
+                                         **schedule)
         if plan.audience_id is not None:
             self.audiences.attach(post_id, plan.audience_id)
         for job in self.store.jobs_for_post(post_id):
@@ -282,7 +293,20 @@ class PublishingService:
 
     def publish_batch(self, post_id: int, on_event: Callable[[BatchEvent], None] | None = None,
                       retry_job_id: int | None = None) -> BatchView:
-        """Run a batch (blocking; call it from a worker thread). Events come from engine worker threads."""
+        """Run a batch (blocking; call it from a worker thread). Events come from engine worker threads.
+
+        A post held by a schedule (scheduled / missed / cancelled) is refused before the engine is called:
+        release it first (SchedulingService.publish_now). JobStore would not claim its jobs anyway, but the
+        engine's error path for an unexpected exception before a claim could still mark a held job failed.
+
+        Holds the publishing lock for the whole batch: PublishLockBusy (nothing claimed or changed) if another
+        Soc_bot window is publishing.
+        """
+        with self.lock:
+            return self._publish_batch(post_id, on_event, retry_job_id)
+
+    def _publish_batch(self, post_id: int, on_event, retry_job_id: int | None) -> BatchView:
+        self._refuse_held(post_id)
         emit = on_event or (lambda event: None)
         lock = threading.Lock()
         before = {job.id: job.status for job in self.store.jobs_for_post(post_id)}
@@ -318,14 +342,26 @@ class PublishingService:
             "still_failed": len(state["retry_ids"]) - recovered, "status": view.status}))
         return view
 
+    def _refuse_held(self, post_id: int) -> None:
+        from src.storage.database import Post
+
+        with self.store.database.session() as session:
+            post = session.get(Post, post_id)
+            status = post.schedule_status if post is not None else None
+        if status in Post.HELD_SCHEDULE_STATUSES:
+            raise ValueError(f"Post {post_id} is {status}: release it (publish now) before publishing.")
+
     def retry_job(self, job_id: int, on_event: Callable[[BatchEvent], None] | None = None) -> BatchView:
-        """Explicit manual retry (the engine then never retries this job automatically)."""
-        job = self.store.get_job(job_id)
-        return self.publish_batch(job.post_id, on_event, retry_job_id=job_id)
+        """Explicit manual retry (the engine then never retries this job automatically). Holds the publishing lock."""
+        with self.lock:
+            job = self.store.get_job(job_id)
+            return self.publish_batch(job.post_id, on_event, retry_job_id=job_id)
 
     def resume_open(self, on_event: Callable[[BatchEvent], None] | None = None) -> list[BatchView]:
-        post_ids = sorted(set(self.store.open_post_ids()) | set(self.store.retry_owed_post_ids(("instagram",))))
-        return [self.publish_batch(post_id, on_event) for post_id in post_ids]
+        """Continue every open batch. Holds the publishing lock for the whole resume."""
+        with self.lock:
+            post_ids = sorted(set(self.store.open_post_ids()) | set(self.store.retry_owed_post_ids(("instagram",))))
+            return [self.publish_batch(post_id, on_event) for post_id in post_ids]
 
     # --- timing suggestions (read-only: nothing is scheduled, no job is created) --------------
 
@@ -350,35 +386,53 @@ class PublishingService:
         views = [self._job_view(job, links) for job in jobs]
         covers = {Path(j.options["cover_path"]).name for j in jobs if j.options.get("cover_path")}
         counts = Counter(job.status for job in jobs)
+        held = post.schedule_status in HELD
+        status = post.schedule_status if held else batch_status([j.status for j in jobs])
+        if held:  # a held post's jobs wait for its schedule: never shown as ordinary "pending"
+            for view in views:
+                view.status = post.schedule_status
+        scheduled_at = post.scheduled_at.replace(tzinfo=timezone.utc) if post.scheduled_at else None
         return BatchView(post_id, video.filename, ", ".join(sorted(covers)) or None, post.caption or "",
                          sorted({j.platform for j in jobs}), post.created_at, dict(counts),
-                         batch_status([j.status for j in jobs]), views,
-                         json.loads(post.audience_json) if post.audience_json else None)
+                         status, views, json.loads(post.audience_json) if post.audience_json else None,
+                         post.schedule_status, scheduled_at)
 
-    def batches(self, limit: int = 30) -> list[BatchView]:
+    def batches(self, limit: int = 30, include_held: bool = False) -> list[BatchView]:
+        """Recent batches, newest first. Held scheduled posts (scheduled / missed / cancelled) are left out unless
+        asked: they are not ready to publish and are listed by SchedulingService instead."""
+        held = self._held() if not include_held else {}
         post_ids = []
         for job in self.store.recent_jobs(limit=2000):
-            if job.post_id not in post_ids:
+            if job.post_id not in post_ids and job.post_id not in held:
                 post_ids.append(job.post_id)
             if len(post_ids) >= limit:
                 break
         return [self.batch(post_id) for post_id in post_ids]
+
+    def _held(self) -> dict[int, str]:
+        """{post_id: schedule_status} of held scheduled posts (one indexed query)."""
+        from src.storage.database import Post
+
+        with self.store.database.session() as session:
+            return dict(session.query(Post.id, Post.schedule_status).filter(Post.schedule_status.in_(HELD)))
 
     def history(self, platform: str | None = None, status: str | None = None, search: str = "",
                 limit: int = 500) -> list[dict]:
         rows = []
         videos: dict[int, str] = {}
         needle = search.strip().lower()
+        held = self._held()
         for job in self.store.recent_jobs(limit=limit):
+            shown = held.get(job.post_id, job.status)  # held jobs show their schedule state, not "pending"
             if platform and job.platform != platform:
                 continue
-            if status and job.status != status:
+            if status and shown != status:
                 continue
             if job.post_id not in videos:
                 _, video = self.store.get_post(job.post_id)
                 videos[job.post_id] = video.filename
             row = {"job_id": job.id, "post_id": job.post_id, "video": videos[job.post_id], "platform": job.platform,
-                   "account": job.account_label, "status": job.status, "date": self._job_date(job.id)}
+                   "account": job.account_label, "status": shown, "date": self._job_date(job.id)}
             if needle and needle not in " ".join(str(v) for v in row.values()).lower():
                 continue
             rows.append(row)
@@ -415,12 +469,22 @@ class PublishingService:
         return deleted
 
     def queue_counts(self) -> dict[str, int]:
-        counts = Counter(job.status for job in self.store.recent_jobs(limit=100_000))
-        return {s: counts.get(s, 0) for s in ("pending", "uploading", "processing", "retrying", "published", "failed")}
+        """Job counts by status. Jobs of held scheduled posts are NOT counted as pending/open; they appear as
+        "scheduled" / "missed" / "cancelled" (number of posts) instead."""
+        held = self._held()
+        counts = Counter(job.status for job in self.store.recent_jobs(limit=100_000) if job.post_id not in held)
+        result = {s: counts.get(s, 0) for s in ("pending", "uploading", "processing", "retrying", "published", "failed")}
+        posts = Counter(held.values())
+        return result | {s: posts.get(s, 0) for s in HELD}
 
     def recent_activity(self, limit: int = 8) -> list[JobView]:
-        links = self._links_by_media_id()
-        return [self._job_view(job, links, attempts=False) for job in self.store.recent_jobs(limit=limit)]
+        links, held = self._links_by_media_id(), self._held()
+        views = []
+        for job in self.store.recent_jobs(limit=limit):
+            view = self._job_view(job, links, attempts=False)
+            view.status = held.get(job.post_id, view.status)
+            views.append(view)
+        return views
 
     # --- helpers -----------------------------------------------------------------------------
 

@@ -118,6 +118,7 @@ class CreatePostScreen(Page):
         # Docked action bar: always visible, whatever the (scrolling) step content needs.
         with Horizontal(id="actions"):
             yield Button("▶ PUBLISH NOW", variant="success", id="publish")
+            yield Button("⏰ Schedule…", variant="primary", id="schedule")
             yield Button("Next →", variant="primary", id="next")
             yield Button("← Back", id="back")
             yield Button("Cancel", id="cancel")
@@ -144,6 +145,7 @@ class CreatePostScreen(Page):
         self.query_one("#back", Button).disabled = step == 0
         self.query_one("#next", Button).display = step < len(STEPS) - 1
         self.query_one("#publish", Button).display = step == len(STEPS) - 1
+        self.query_one("#schedule", Button).display = step == len(STEPS) - 1
         self.refresh_bindings()  # footer: Next on steps 1-4, PUBLISH on Review
         if step == 1:
             self.refresh_audiences()
@@ -246,6 +248,8 @@ class CreatePostScreen(Page):
         elif button == "cancel":
             self.app.push_screen(ConfirmModal("Cancel post?", "Discard this post? Nothing was published.",
                                               "Discard", danger=True), self._cancelled)
+        elif button == "schedule":
+            self.open_schedule()
         elif button == "publish":
             self.confirm_publish()
         elif button == "browse-video":
@@ -457,6 +461,30 @@ class CreatePostScreen(Page):
 
         self.reset_form()
         self.app.push_screen(PublishingScreen(post_id=post_id))
+
+    def open_schedule(self) -> None:
+        """Schedule instead of publishing now: the dialog talks to SchedulingService; nothing is published."""
+        from src.tui.screens.schedule import ScheduleModal
+
+        if not self.plan or not self.plan.valid or not self.targets():
+            self.app.notify("Nothing to schedule: no valid account selected.", severity="warning")
+            return
+        plan, include = self.plan, self.query_one("#include-dups", Checkbox).value
+        sched = self.app.services.scheduling
+        audience = self.app.services.audiences.get(plan.audience_id) if plan.audience_id else None
+        self.app.push_screen(ScheduleModal(
+            "Schedule post", audience.snapshot() if audience else None,
+            submit_custom=lambda local, zone: sched.schedule(plan, local, zone, include_already_published=include),
+            submit_suggestion=lambda rec, slot: sched.schedule_from_suggestion(
+                plan, rec, slot, include_already_published=include)), self._scheduled)
+
+    def _scheduled(self, view) -> None:
+        if view is None:
+            return
+        self.app.notify(f"✓ Post #{view.post_id} scheduled for {view.local:%Y-%m-%d %H:%M} {view.zone} "
+                        f"({view.scheduled_at:%H:%M} UTC).", timeout=8)
+        self.reset_form()
+        self.app.navigate("queue")
 
     def reset_form(self) -> None:
         """A fresh, empty post for next time (nothing kept from the published one)."""

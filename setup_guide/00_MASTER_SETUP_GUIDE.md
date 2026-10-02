@@ -343,6 +343,65 @@ python main.py
 - Keep the computer **on and online** while a batch runs (the video is served from your PC).
   You cannot quit while a batch is publishing; wait for **PUBLISH COMPLETE**.
 
+### Scheduling a post
+1. **Create (C)** → video, caption, *Audience Strategy*, accounts, options → **Review**.
+2. Press **⏰ Schedule…** (instead of ▶ PUBLISH NOW).
+3. Either pick one of the **suggested times** (good local hours for the audience; a suggestion is strategy only,
+   it does not control who sees the post), or enter a **date** (`YYYY-MM-DD`), a **time** (`HH:MM`) and choose the
+   **timezone** (preset to the audience's main timezone, else `SOC_BOT_TIMEZONE`, else UTC), then **Check time**.
+4. Check the confirmation (date, time, timezone and the same moment in UTC) and press **⏰ SCHEDULE**.
+
+Rules: at least **2 minutes** and at most **365 days** ahead. A time that does not exist because clocks jump
+forward (daylight saving) is refused: choose another time. A time that happens twice (clocks go back) uses the
+**first** occurrence; the confirmation says so.
+
+**Queue (Q) → SCHEDULED**: your scheduled posts (they are *waiting*, not "pending"). Select one and press
+**Enter** for **Reschedule**, **Publish now** or **Cancel schedule** (cancelling keeps the post in History; it is
+simply never published automatically). The **Dashboard** shows the next scheduled post.
+
+Classic menu (`python main.py --plain`): Create Post ends with `Publish: 1. Now 2. Schedule 3. Cancel`; the
+Publishing Queue lists scheduled posts and has **Scheduled posts** actions (reschedule, publish now, cancel).
+
+### Scheduled posts: when do they publish?
+A scheduled post is published by Soc_bot's **scheduler check**, which runs in two ways:
+
+1. **While the full-screen app is open:** it checks right after start and then every 30 seconds
+   (change with `SOC_BOT_SCHEDULER_POLL_SECONDS` in `.env`, 10 to 300 seconds).
+2. **Without the app open, using Windows Task Scheduler** (below): Windows runs one check every minute.
+
+Rules (the same for both):
+- A post is published when its time has come, and at most **60 minutes late**. If no check ran within those
+  60 minutes (PC off, asleep, no check set up), the post is marked **missed** and is **not** published
+  automatically; you decide later what to do with it.
+- Only one Soc_bot window publishes at a time. If another window is publishing, the check changes nothing and
+  simply tries again on its next run.
+- Times are not exact to the second: a post goes out at the first check after its time (normally within about
+  a minute with Task Scheduler), plus the time Windows needs to start the program. The PC must be **on, awake and
+  online**. Soc_bot cannot publish while Windows is asleep or off.
+
+#### Set up Windows Task Scheduler (one check per minute)
+`python main.py --run-due` does **one** check and exits; it never stays running, so nothing has to be open.
+
+1. Press **Start**, type **Task Scheduler**, open it. Click **Create Task…** (not "Basic Task").
+2. **General** tab: Name `Soc_bot scheduler`. Choose **Run whether user is logged on or not** if you don't want a
+   window to flash up every minute (Windows asks for your password when you save).
+3. **Triggers** tab → **New…**: *Begin the task:* On a schedule → **Daily**, start today.
+   Tick **Repeat task every:** and type `1 minute` → *for a duration of:* **Indefinitely**. OK.
+4. **Actions** tab → **New…**: *Action:* Start a program.
+   - **Program/script:** `D:\Soc_bot\.venv\Scripts\python.exe` (your Soc_bot folder's virtual-environment Python)
+   - **Add arguments:** `main.py --run-due`
+   - **Start in:** `D:\Soc_bot` (required, so Soc_bot finds its `.env`, database and content folders)
+   OK.
+5. **Settings** tab: *If the task is already running:* **Do not start a new instance**. OK.
+6. Test it: right-click the task → **Run**. Then **Last Run Result**:
+   - `0x0`: the check ran (posts that were due are published; failed posts are reported in Soc_bot).
+   - `0x3`: another Soc_bot window was publishing; nothing changed, the next run tries again.
+   - `0x1`: the check could not run (for example `.env` missing, or wrong **Start in** folder).
+
+To see the check's output in a file instead, use **Program/script** `cmd.exe` and **Add arguments**
+`/c .venv\Scripts\python.exe main.py --run-due >> logs\run_due.log 2>&1` (keep **Start in** `D:\Soc_bot`).
+Never start Soc_bot by double-clicking `main.py`; use `Start_Soc_bot.bat` or the commands above.
+
 ### Updating Soc_bot later
 ```powershell
 cd D:\Soc_bot
@@ -417,5 +476,6 @@ python main.py                 # full-screen app
 python main.py --plain         # classic text menu
 python main.py --dry-run       # show what would be published, publishes nothing
 python main.py --scan          # process content\incoming (AUTO profile publishes, VERIFY only lists)
+python main.py --run-due       # one scheduler check, then exit (0 = done, 3 = another window publishing, 1 = error)
 python main.py --help          # all options
 ```

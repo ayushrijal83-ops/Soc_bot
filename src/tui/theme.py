@@ -30,6 +30,10 @@ STATUS = {
     "completed": ("✓", "Completed", GREEN),
     "completed_with_failures": ("⚠", "Completed with failures", AMBER),
     "running": ("→", "Running", BLUE),
+    "scheduled": ("◷", "Scheduled", CYAN),
+    "missed": ("⚠", "Missed", AMBER),
+    "cancelled": ("⊘", "Cancelled", MUTED),
+    "released": ("→", "Released", BLUE),
 }
 
 

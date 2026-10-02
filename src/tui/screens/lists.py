@@ -87,9 +87,15 @@ class QueueScreen(Page):
         with Horizontal(classes="buttons"):
             yield Button("Continue open jobs", id="resume", variant="warning")
             yield Button("Refresh", id="refresh")
+        yield Static("SCHEDULED  [dim]waiting for their time — not ready to publish · Enter = actions[/]",
+                     classes="section", id="scheduled-title")
+        yield DataTable(id="scheduled", cursor_type="row", zebra_stripes=True)
         yield VerticalScroll(id="batches", classes="fill")
 
+    DEFAULT_CSS = "#scheduled { height: auto; max-height: 7; }"
+
     def on_mount(self) -> None:
+        self.query_one("#scheduled", DataTable).add_columns("Post", "Video", "When", "", "Status")
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -98,13 +104,85 @@ class QueueScreen(Page):
         open_jobs = counts["pending"] + counts["uploading"] + counts["processing"] + counts["retrying"]
         owed = service.store.retry_owed_post_ids(("instagram",))
         self.query_one("#queue-summary", Static).update(
-            f"{open_jobs} open job(s)  ·  {counts['published']} published  ·  {counts['failed']} failed"
+            f"{open_jobs} open job(s)  ·  {counts['scheduled']} scheduled"
+            + (f"  ·  {counts['missed']} missed" if counts["missed"] else "")
+            + f"  ·  {counts['published']} published  ·  {counts['failed']} failed"
             + (f"  ·  {len(owed)} batch(es) owe their automatic retry" if owed else ""))
         self.query_one("#resume", Button).display = bool(open_jobs or owed)
+        self.refresh_scheduled()
         box = self.query_one("#batches", VerticalScroll)
         box.remove_children()
         views = service.batches(limit=25)
         box.mount_all([BatchCard(v) for v in views] or [Static("[dim]No batches yet.[/]")])
+
+    def refresh_scheduled(self) -> None:
+        from src.tui.screens.schedule import until
+
+        views = self.app.services.scheduling.scheduled()  # scheduled + missed, soonest first
+        self.scheduled_views = {str(v.post_id): v for v in views}
+        table = self.query_one("#scheduled", DataTable)
+        table.clear()
+        for v in views:
+            when = f"{v.local:%b %d %H:%M} {v.zone}" if v.local else "-"
+            table.add_row(f"#{v.post_id}", (v.video or "-")[:18], when, until(v.scheduled_at),
+                          status_markup(v.status or ""), key=str(v.post_id))
+        table.display = bool(views)
+        self.query_one("#scheduled-title", Static).update(
+            "SCHEDULED  [dim]waiting for their time — not ready to publish · Enter = actions[/]" if views
+            else "SCHEDULED  [dim]none[/]")
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "scheduled":
+            return
+        from src.tui.screens.schedule import ScheduledActionsModal
+
+        view = self.scheduled_views.get(event.row_key.value)
+        if view is not None:
+            self.app.push_screen(ScheduledActionsModal(view), lambda action: self.scheduled_action(view, action))
+
+    def scheduled_action(self, view, action: str | None) -> None:
+        from src.services.scheduling import SchedulingError, friendly_error
+        from src.tui.screens.schedule import ScheduleModal
+
+        sched = self.app.services.scheduling
+        if action == "reschedule":
+            self.app.push_screen(ScheduleModal(
+                f"Reschedule post #{view.post_id}", self.app.services.audiences.for_post(view.post_id),
+                submit_custom=lambda local, zone: sched.reschedule(view.post_id, local, zone),
+                submit_suggestion=lambda rec, slot: sched.reschedule_from_suggestion(view.post_id, rec, slot),
+                current=view), self._rescheduled)
+        elif action == "publish_now":
+            self.app.push_screen(ConfirmModal(
+                "Publish now?", f"Publish scheduled post #{view.post_id} now instead of at its scheduled time? "
+                "This creates real posts.", "Publish now"), lambda ok: self._publish_now(ok, view.post_id))
+        elif action == "cancel":
+            def cancel(ok: bool | None) -> None:
+                if not ok:
+                    return
+                try:
+                    sched.cancel(view.post_id)
+                    self.app.notify("Schedule cancelled. The post stays in History; it will not be published.")
+                except SchedulingError as e:
+                    self.app.notify(friendly_error(e), severity="warning", timeout=6)
+                self.refresh_data()
+
+            self.app.push_screen(ConfirmModal(
+                "Cancel schedule?", f"Cancel the schedule of post #{view.post_id}? It will not be published "
+                "automatically. Nothing is deleted.", "Cancel schedule", danger=True), cancel)
+
+    def _rescheduled(self, view) -> None:
+        if view is not None:
+            self.app.notify(f"✓ Post #{view.post_id} rescheduled to {view.local:%Y-%m-%d %H:%M} {view.zone}.")
+        self.refresh_data()
+
+    def _publish_now(self, ok: bool | None, post_id: int) -> None:
+        if ok:
+            from src.tui.screens.publishing import PublishingScreen
+
+            self.app.push_screen(PublishingScreen(post_id=post_id, release=True))
+
+    def on_screen_resume(self) -> None:
+        self.refresh_data()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "refresh":
@@ -155,13 +233,25 @@ class BatchDetailScreen(Screen):
             f"Caption [dim]{caption[:110]}{'…' if len(caption) > 110 else ''}[/]\n"
             f"Platforms {'  '.join(platform_markup(p) for p in v.platforms)}   Accounts {v.total}   "
             f"Automatic retries used {retried}\n"
-            f"Audience [dim]{audience_summary(v.audience)}[/]")
+            f"Audience [dim]{audience_summary(v.audience)}[/]" + self._schedule_line(v))
         table = self.query_one(DataTable)
         table.clear()
         for job in v.jobs:
             result = job.url or (job.error or "")
             table.add_row(f"@{job.account_label}", platform_markup(job.platform), status_markup(job.status),
                           str(job.attempts), result[:70], key=str(job.job_id))
+
+    def _schedule_line(self, v) -> str:
+        if not v.schedule_status:
+            return ""
+        try:
+            s = self.app.services.scheduling.view(v.post_id)
+        except Exception:  # noqa: BLE001 - display only
+            return ""
+        from src.tui.screens.schedule import when_text
+
+        history = " → ".join(h.get("action", "?") for h in s.history)
+        return f"\nSchedule {status_markup(s.status or '')} {when_text(s)}  [dim]{history}[/]"
 
     def _job(self):
         table = self.query_one(DataTable)
@@ -228,7 +318,8 @@ class HistoryScreen(Page):
             yield Select([("All platforms", ""), *[(PLATFORM_NAMES[p], p) for p in PLATFORMS]],
                          value="", allow_blank=False, id="hist-platform")
             yield Select([("All statuses", ""), ("Published", "published"), ("Failed", "failed"),
-                          ("Pending", "pending"), ("Processing", "processing")], value="", allow_blank=False,
+                          ("Pending", "pending"), ("Processing", "processing"), ("Scheduled", "scheduled"),
+                          ("Missed", "missed"), ("Cancelled", "cancelled")], value="", allow_blank=False,
                          id="hist-status")
         yield Input(placeholder="/ Search video or account", id="hist-search")
         yield DataTable(id="hist-table", cursor_type="row", zebra_stripes=True)

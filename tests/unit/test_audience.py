@@ -178,7 +178,7 @@ def test_existing_database_upgrades_with_old_posts_untouched(tmp_path):
 
     db.create_all()  # what main.py does on start
     db.migrate(verbose=False)
-    assert db.get_applied_migrations() == [1, 2, 3, 4, 5]
+    assert db.get_applied_migrations() == [1, 2, 3, 4, 5, 6]
     with db.session() as session:
         old = session.get(Post, 1)
         assert old.caption == "old post" and old.audience_json is None and old.audience_profile_id is None

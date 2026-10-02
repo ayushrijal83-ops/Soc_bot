@@ -20,6 +20,7 @@ from src.content.audience import summary as audience_summary
 from src.content.scheduling import TimezoneEngine
 from src.content.scheduling import describe as describe_times
 from src.core.jobs import JobError
+from src.core.publish_lock import BUSY_MESSAGE, PublishLockBusy, default_lock
 from src.core.publisher import (
     JobResult,
     PlanItem,
@@ -105,26 +106,57 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
         print_error("Fix the problems above before publishing.")
         return
     if len(valid) < len(destinations):
-        question = f"Publish to the {len(valid)} valid account(s)? ({len(destinations) - len(valid)} blocked, not published)"
-    else:
-        question = "Publish now?"
-    if not confirm(question, default=False):
+        print_warning(f"Only the {len(valid)} valid account(s) are used ({len(destinations) - len(valid)} blocked).")
+    choice = prompt_choice("Publish", ["Now", "Schedule", "Cancel"], default=3)
+    if choice in (None, 3):
         print_info("Cancelled. Nothing was published.")
         return
-
-    try:
-        post_id = engine.store.create_post(video_path, caption, valid, auto_retry=True)
-        if audience:
-            audiences.attach(post_id, audience.id)
-    except JobError as e:
-        print_error(str(e))
+    if choice == 2:
+        schedule_post(engine, account_manager, video_path, caption, cover, valid, plan, destinations, audience)
         return
-    for job in engine.store.jobs_for_post(post_id):
-        if job.options.get("cover_path"):
-            engine.store.set_cover_status(job.id, "pending")
-    print_info(f"Publishing post #{post_id}...")
-    result = engine.publish_post(post_id, on_update=batch_progress(engine, post_id))
+
+    # Lock BEFORE the post exists: if another window publishes, nothing is created.
+    try:
+        with default_lock():
+            try:
+                post_id = engine.store.create_post(video_path, caption, valid, auto_retry=True)
+                if audience:
+                    audiences.attach(post_id, audience.id)
+            except JobError as e:
+                print_error(str(e))
+                return
+            for job in engine.store.jobs_for_post(post_id):
+                if job.options.get("cover_path"):
+                    engine.store.set_cover_status(job.id, "pending")
+            print_info(f"Publishing post #{post_id}...")
+            result = engine.publish_post(post_id, on_update=batch_progress(engine, post_id))
+    except PublishLockBusy:
+        print_error(BUSY_MESSAGE + " Nothing was created.")
+        return
     _print_summary(result.jobs, engine)
+
+
+def schedule_post(engine, account_manager, video_path, caption, cover, valid, plan, destinations, audience) -> None:
+    """Schedule instead of publishing now: SchedulingService creates the post HELD; nothing is published."""
+    from src.cli.schedule_menu import ask_schedule_time, when_text
+    from src.services.publishing import BatchPlan, DestinationView, PublishingService
+    from src.services.scheduling import SchedulingService
+
+    items = {account_id: item for (account_id, _), item in zip(destinations, plan)}
+    batch = BatchPlan(video_path, caption, cover,
+                      [DestinationView(a, items[a].platform, items[a].account_label, True, [], []) for a, _ in valid],
+                      dict(valid), audience_id=audience.id if audience else None)
+    sched = SchedulingService(PublishingService(engine, account_manager))
+    view = ask_schedule_time(
+        sched, audience.snapshot() if audience else None,
+        submit_custom=lambda local, zone: sched.schedule(batch, local, zone, include_already_published=True),
+        submit_suggestion=lambda rec, slot: sched.schedule_from_suggestion(batch, rec, slot,
+                                                                            include_already_published=True))
+    if view is None:
+        print_info("Cancelled. Nothing was scheduled or published.")
+        return
+    print_success(f"Post #{view.post_id} scheduled for {when_text(view)}. It is published by the scheduler check "
+                  "(the full-screen app, or `python main.py --run-due`).")
 
 
 def ask_audience(store: AudienceStore, current_id: int | None = None):
@@ -338,25 +370,41 @@ def _print_summary(jobs: list[JobResult], engine: PublisherEngine | None = None)
 
 
 def run_publishing_queue(engine: PublisherEngine) -> None:
+    from src.cli.schedule_menu import print_scheduled, run_scheduled_actions
+    from src.services.publishing import PublishingService
+    from src.services.scheduling import SchedulingService
+
     clear_screen()
     print_header("PUBLISHING QUEUE")
-    jobs = engine.store.recent_jobs(limit=500)
-    if not jobs:
+    sched = SchedulingService(PublishingService(engine, engine.account_manager))
+    held = {v.post_id for v in sched.scheduled(("scheduled", "missed", "cancelled"))}
+    jobs = [j for j in engine.store.recent_jobs(limit=500) if j.post_id not in held]  # held posts aren't "pending"
+    scheduled = print_scheduled(sched)
+    if not jobs and not scheduled:
         print_info("No publishing jobs yet.")
         return
     print_batches(engine, jobs)
-    choice = prompt_choice("Action", ["Continue open jobs (pending/processing)", "Retry a failed job", "Back"], default=3)
-    if choice == 1:
-        for result in engine.resume_open_jobs(on_update=_print_update):
-            _print_summary(result.jobs, engine)
-    elif choice == 2:
-        job_id = prompt_int("Failed job ID")
-        if job_id is None:
-            return
-        try:
-            _print_summary([engine.retry_job(job_id, on_update=_print_update)], engine)
-        except JobError as e:
-            print_error(str(e))
+    choice = prompt_choice("Action", ["Continue open jobs (pending/processing)", "Retry a failed job",
+                                      "Scheduled posts (view / reschedule / publish now / cancel)", "Back"], default=4)
+    if choice == 3:
+        run_scheduled_actions(sched, engine, on_update=_print_update, summary=_print_summary)
+        return
+    try:
+        if choice == 1:
+            with default_lock():
+                for result in engine.resume_open_jobs(on_update=_print_update):
+                    _print_summary(result.jobs, engine)
+        elif choice == 2:
+            job_id = prompt_int("Failed job ID")  # asked before locking: never hold the lock at a prompt
+            if job_id is None:
+                return
+            try:
+                with default_lock():
+                    _print_summary([engine.retry_job(job_id, on_update=_print_update)], engine)
+            except JobError as e:
+                print_error(str(e))
+    except PublishLockBusy:
+        print_error(BUSY_MESSAGE)
 
 
 

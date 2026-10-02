@@ -1030,6 +1030,7 @@ Verified with `git log` at the time of writing (dates are author dates):
 | Classic CLI | READY (`--plain`) | Tests |
 | Audience Strategy V1 | **READY as metadata** (profiles, selection, snapshots); scheduling / localisation / analytics not built | `test_audience.py` |
 | Audience timing suggestions V2.1 | **READY as recommendations** (read-only on Review / CLI); real scheduling is V2.2 | `test_timezones.py`, `test_scheduling.py` |
+| Scheduling V2.2 (phases 1–6) | **READY**: post-level hold, SchedulingService, DueScheduler (60 min grace), publishing lock, TUI timer + `main.py --run-due` (0/3/1), TUI/CLI scheduling UI (schedule, suggestions, reschedule, publish now, cancel, queue section, dashboard) | `test_schedule_hold.py`, `test_scheduling_service.py`, `test_due_scheduler.py`, `test_publish_lock.py`, `test_scheduler_callers.py`, `test_scheduling_ui.py`, `test_scheduling_cli.py` |
 | Docs / setup guides / launcher | READY | `setup_guide/`, `Start_Soc_bot.bat`, README |
 
 ---
@@ -1054,7 +1055,7 @@ Verified with `git log` at the time of writing (dates are author dates):
 - A hard kill of Python can orphan `cloudflared` (it has no Job Object).
 - ffprobe is optional; without it, duration and resolution aren't checked locally.
 - TikTok `refresh_expires_in` is not persisted.
-- There is no single-instance lock for the app itself. Only the link files are locked across processes. Don't run two publishing sessions against the same DB at once.
+- Publishing is limited to one process at a time by an OS-level lock on `data/publishing.lock` (V2.2 phase 4, `src/core/publish_lock.py`): non-blocking, re-entrant per thread, released by the OS when a process dies. A second window gets "Another Soc_bot window is publishing. Please try again later." Non-publishing work (accounts, history, editing) is not locked.
 - Audience Strategy is recorded only: it does not influence who sees a post (platforms decide), no scheduler or analytics use it yet, and profiles can be disabled but not deleted.
 - Timing suggestions (V2.1) are heuristics: approximate timezone weights, fixed default windows, no weekday/weekend difference; results can change with a newer tzdata release; nothing is scheduled.
 

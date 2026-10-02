@@ -166,6 +166,118 @@ audience snapshot (V1 Audience.snapshot() / posts.audience_json)
 - **Next (V2.2, separate)**: real scheduling (stored UTC publish time) designed so it cannot collide with resume, which
   publishes every `pending` job; per-profile windows; weekday/weekend windows.
 
+### 7b-4. Scheduling (V2.2): 🚧 **IN PROGRESS** (phases 1–3 done: storage, service, one-pass due scheduler)
+Real scheduling lives **above** the publishing engine; adapters, media storage, auth and `PublisherEngine` are
+unchanged. A scheduled post is an ordinary post with pending jobs that is **held** at the post level
+(`posts.schedule_status`, DATABASE.md "Scheduling").
+
+```
+SchedulingService.schedule / schedule_from_suggestion ── create post + jobs, HELD (scheduled) ──┐
+SchedulingService.cancel / reschedule / publish_now (conditional UPDATEs)                         │
+DueScheduler.run_due(now)  ── one pass, UTC only ─────────────────────────────────────────────────┘
+   1. scheduled and scheduled_at < now − 60 min   -> missed        (never published automatically)
+   2. oldest scheduled with scheduled_at ≤ now ≤ scheduled_at + 60 min (scheduled_at, id):
+        conditional UPDATE scheduled -> released  ── won? ──► PublishingService.publish_batch(post_id)
+                                                  └─ lost ─► skipped (someone else changed it first)
+   3. repeat step 2 until nothing is due (bounded: 1000 posts per pass)
+```
+- **Phase 1 (storage + gate)**: migration 006; `JobStore` never claims, resumes or auto-retries jobs of held posts
+  (scheduled / missed / cancelled); scheduled posts are created atomically with their jobs.
+- **Phase 2 (`src/services/scheduling.py`)**: `schedule`, `schedule_from_suggestion` (uses the suggestion's
+  `start_utc` exactly), `cancel`, `reschedule`, `publish_now` (release only; the caller publishes), `view`,
+  `scheduled`. Times: explicit zone > audience primary zone (`audience_local`) > `SOC_BOT_TIMEZONE` > UTC; V2.1
+  `convert_manual` (DST gap rejected, overlap = first occurrence); allowed range now + 2 min … now + 365 days.
+  `PublishingService.publish_batch` refuses held posts.
+- **Phase 3 (`src/services/due_scheduler.py`)**: `DueScheduler.run_due(now=None, on_event=None) -> DueRunResult`
+  (released / published / failed / missed / skipped / errors / events). Grace 60 minutes: exactly at
+  `scheduled_at` and exactly at `scheduled_at + 60 min` the post is due; strictly later it becomes `missed`.
+  Release and publish happen one post at a time; publishing goes only through `PublishingService` (job claiming,
+  retries, tokens and platforms stay in the existing engine). A publishing failure or exception leaves the post
+  `released` (no scheduling retry layer). Two scheduler runs, or a scheduler racing a cancel / reschedule /
+  publish-now, can't both win: only the run whose conditional UPDATE released the post publishes it. Malformed
+  scheduled rows are reported as errors and never published or repaired. The event callback is informational:
+  its exceptions are recorded and never undo a state change. `now` must be timezone-aware (normalised to UTC).
+- **Phase 4 (`src/core/publish_lock.py`): process-level publishing lock.** One exclusive, **non-blocking** OS lock
+  on `<project>/data/publishing.lock` (anchored to the project root, not the working directory): Windows
+  `msvcrt.locking(LK_NBLCK)` on byte 0, elsewhere `fcntl.flock(LOCK_EX | LOCK_NB)`. Busy = `PublishLockBusy`
+  immediately (no waiting, polling, sleeping, retrying or stealing; user text `BUSY_MESSAGE`: "Another Soc_bot window
+  is publishing. Please try again later."). The OS drops the lock when a process dies, so there are no PID files,
+  heartbeats, expiry or stale-file deletion; the file holds no data and its existence means nothing. Inside one
+  process the lock belongs to the acquiring **thread** and is re-entrant for it (only depth 0→1 locks and 1→0
+  unlocks); other threads of the same process are busy too; releasing without holding raises `RuntimeError`.
+  It lives in `src/core` because the Content Inbox (`src/content`) needs it and must not import `src/services`.
+  - **Protected publishing entry points**: `PublishingService.publish_batch` / `retry_job` / `resume_open` (whole
+    operation; TUI publishing goes through these), `DueScheduler.run_due` (the whole pass: missed marking, releases
+    and publishing; nested `publish_batch` re-enters), CLI Create Post (from before the post is created), CLI Queue
+    continue / retry (prompts are asked before locking), `ContentIntake.publish` (before any folder move; covers CLI
+    Content Inbox, `main.py --scan` and the TUI Content screen). Busy: services raise `PublishLockBusy`; CLI prints
+    the message; the inbox skips the package untouched; `run_due` returns `busy=True` with one `busy` event and
+    changes nothing (no post is marked missed, released or published).
+  - **Order**: publishing lock first, then database work. It is a publishing concurrency boundary, not a scheduling
+    lock: scheduling state stays protected by the conditional database updates.
+- **Phase 5: callers of `run_due`** (both use the same `DueScheduler`, so grace, atomic release, missed handling,
+  lock behaviour and publishing are identical):
+  ```
+  SchedulingService ─► DueScheduler ─► publishing lock ─► PublishingService ─► PublisherEngine
+        ▲                   ▲
+        │                   ├── TUI: SocBotApp timer (worker group "scheduler")
+   (schedules)              └── CLI: python main.py --run-due   (one pass, then exit)
+  ```
+  - **TUI** (`src/tui/app.py`): one pass right after mount, then every `SOC_BOT_SCHEDULER_POLL_SECONDS` (whole
+    seconds 10–300, default 30; anything else falls back to 30 with a log warning). Passes run in a thread worker
+    in their own `"scheduler"` group (manual publishing stays in `"publish"`); a tick while a pass is running is
+    skipped, never queued. Each pass first asks the read-only `DueScheduler.has_work()`: when nothing is due or
+    overdue the publishing lock is not taken, so the timer never makes a manual publish busy. `publishing_active`
+    = manual batch OR scheduler actually publishing a due post (set on `publishing_started`); a pass that only
+    checks never blocks quitting. Quit stops the timer and cancels the scheduler group; while a scheduled post is
+    publishing, quitting is refused like for a manual batch. Notices: missed (post id + UTC time), published,
+    finished with problems, errors (redacted, each distinct message once); a busy lock shows "Another Soc_bot
+    window is publishing. Scheduled posts will be checked again on the next run." once until a non-busy run.
+    A failing pass is logged and notified; the next tick runs normally. The manual Publishing screen now shows the
+    friendly busy message instead of "Publishing stopped: PublishLockBusy".
+  - **CLI** (`main.py --run-due`): exactly one `run_due()` and exit, no prompt, no timer. Summary: checked time,
+    released / published / failed / missed / skipped / errors, then one line per missed, problem and error.
+    Exit codes: **0** = the pass completed (even if a post failed to publish: that is a publishing outcome, shown
+    in the summary), **3** = another Soc_bot window holds the publishing lock (nothing changed; "Another Soc_bot
+    window is publishing. Scheduled posts were not changed."), **1** = the pass could not run (startup or
+    scheduler error).
+  - **Windows Task Scheduler**: run `.venv\Scripts\python.exe main.py --run-due` every minute with *Start in* =
+    the project folder (setup_guide/00_MASTER_SETUP_GUIDE.md, PART 8). No permanently running process. Timing is
+    "first check after the scheduled time" (plus Windows start-up time), not second-exact; nothing runs while the
+    PC is off or asleep, and posts later than the 60-minute grace become missed.
+  - A pass still uses one fixed `now` (phase 3): posts that become due while a long pass publishes are handled
+    by the next pass.
+- **Phase 6: scheduling UI** (presentation only; every time, zone, DST and range decision is SchedulingService's):
+  - **TUI Create Post → Review**: `▶ PUBLISH NOW` (unchanged) · `⏰ Schedule…` · Cancel. Schedule opens
+    `ScheduleModal` (`src/tui/screens/schedule.py`): the V2.1 suggestions (selecting one passes the original slot
+    to `schedule_from_suggestion`; stale ones are refused by the service and the list refreshes), or a custom
+    date (YYYY-MM-DD) + time (HH:MM) + timezone Select over the full tz database (`all_zones()`, computed once;
+    preset to the zone `resolve_zone` returns; leaving the preset lets the service resolve, any other choice is
+    passed as explicit). "Check time" calls `resolve_time` and shows the confirmation (date, time, zone, UTC,
+    audience, DST notes); SCHEDULE submits. Errors (`dst_gap`, `too_soon`, `too_far`, `invalid_input`,
+    `stale_suggestion`, …) stay inline via `friendly_error()` and the form stays open. Nothing is published.
+  - **TUI Queue**: a SCHEDULED section (scheduled + missed, soonest first: post, video, local time + zone,
+    "in 5h 12m", status) above the batches; Enter opens `ScheduledActionsModal` (details incl. history) with
+    Reschedule (same `ScheduleModal`, `reschedule` / `reschedule_from_suggestion`), Publish now (confirmation, then
+    `PublishingScreen(release=True)`: takes the publishing lock FIRST, then `publish_now` + `publish_batch`, so a
+    busy lock never leaves a released-but-unpublished post), Cancel schedule (confirmation, `cancel`; nothing is
+    deleted). `conflict` / `invalid_state` show a friendly notice and the queue refreshes.
+  - **Held posts are not "pending"**: `PublishingService.batches()` leaves scheduled / missed / cancelled posts out
+    of the batch list (`include_held=True` to include), `batch()` reports their status as the schedule status (also
+    on their jobs), `queue_counts()` counts their jobs separately (`scheduled` / `missed` / `cancelled` posts), and
+    `history()` / `recent_activity()` show the schedule status. Job semantics (phase 1) are unchanged.
+  - **Dashboard**: "Next scheduled: #42 Oct 03 19:00 America/New_York" (or none) via
+    `SchedulingService.next_scheduled()`, inside the existing 3-second refresh. **Batch detail**: schedule status,
+    time and history (`scheduled → rescheduled → released …`). **History**: Scheduled / Missed / Cancelled filters.
+  - **CLI** (`src/cli/schedule_menu.py`): Create Post ends with `Publish: 1 Now / 2 Schedule / 3 Cancel`;
+    Schedule = suggestions or custom date / time / IANA zone, confirmation (SCHEDULE / Back / Cancel). Queue shows
+    a SCHEDULED list (held posts are left out of the batch list) and "Scheduled posts" actions: reschedule, publish
+    now (lock first), cancel schedule.
+  - New SchedulingService helpers: `parse_local`, `reschedule_from_suggestion`, `next_scheduled`,
+    `friendly_error` / `ERROR_MESSAGES`, `all_zones`. UI/CLI code never writes schedule columns (a test scans them).
+- **Not built**: Content Inbox scheduling; choosing the second occurrence of an ambiguous (DST overlap) local
+  time (the first is always used and shown).
+
 ### 7c. Media Delivery (`src/media_storage/`): ✅ **IMPLEMENTED** (Instagram only; real run pending storage config)
 ```
 InstagramPublisher ──► MediaSourceProvider (prepare / get_public_url / cleanup; max_file_size capability)

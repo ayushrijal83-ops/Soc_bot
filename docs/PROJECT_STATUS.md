@@ -3,6 +3,20 @@
 ## Current Phase
 **Usable daily tool (2026-09-26): TUI polished, setup guides, one-click launcher, new README.**
 
+### V2.2 Real Scheduling: phases 1–3 of the backend (2026-10-02, uncommitted)
+| Phase | Done |
+|---|---|
+| 1. Storage + hold gate | Migration 006 (`posts.scheduled_at` / `schedule_status` / `schedule_json`); jobs of scheduled / missed / cancelled posts are never claimed, resumed or auto-retried; scheduled posts are created atomically. |
+| 2. SchedulingService | schedule (manual or from a V2.1 suggestion), cancel, reschedule, publish now, views; DST gap rejected, overlap = first occurrence; now + 2 min … 365 days. |
+| 3. Due scheduler | `DueScheduler.run_due(now)`: one pass, UTC only; late by more than 60 min -> missed (never auto-published); due -> released -> normal publishing via `PublishingService`; atomic release (one winner across concurrent runs). |
+| 4. Publishing lock | `data/publishing.lock`: OS-level, non-blocking (Windows `msvcrt`, POSIX `fcntl`), freed by the OS if a process dies. Every publishing entry point holds it (TUI/service publish, retry, resume; scheduler pass; CLI create/queue; Content Inbox). A second window gets "Another Soc_bot window is publishing. Please try again later." and nothing changes. |
+
+| 5. Scheduler callers | The TUI checks for due scheduled posts at start and every 30 s (`SOC_BOT_SCHEDULER_POLL_SECONDS`, 10–300); `python main.py --run-due` does one check and exits (0 done, 3 another window publishing, 1 error); setup guide explains running it every minute from Windows Task Scheduler. |
+
+| 6. Scheduling UI | TUI: Review → `⏰ Schedule…` (suggested times or custom date/time/timezone, confirmation, inline errors); Queue SCHEDULED section with reschedule / publish now / cancel; dashboard "Next scheduled"; scheduled posts no longer appear as "pending". CLI: `Publish: Now / Schedule / Cancel` and scheduled-post actions in the Queue. |
+
+V2.2 scheduling is usable end to end. Tests: 1066 passed (40 new scheduling-UI tests), Ruff clean. Not included: Content Inbox scheduling.
+
 ### Audience Strategy V2.1: timing suggestions (2026-10-02, uncommitted)
 A **recommendation engine** for publishing times in good local hours for the audience's timezones (DST-aware, IANA
 data via `zoneinfo` + `tzdata`). It schedules nothing, creates no jobs, sends nothing to platforms and does not
@@ -343,7 +357,7 @@ no audience analytics are collected, and adapters receive nothing new.
 - YouTube: apps in Google "Testing" status need a Reconnect every 7 days; daily upload quota; custom thumbnails need a phone-verified channel.
 - TikTok `refresh_expires_in` is not persisted (no schema column).
 - ffprobe is optional; without it duration/resolution are not checked locally.
-- No single-instance lock for the app (only the published-link files are locked across processes): run one publishing session per database. A running batch can't be cancelled mid-post, so quitting is blocked while publishing.
+- Publishing is limited to one Soc_bot window at a time by `data/publishing.lock` (V2.2 phase 4); a second window gets a "busy" message instead of publishing. Other operations (accounts, history, editing) are not locked. A running batch can't be cancelled mid-post, so quitting is blocked while publishing.
 
 ## Next Recommended Task
 Real TikTok run once developer credentials exist (`setup_guide/03_TIKTOK_SETUP.md`). Otherwise only polish driven by daily use; the engine stays frozen.

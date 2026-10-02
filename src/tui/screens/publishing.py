@@ -15,7 +15,9 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Footer, Header, ProgressBar, Static
 
+from src.core.publish_lock import BUSY_MESSAGE, PublishLockBusy
 from src.services import BatchEvent
+from src.services.scheduling import SchedulingError, friendly_error
 from src.tui.theme import (
     AMBER,
     BLUE,
@@ -31,9 +33,11 @@ from src.tui.widgets import MessageModal
 class PublishingScreen(Screen):
     BINDINGS: ClassVar[list] = [Binding("escape", "leave", "Back"), Binding("enter", "details", "Details", show=False)]
 
-    def __init__(self, post_id: int | None = None, retry_job_id: int | None = None, resume: bool = False):
+    def __init__(self, post_id: int | None = None, retry_job_id: int | None = None, resume: bool = False,
+                 release: bool = False):
         super().__init__()
         self.post_id, self.retry_job_id, self.resume = post_id, retry_job_id, resume
+        self.release = release  # post_id is a scheduled/missed post: release it (Publish now), then publish
         self.rows: dict[int, dict] = {}
         self.running = True
         self.final: dict | None = None
@@ -85,12 +89,22 @@ class PublishingScreen(Screen):
             self.app.call_from_thread(self.handle_event, event)
 
         try:
-            if self.retry_job_id is not None:
+            if self.release:
+                # Lock BEFORE releasing: if another window publishes, the post stays scheduled (never released
+                # without being published). The service owns the release; publish_batch re-enters the lock.
+                with service.lock:
+                    self.app.services.scheduling.publish_now(self.post_id)
+                    service.publish_batch(self.post_id, emit)
+            elif self.retry_job_id is not None:
                 service.retry_job(self.retry_job_id, emit)
             elif self.resume:
                 service.resume_open(emit)
             else:
                 service.publish_batch(self.post_id, emit)
+        except PublishLockBusy:
+            self.app.call_from_thread(self.app.notify, BUSY_MESSAGE, severity="warning", timeout=6)
+        except SchedulingError as e:
+            self.app.call_from_thread(self.app.notify, friendly_error(e), severity="warning", timeout=6)
         except Exception as e:  # noqa: BLE001 - never crash the UI; the engine already isolates jobs
             self.app.call_from_thread(self.app.notify, f"Publishing stopped: {type(e).__name__}", severity="error")
         finally:

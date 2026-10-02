@@ -96,6 +96,8 @@ Examples:
   python main.py --help          # Show this help
   python main.py --dry-run       # Preview unpublished posts and content packages (no API calls)
   python main.py --scan          # Scan content/incoming; AUTO profiles publish, VERIFY only lists
+  python main.py --run-due       # One scheduler pass: publish due scheduled posts, then exit
+                                 #   (exit code 0 = done, 3 = another window is publishing, 1 = error)
         """
     )
     parser.add_argument(
@@ -107,6 +109,12 @@ Examples:
         "--scan",
         action="store_true",
         help="Scan the content inbox. With an AUTO profile, publish ready packages; with VERIFY, only list them.",
+    )
+    parser.add_argument(
+        "--run-due",
+        action="store_true",
+        help="Run ONE scheduler pass (publish scheduled posts that are due, mark long-overdue ones missed) and exit. "
+             "Exit code 0 = pass completed, 3 = another Soc_bot window is publishing (nothing changed), 1 = error.",
     )
     parser.add_argument(
         "--plain",
@@ -185,6 +193,50 @@ def print_batch_dry_run(engine, post_id: int, plan) -> None:
           f"{'1 final retry round' if engine.store.post_auto_retry(post_id) else 'off (older post)'}")
 
 
+RUN_DUE_OK, RUN_DUE_ERROR, RUN_DUE_BUSY = 0, 1, 3
+RUN_DUE_BUSY_MESSAGE = "Another Soc_bot window is publishing. Scheduled posts were not changed."
+
+
+def run_due(account_manager, auth_manager, engine, intake) -> int:
+    """``--run-due``: exactly one DueScheduler pass (the same scheduler the TUI uses), then exit."""
+    from src.services import build_services
+
+    services = build_services(account_manager, auth_manager, engine, intake, ENV_FILE)
+    return report_due_run(services.due_scheduler)
+
+
+def report_due_run(scheduler) -> int:
+    """Run one pass and print a short summary. A post that failed to publish is reported but is not a
+    scheduler error (exit 0); exit 1 only when the pass itself could not run; exit 3 when the lock is busy."""
+    from src.platforms.base import redact
+
+    print("Soc_bot scheduler")
+    print("-----------------")
+    try:
+        result = scheduler.run_due()
+    except Exception as e:  # noqa: BLE001 - command-line boundary: report and exit 1
+        print(f"[ERROR] The scheduler pass could not run: {redact(str(e)) or type(e).__name__}")
+        return RUN_DUE_ERROR
+    if result.busy:
+        print(RUN_DUE_BUSY_MESSAGE)
+        return RUN_DUE_BUSY
+    print(f"Checked: {result.started_at:%Y-%m-%d %H:%M:%S} UTC")
+    print()
+    for label, items in (("Released", result.released), ("Published", result.published), ("Failed", result.failed),
+                         ("Missed", result.missed), ("Skipped", result.skipped), ("Errors", result.errors)):
+        print(f"{label + ':':<11}{len(items)}")
+    for event in result.events:
+        when = f"{event.scheduled_at:%Y-%m-%d %H:%M} UTC" if event.scheduled_at else "no time"
+        if event.kind == "missed":
+            print(f"  Missed: post #{event.post_id} (scheduled {when}) was not published; it stays missed.")
+        elif event.kind == "failed":
+            print(f"  Problems: post #{event.post_id} (scheduled {when}) finished as {event.status}.")
+        elif event.kind == "error":
+            target = f"post #{event.post_id}" if event.post_id is not None else "scheduler"
+            print(f"  Error: {target}: {redact(event.message or '') or 'unknown error'}")
+    return RUN_DUE_OK
+
+
 def run_scan(intake) -> int:
     """Non-interactive inbox scan. AUTO profile: publish ready packages. VERIFY: list only."""
     entries = intake.scan()
@@ -214,6 +266,8 @@ def main() -> int:
         if args.dry_run:
             return run_dry_run()
         account_manager, auth_manager, engine, intake = initialize_services()
+        if args.run_due:
+            return run_due(account_manager, auth_manager, engine, intake)
         if args.scan:
             return run_scan(intake)
         if not args.plain and tui_available():

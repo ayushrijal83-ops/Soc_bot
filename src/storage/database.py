@@ -139,11 +139,22 @@ class Post(Base):
     # taken at creation; the profile id is only a link (NULL = no strategy, i.e. posts from before 005).
     audience_profile_id = Column(Integer, ForeignKey("audience_profiles.id", ondelete="SET NULL"), nullable=True)
     audience_json = Column(Text, nullable=True)
+    # Scheduling (migration 006). NULL schedule_status = ordinary post. scheduled / missed / cancelled = HELD:
+    # JobStore never claims, resumes or auto-retries its jobs. released = handed to the engine.
+    scheduled_at = Column(DateTime, nullable=True)  # naive UTC
+    schedule_status = Column(String(20), nullable=True)
+    schedule_json = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("idx_posts_video", "video_id"),
+        Index("idx_posts_schedule", "schedule_status", "scheduled_at"),
+        CheckConstraint("schedule_status IN ('scheduled','released','missed','cancelled')",
+                        name="ck_posts_schedule_status"),
     )
+
+    SCHEDULE_STATUSES = ("scheduled", "released", "missed", "cancelled")
+    HELD_SCHEDULE_STATUSES = ("scheduled", "missed", "cancelled")
 
     video = relationship("Video", back_populates="posts")
     publish_jobs = relationship("PublishJob", back_populates="post", cascade="all, delete-orphan")

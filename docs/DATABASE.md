@@ -66,10 +66,14 @@ User-created posts (video + caption).
 | auto_retry | INTEGER | | 1 = one automatic retry round for failed Instagram jobs (004) |
 | audience_profile_id | INTEGER | FK → audience_profiles(id) ON DELETE SET NULL | Audience strategy chosen for this post (005); NULL = none |
 | audience_json | TEXT | | **Immutable snapshot** of that strategy at creation (005); see "Audience Strategy" below |
+| scheduled_at | TIMESTAMP | | Publish instant, naive UTC (006); NULL = publish now |
+| schedule_status | TEXT | CHECK in (scheduled, released, missed, cancelled) (006) | NULL = ordinary post; see "Scheduling" below |
+| schedule_json | TEXT | | How the time was chosen + append-only history (006) |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Creation time |
 
 **Indexes:**
 - `idx_posts_video` ON (video_id)
+- `idx_posts_schedule` ON (schedule_status, scheduled_at) (006)
 
 ### publish_jobs
 Individual publishing job per destination (platform + account).
@@ -195,6 +199,7 @@ Use simple versioned SQL migration files in `src/storage/migrations/`:
 - `003_content_intake.sql` — content_items, publishing_profiles, cover status columns
 - `004_batch_retry.sql` — `posts.auto_retry`, `publish_jobs.auto_retry_used`
 - `005_audience_strategy.sql` — `audience_profiles` (+ 16 built-in rows), `posts.audience_profile_id`, `posts.audience_json`
+- `006_scheduling.sql` — `posts.scheduled_at`, `posts.schedule_status`, `posts.schedule_json`, index `idx_posts_schedule`
 
 The runner splits statements on `;`, also inside `--` comments and string literals, so a migration must not contain
 `;` anywhere except at statement ends. Tables built by `create_all()` only get *server* defaults declared in the ORM:
@@ -314,8 +319,32 @@ Switzerland `CH`/de-CH; Singapore `SG`/en-SG; New Zealand `NZ`/en-NZ.
 
 ### Timing suggestions (V2.1): no schema change
 Audience-aware timing suggestions (ARCHITECTURE.md §7b-3) are computed in memory from the snapshot below and are
-**not stored**; there is no migration 006 and no `scheduled_at` column yet (V2.2). Recomputing from a post's
-`audience_json` uses the countries recorded at creation; results also depend on the installed tzdata release.
+**not stored**. Recomputing from a post's `audience_json` uses the countries recorded at creation; results also
+depend on the installed tzdata release. (Chosen publish times are stored by V2.2 scheduling, below.)
+
+## Scheduling (V2.2, migration `006_scheduling.sql`)
+
+Scheduling is held at the **post** level; jobs stay ordinary jobs and the job state machine is unchanged.
+
+| `schedule_status` | Meaning |
+|---|---|
+| NULL | Ordinary post (publish now). All posts created before 006. |
+| `scheduled` | **Held**: waiting for `scheduled_at`. |
+| `missed` | **Held**: the due scheduler found it more than 60 minutes late; never published automatically. |
+| `cancelled` | **Held**: cancelled by the user; its jobs stay `pending` (not turned into failures). |
+| `released` | Handed to the normal publishing flow; publishing outcomes live in the jobs. |
+
+- **Hold gate** (`src/core/jobs.py`): jobs of a held post are never claimed, returned by `open_post_ids()` (resume)
+  or by `retry_owed_post_ids()` (automatic retry). The condition is part of the same SQL statement.
+- **Creation is atomic**: `JobStore.create_post(..., scheduled_at, schedule_status, schedule_json)` writes the post,
+  its hold and its pending jobs in one transaction.
+- **Transitions** (SchedulingService, DueScheduler) are single conditional UPDATEs on the current status (plus the
+  time window for the scheduler) and the current `schedule_json` (compare-and-swap), so concurrent actors have
+  exactly one winner and history entries are never lost.
+- **`schedule_json`** (sorted keys): `source` (manual | suggestion), `local`, `zone`, `zone_source`, `fold`,
+  `dst_overlap`, `utc`, `tzdata_version`, optional `suggestion` {start_utc, end_utc, score, coverage, engine_version,
+  tzdata_version}, and append-only `history` [{at, action, from_utc, to_utc, ...}] with actions scheduled,
+  rescheduled, cancelled, publish_now, missed, released. No secrets; `scheduled_at` (UTC) is authoritative.
 
 ### Historical snapshot (`posts.audience_json`)
 Written once when the post is created (`AudienceStore.attach`) and never replaced:

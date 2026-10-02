@@ -17,7 +17,7 @@ class DashboardScreen(Page):
         with Horizontal(classes="cards", id="platform-cards"):
             for platform in ("instagram", "youtube", "tiktok"):
                 yield Static("", classes="card", id=f"pc-{platform}")
-        yield Static("PUBLISHING", classes="section")
+        yield Static("PUBLISHING", classes="section", id="publishing-title")  # + next scheduled (always visible)
         with Horizontal(classes="cards"):
             for key in ("running", "pending", "retrying", "published", "failed"):
                 yield Static("", classes="stat", id=f"stat-{key}")
@@ -36,6 +36,12 @@ class DashboardScreen(Page):
     def on_mount(self) -> None:
         self.refresh_data()
         self.set_interval(3, self.refresh_data)
+
+    def next_scheduled(self) -> str:
+        nxt = self.app.services.scheduling.next_scheduled()
+        if nxt is None:
+            return "Next scheduled: [dim]none[/]"
+        return f"Next scheduled: [b]#{nxt.post_id}[/] {nxt.local:%b %d %H:%M} {nxt.zone}"
 
     def refresh_data(self) -> None:
         services = self.app.services
@@ -78,6 +84,7 @@ class DashboardScreen(Page):
             f"{status_markup('ready', 'System ready')}\n"
             f"Media delivery: {status_markup(tunnel.state, 'Cloudflare ' + ('available' if tunnel.state == 'available' else 'not set up'))}\n"
             f"Links saved: {sum(services.links.counts().values())}")
+        self.query_one("#publishing-title", Static).update("PUBLISHING   [dim]·[/]   " + self.next_scheduled())
         rows = []
         for job in services.publishing.recent_activity(limit=8):
             rows.append(f"{status_markup(job.status)}  {platform_markup(job.platform)}  @{job.account_label}")

@@ -21,6 +21,7 @@ from src.content.models import ContentPackage, content_root, stability_seconds
 from src.content.profile import Profile, ProfileStore
 from src.content.validator import ContentValidator, is_stable
 from src.core.jobs import JobInfo
+from src.core.publish_lock import BUSY_MESSAGE, PublishLockBusy, default_lock
 from src.core.publisher import JobResult, PublisherEngine
 from src.storage.database import ContentItem, Database
 
@@ -241,7 +242,18 @@ class ContentIntake:
         on_update: Callable[[JobResult], None] | None = None,
     ) -> PackageResult:
         """Publish one package with the saved profile. The caller has already confirmed (VERIFY) or
-        the profile is AUTO. Runs to completion without asking anything."""
+        the profile is AUTO. Runs to completion without asking anything.
+
+        Holds the publishing lock from before any folder move until the end; if another Soc_bot window is
+        publishing, the package is skipped untouched."""
+        try:
+            with default_lock():
+                return self._publish(package, retry_failed, on_update)
+        except PublishLockBusy:
+            return PackageResult(package.content_id, "skipped", BUSY_MESSAGE)
+
+    def _publish(self, package: ContentPackage, retry_failed: bool,
+                 on_update: Callable[[JobResult], None] | None) -> PackageResult:
         profile = self.profiles.load()
         if profile is None:
             return PackageResult(package.content_id, "skipped", "No publishing profile yet.")
