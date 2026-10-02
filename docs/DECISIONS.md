@@ -524,3 +524,88 @@ Per-job Quick Tunnels triggered Cloudflare's provisioning limit (HTTP 429) after
 - Tunnel creations per batch: 1 (plus at most a replacement if cloudflared dies).
 - All jobs of a batch share the same temporary URLs (same files; no per-account secret involved).
 - Old posts are never retried automatically; a manual retry disables the automatic one for that job.
+
+
+## ADR-029: Scheduling D1 — Schedule Held at the Post Level (V2.2, 2026-10-02)
+
+### Context
+Jobs created early with a new job status would reach `PublisherEngine._run_job`, which uploads any status it does not recognise without a claim, and Resume publishes every open job.
+
+### Decision
+A scheduled post is an ordinary post with ordinary `pending` jobs, held by `posts.schedule_status` (`scheduled` / `missed` / `cancelled` = held, `released` / NULL = not held; migration 006). `JobStore.claim`, `open_post_ids` and `retry_owed_post_ids` exclude held posts in the same SQL statement. The job state machine and its CHECK constraint are unchanged.
+
+### Consequences
+- A held post cannot be claimed, resumed or auto-retried by any path, including a direct `publish_post`.
+- Scheduled posts are created atomically with their jobs (`JobStore.create_post(..., schedule_status=...)`).
+
+## ADR-030: Scheduling D2 — Timezone Resolution Order (V2.2)
+
+### Decision
+A wall-clock date + time is read in: an explicitly chosen zone, else the audience's primary zone (`audience_local` strategy; highest audience weight), else `SOC_BOT_TIMEZONE` (if a valid IANA name), else UTC. The resolved zone and its source are always shown before confirming.
+
+### Consequences
+For multi-country audiences the primary zone may differ from the user's own clock; the confirmation shows the zone and the UTC instant. UTC is stored (naive UTC); DST gaps are refused, DST overlaps use the first occurrence.
+
+## ADR-031: Scheduling D3 — 60-Minute Missed Grace (V2.2)
+
+### Decision
+`DueScheduler`: a post is due while `scheduled_at <= now <= scheduled_at + 60 min`; strictly later it becomes `missed` and is never published automatically.
+
+### Consequences
+A post is not published hours late without the user noticing (e.g. after the PC was off). Missed posts wait for the user: Publish now, Reschedule or Cancel.
+
+## ADR-032: Scheduling D4 — One Scheduling Time per Post (V2.2)
+
+### Decision
+`scheduled_at` belongs to the post; all destinations of the post share it. Different times for different destinations are separate posts.
+
+### Consequences
+Keeps Instagram's one shared media session per batch and a single hold gate per post.
+
+## ADR-033: Scheduling D5 — No Automatic Continuation of an Interrupted Released Post (V2.2)
+
+### Decision
+The scheduler only releases posts that are still `scheduled`. A post that was released but whose publishing was interrupted (crash, kill) is not re-released or continued by the scheduler; it appears as an open batch and the user continues it with Resume.
+
+### Consequences
+No unattended re-run of a partially published batch; an interrupted upload on a restart-unsafe platform fails as "outcome unknown" and is never retried automatically (see ADR-038).
+
+## ADR-034: Scheduling D6 — Allowed Range: Now + 2 Minutes to Now + 365 Days (V2.2)
+
+### Decision
+`SchedulingService` refuses times earlier than now + 2 minutes (`too_soon`) or later than now + 365 days (`too_far`); a suggestion that became too close is refused as `stale_suggestion`.
+
+## ADR-035: Scheduling D7 — No Deferred Long Rate-Limit Retries (V2.2)
+
+### Decision
+Scheduling adds no retry layer. Once released, a post uses the existing engine retries only (in-place 30/60/120 s retries, Instagram's one automatic retry round, manual retry). A publishing failure leaves the post `released`; it is never put back to `scheduled`.
+
+### Consequences
+Daily limits (e.g. Instagram's 100 posts per 24 h) end as a failed job; the user retries later.
+
+## ADR-036: Scheduling D8 — Content Inbox Scheduling Excluded (V2.2)
+
+### Decision
+Content Inbox packages are published immediately (VERIFY / AUTO) as before; they cannot be scheduled. Packages are folder-driven and moved at publish time, so holding them needs its own design.
+
+## ADR-037: Scheduling D9 — Scheduler Callers: TUI Timer and `--run-due` (V2.2)
+
+### Decision
+One `DueScheduler.run_due()` pass, called by the TUI (right after start, then every `SOC_BOT_SCHEDULER_POLL_SECONDS`, 10–300, default 30) and by `python main.py --run-due` (one pass, exit 0 done / 3 lock busy / 1 error), e.g. from Windows Task Scheduler. No daemon or Windows service. Every pass holds the process-level publishing lock (`data/publishing.lock`).
+
+### Consequences
+Scheduled posts publish only while the TUI or a `--run-due` task runs, and not while the PC is off or asleep.
+
+## ADR-038: Every Publishing Failure Keeps a Structured Error Record (V2.3, 2026-10-02)
+
+### Context
+`PublisherEngine._fail(attempt_id=None)` (interrupted upload, validation failure, no publisher, internal error) stored only the job's free-text `error_message`. `last_error()` reads `publish_attempts.error_json`, so it returned `{}`: the automatic retry round could not see `uncertain` and would re-upload an interrupted job of a restart-unsafe adapter on an auto-retry platform, and friendly errors fell back to "Publishing failed.".
+
+### Decision
+- `_fail` with no attempt row creates one failed attempt carrying the standard `PublishError.to_dict()` (code, message, http_status, retryable, uncertain). A job that is already published gets no failure record.
+- `_retry_candidates` treats a failed job with no recorded error (rows from before this fix) as an unknown outcome: never retried automatically.
+
+### Consequences
+- No schema change; old jobs and attempts read as before.
+- Failures before any provider call now show one `failed` attempt in the attempt history.
+- Unknown outcomes are retried only by the user (manual retry), after checking the account.

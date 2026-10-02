@@ -208,6 +208,27 @@ See `test_publishing_engine.py` and `test_cli_publish.py` above. **Mocked tests 
 | Dry-run: no provider calls, no token renewal, no job/attempt changes, problems reported | `test_publishing_engine.py::TestDryRun`, `test_main.py` |
 | Account selection / cancel / blocked plan | `test_cli_publish.py` |
 
+## Scheduling, Publishing Lock and Failure-State Tests (V2.2 / V2.3)
+
+| Area | Where |
+|------|-------|
+| Hold gate (held posts never claimed / resumed / auto-retried), atomic scheduled creation, migration 006 | `test_schedule_hold.py` |
+| SchedulingService: zones, DST gap/overlap, +2 min / +365 d, suggestions, cancel / reschedule / publish now, races | `test_scheduling_service.py` |
+| DueScheduler: due / missed boundaries, oldest first, atomic release, failures, races | `test_due_scheduler.py` |
+| Publishing lock: real OS lock with child processes, re-entrancy, process death, busy behaviour | `test_publish_lock.py` |
+| Callers: TUI timer, `main.py --run-due` subprocess (exit 0 / 3 / 1), poll interval | `test_scheduler_callers.py` |
+| Scheduling UI (TUI + CLI), held posts never shown as pending, UI never writes schedule columns | `test_scheduling_ui.py`, `test_scheduling_cli.py` |
+| Failure records without an attempt row, uncertain outcomes never auto-retried | `test_failure_state.py` |
+
+Guidance:
+- Inject time: `SchedulingService(..., clock=lambda: NOW)`, `DueScheduler.run_due(now)`. Never wait for real time.
+- Never touch the real lock or database: `tests/conftest.py` gives every test its own `publishing.lock`; DB fixtures
+  use temporary files. Subprocess tests set `DATABASE_URL`, `CONTENT_ROOT`, `ENCRYPTION_KEY` and a private lock.
+- Use fake publishers (`tests/unit/test_publishing_engine.FakePublisher`); no real platform calls in tests.
+- Lock and race tests use real threads/processes: run them repeatedly when changing scheduling or locking
+  (`for i in $(seq 1 10); do pytest -q tests/unit/test_due_scheduler.py tests/unit/test_publish_lock.py; done`).
+- Timing assertions only prove "no waiting" with generous bounds (a blocking lock would take ~10 s).
+
 ## Running Tests
 
 ```bash

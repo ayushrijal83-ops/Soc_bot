@@ -328,7 +328,10 @@ class PublisherEngine:
         for job in self.store.jobs_for_post(post_id):
             if job.platform not in PARALLEL_PLATFORMS or job.status != "failed" or job.auto_retry_used:
                 continue
-            if self.store.last_error(job.id).get("uncertain"):
+            error = self.store.last_error(job.id)
+            if not error or error.get("uncertain"):
+                # No recorded error (e.g. a job failed before failures were always recorded) is an unknown outcome
+                # too: never re-upload it automatically.
                 log.warning("Job %s: outcome uncertain, not retried automatically (check the account first).", job.id)
                 self.store.mark_auto_retry_used(job.id)
                 continue
@@ -543,9 +546,14 @@ class PublisherEngine:
         return access_token
 
     def _fail(self, job: JobInfo, error: PublishError, attempt_id: int | None, on_update) -> JobResult:
+        current = self.store.get_job(job.id).status
+        if attempt_id is None and current != "published":
+            # Failures before any provider call (interrupted upload, validation, no publisher, internal error) get
+            # their own failed attempt row, so last_error() keeps the code and the "uncertain" flag that the
+            # automatic retry round and the friendly error messages rely on.
+            attempt_id = self.store.start_attempt(job.id)
         if attempt_id is not None:
             self.store.update_attempt(attempt_id, "failed", error=error.to_dict(), completed=True)
-        current = self.store.get_job(job.id).status
         if current == "published":
             return self._result(self.store.get_job(job.id))  # never downgrade a published job
         if current in ("pending", "retrying"):

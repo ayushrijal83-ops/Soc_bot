@@ -323,13 +323,24 @@ class TestBatchIsolationAndResume:
         old = {j.account_label: j.status for j in eng.store.jobs_for_post(old_post)}
         assert old == {"old_account01": "failed", "old_account02": "published"}
 
+    @staticmethod
+    def fail_certain(store, job_id):
+        """A job the initial round left failed by a (certain) provider error: the engine records every failure."""
+        store.transition(job_id, "failed", error_message="x")
+        attempt = store.start_attempt(job_id)
+        store.update_attempt(attempt, "failed", error={"code": "processing_failed", "message": "x", "http_status": None,
+                                                        "retryable": False, "uncertain": False}, completed=True)
+
     def test_crash_before_retry_round_resumes_only_the_owed_retries(self, env):
         post_id, _ = batch(env, 4)
         store = JobStore(env[0])
         jobs = store.jobs_for_post(post_id)
         for job, final in zip(jobs, ("published", "published", "failed", "failed")):  # initial round done, then crash
             store.claim(job.id)
-            store.transition(job.id, final, platform_media_id="OLD" if final == "published" else None)
+            if final == "published":
+                store.transition(job.id, final, platform_media_id="OLD")
+            else:
+                self.fail_certain(store, job.id)
         fake = FlakyInstagram()
         engine_for(env, fake).resume_open_jobs()
         assert calls_per_account(fake) == {"ig003": 1, "ig004": 1}
@@ -342,7 +353,7 @@ class TestBatchIsolationAndResume:
         a, b, c = store.jobs_for_post(post_id)
         for job in (a, b, c):
             store.claim(job.id)
-            store.transition(job.id, "failed", error_message="x")
+            self.fail_certain(store, job.id)
         store.mark_auto_retry_used(a.id)  # a: retry finished and failed again
         store.mark_auto_retry_used(b.id)  # b: retry started, app crashed mid-way
         store.transition(b.id, "retrying")

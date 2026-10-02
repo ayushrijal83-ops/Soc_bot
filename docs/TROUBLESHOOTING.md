@@ -529,6 +529,26 @@ Fixed (2026-09-26): the SHA-256 checksum of a video is cached per (path, size, m
 
 History page → select a row → **Del** (or the **Delete selected** / **Delete all shown** buttons) → confirm. Only finished (published or failed) jobs can be deleted. Pending or running jobs are never touched. A post with no jobs left is removed too. Saved published links in `content/published_links/` are **not** deleted.
 
+### Problem: a scheduled post shows **Missed** and was not published
+
+No scheduler check ran within 60 minutes after its time (the PC was off or asleep, the full-screen app was closed and no `--run-due` task was set up). Soc_bot never publishes a post more than 60 minutes late on its own. Queue → SCHEDULED → select the post → **Publish now**, **Reschedule** or **Cancel schedule**. To avoid it: keep the app open, or set up the one-minute Windows Task Scheduler check (`setup_guide/00_MASTER_SETUP_GUIDE.md`, PART 8).
+
+### Problem: `python main.py --run-due` exits with code 3 / "Another Soc_bot window is publishing"
+
+Another Soc_bot process holds the publishing lock (`data/publishing.lock`). Nothing was changed: due posts stay scheduled and nothing is marked missed. The next run (e.g. the next Task Scheduler minute) checks again. If it never clears, close other Soc_bot windows; the lock is released automatically when a Soc_bot process ends, so no file needs deleting.
+
+### Problem: "Another Soc_bot window is publishing. Please try again later." in the app
+
+Only one Soc_bot process (and one publishing action at a time inside a window) can publish. Wait until the other publish finishes (the scheduler may be publishing a due post), then try again. In the full-screen app the scheduler simply checks again on its next run.
+
+### Problem: `python main.py --run-due` exits with code 1
+
+The scheduler check could not run at all (for example `.env` missing or `ENCRYPTION_KEY` not set, or the wrong *Start in* folder in Task Scheduler). Run `python main.py --run-due` by hand in the project folder and read the `[ERROR]` line. A post that failed to publish does **not** cause exit 1; it is listed in the summary and the run exits 0.
+
+### Problem: YouTube publishing fails with "Access token expired and could not be renewed; reconnect the account"
+
+Google OAuth apps in **Testing** status issue refresh tokens that stop working after about 7 days, so the token can no longer be renewed. Accounts → YouTube → **Connect** again (same channel). Moving the app to *In production* (OAuth consent screen) removes the 7-day expiry; Google may require app verification for the YouTube upload scope. Scheduled YouTube posts fail with this error until the channel is reconnected.
+
 ### Problem: double-clicking `Start_Soc_bot.bat` closes immediately / shows an error
 
 - "Python was not found": install Python and tick "Add python.exe to PATH" (`setup_guide/00_MASTER_SETUP_GUIDE.md`).
