@@ -12,6 +12,22 @@ Working rules from the user: never commit or push (the user does), never print/m
 
 ---
 
+## Audience Strategy V2.1 timing suggestions — read this first (2026-10-02, uncommitted)
+
+- **What**: `src/content/timezones.py` (country -> weighted IANA zones: `CURATED_ZONES` + tzdata `zone.tab`
+  fallback) and `src/content/scheduling.py` (`TimezoneEngine.recommend(snapshot, now)`,
+  `convert_manual(local, zone, snapshot)`, `DEFAULT_WINDOWS`, `describe`). Service:
+  `PublishingService.suggest_times(audience_id, now=None)` / `convert_manual(...)`. Shown read-only on TUI Review and
+  in the CLI batch summary.
+- **Rules kept**: recommendation only; no jobs, no `scheduled_at`, no migration, no adapter/OAuth/media/engine change;
+  the engine never reads the clock (`now` passed in) and never touches the DB; global strategy = no suggestion.
+- **Data**: timezone weights are approximate population heuristics; results depend on the tzdata release
+  (`tzdata_version` is recorded). `tzdata` is now in requirements.txt (Windows has no system tz database).
+- **Do not** create future-dated `pending` jobs for scheduling: resume publishes every open job immediately. V2.2
+  must store the publish time separately.
+- **Limitations**: no weekday/weekend windows, no per-profile windows, equal weights for derived multi-zone countries
+  (e.g. MN, UA, CD).
+
 ## Audience Strategy V1 — read this first (2026-10-02, uncommitted)
 
 - **What**: reusable audience profiles (`src/content/audience.py`, table `audience_profiles`, migration 005) holding

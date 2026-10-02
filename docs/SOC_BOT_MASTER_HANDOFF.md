@@ -737,6 +737,11 @@ from before 005 have no strategy and work unchanged. Nothing is sent to any plat
 audience-country parameter), so no country distribution is guaranteed. Full description: ARCHITECTURE.md §7b-2 and
 DATABASE.md "Audience Strategy".
 
+**Audience timing suggestions (V2.1) [CURRENT, 2026-10-02]:** no schema change. `src/content/scheduling.py`
+computes up to three suggested UTC publishing ranges from a snapshot (weighted IANA zones per country, local posting
+windows, quiet-hours penalty, DST via `zoneinfo` + `tzdata`). Read-only: nothing is stored, scheduled or sent to a
+platform; global audiences get no "best worldwide time". See ARCHITECTURE.md §7b-3.
+
 The runner (ADR-014) strips comment lines, tolerates "duplicate column" when `create_all()` already created a column, and records versions with `merge`. `main.py` runs `create_all()` + `migrate()` on every start.
 
 **Integrity:**
@@ -1024,6 +1029,7 @@ Verified with `git log` at the time of writing (dates are author dates):
 | TUI | **READY** | 823 tests incl. TUI; real TUI publish |
 | Classic CLI | READY (`--plain`) | Tests |
 | Audience Strategy V1 | **READY as metadata** (profiles, selection, snapshots); scheduling / localisation / analytics not built | `test_audience.py` |
+| Audience timing suggestions V2.1 | **READY as recommendations** (read-only on Review / CLI); real scheduling is V2.2 | `test_timezones.py`, `test_scheduling.py` |
 | Docs / setup guides / launcher | READY | `setup_guide/`, `Start_Soc_bot.bat`, README |
 
 ---
@@ -1050,6 +1056,7 @@ Verified with `git log` at the time of writing (dates are author dates):
 - TikTok `refresh_expires_in` is not persisted.
 - There is no single-instance lock for the app itself. Only the link files are locked across processes. Don't run two publishing sessions against the same DB at once.
 - Audience Strategy is recorded only: it does not influence who sees a post (platforms decide), no scheduler or analytics use it yet, and profiles can be disabled but not deleted.
+- Timing suggestions (V2.1) are heuristics: approximate timezone weights, fixed default windows, no weekday/weekend difference; results can change with a newer tzdata release; nothing is scheduled.
 
 **Known bugs:**
 - None open at the time of writing. The last full run passed (823 tests, Ruff clean).

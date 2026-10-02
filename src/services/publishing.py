@@ -12,10 +12,16 @@ import threading
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.content.audience import AudienceStore
+from src.content.scheduling import (
+    ManualConversion,
+    Recommendation,
+    TimezoneEngine,
+    default_manual_zone,
+)
 from src.core.jobs import JobInfo
 from src.core.publisher import (
     JobResult,
@@ -204,6 +210,7 @@ class PublishingService:
         self.accounts = account_manager
         self.store = engine.store
         self.audiences = AudienceStore(engine.store.database)
+        self.timing = TimezoneEngine()
 
     # --- inputs --------------------------------------------------------------------------
 
@@ -319,6 +326,20 @@ class PublishingService:
     def resume_open(self, on_event: Callable[[BatchEvent], None] | None = None) -> list[BatchView]:
         post_ids = sorted(set(self.store.open_post_ids()) | set(self.store.retry_owed_post_ids(("instagram",))))
         return [self.publish_batch(post_id, on_event) for post_id in post_ids]
+
+    # --- timing suggestions (read-only: nothing is scheduled, no job is created) --------------
+
+    def _snapshot(self, audience_id: int | None) -> dict | None:
+        audience = self.audiences.get(audience_id) if audience_id is not None else None
+        return audience.snapshot() if audience else None
+
+    def suggest_times(self, audience_id: int | None, now: datetime | None = None) -> Recommendation:
+        """Suggested publishing slots for an audience profile (None = no strategy -> Global note)."""
+        return self.timing.recommend(self._snapshot(audience_id), now or datetime.now(timezone.utc))
+
+    def convert_manual(self, local: datetime, audience_id: int | None, zone: str | None = None) -> ManualConversion:
+        """A manually chosen wall-clock time (default zone: SOC_BOT_TIMEZONE, else UTC) seen by the audience."""
+        return self.timing.convert_manual(local, zone or default_manual_zone(), self._snapshot(audience_id))
 
     # --- reads -----------------------------------------------------------------------------
 

@@ -3,6 +3,22 @@
 ## Current Phase
 **Usable daily tool (2026-09-26): TUI polished, setup guides, one-click launcher, new README.**
 
+### Audience Strategy V2.1: timing suggestions (2026-10-02, uncommitted)
+A **recommendation engine** for publishing times in good local hours for the audience's timezones (DST-aware, IANA
+data via `zoneinfo` + `tzdata`). It schedules nothing, creates no jobs, sends nothing to platforms and does not
+control or guarantee geographic distribution. Details: ARCHITECTURE.md §7b-3.
+
+| Change | What it means for the user |
+|---|---|
+| Review / CLI summary | "Suggested times" (up to 3 UTC ranges with local times, e.g. `19:00 IST Kolkata`), labelled strategy only. Read-only. |
+| Global audience | No suggestion on purpose: there is no "best worldwide time". |
+| Manual strategy | No suggestion; `convert_manual` converts a chosen time (zone from optional `SOC_BOT_TIMEZONE`, else UTC). |
+| Timezone data | Multi-zone countries keep several weighted zones (approximate population shares). `tzdata` added to requirements.txt. |
+| Tests | `test_timezones.py` (17) + `test_scheduling.py` (31), all offline with fixed times; no existing test changed. |
+
+**Not done (by design):** no scheduling or stored publish times (V2.2), no weekday/weekend windows, no per-profile
+windows, no analytics or optimisation.
+
 ### Audience Strategy V1 (2026-10-02, uncommitted)
 Posts can carry an **audience strategy**: target countries (ISO 3166-1 alpha-2), language, caption locale and a
 posting-time strategy (`global` / `audience_local` / `manual`). It is **strategy metadata, not geographic

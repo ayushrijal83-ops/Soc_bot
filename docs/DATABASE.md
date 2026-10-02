@@ -312,6 +312,11 @@ United Kingdom `GB`/en-GB; Australia `AU`/en-AU; Germany `DE`/de-DE; France `FR`
 South Korea `KR`/ko-KR; Netherlands `NL`/nl-NL; Sweden `SE`/sv-SE; Norway `NO`/nb-NO; Denmark `DK`/da-DK;
 Switzerland `CH`/de-CH; Singapore `SG`/en-SG; New Zealand `NZ`/en-NZ.
 
+### Timing suggestions (V2.1): no schema change
+Audience-aware timing suggestions (ARCHITECTURE.md §7b-3) are computed in memory from the snapshot below and are
+**not stored**; there is no migration 006 and no `scheduled_at` column yet (V2.2). Recomputing from a post's
+`audience_json` uses the countries recorded at creation; results also depend on the installed tzdata release.
+
 ### Historical snapshot (`posts.audience_json`)
 Written once when the post is created (`AudienceStore.attach`) and never replaced:
 ```json

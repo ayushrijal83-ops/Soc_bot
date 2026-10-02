@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -26,6 +27,7 @@ from textual.widgets import (
 from textual.widgets.selection_list import Selection
 
 from src.content.audience import summary as audience_summary
+from src.content.scheduling import describe as describe_times
 from src.platforms.tiktok.publisher import PRIVACY_LEVELS
 from src.platforms.youtube.publisher import PRIVACY_STATUSES
 from src.tui.theme import PLATFORM_NAMES, mb, platform_markup, status_markup
@@ -398,7 +400,11 @@ class CreatePostScreen(Page):
                  f"Cover        {(self.cover.name + '  →  same cover for all Instagram accounts') if self.cover else 'none'}",
                  f"Caption      {len(caption)} characters",
                  f"Audience     {audience_summary(audience.snapshot() if audience else None)}",
-                 "[dim]             strategy metadata only: platforms decide distribution[/]", ""]
+                 "[dim]             strategy metadata only: platforms decide distribution[/]",
+                 "Suggested times  [dim](strategy only — does not control distribution; nothing is scheduled)[/]"]
+        lines += [f"  [dim]{escape(line)}[/]" for line in
+                  describe_times(self.app.services.publishing.suggest_times(p.audience_id))]
+        lines.append("")
         for platform in ("instagram", "youtube", "tiktok"):
             if p.count(platform):
                 lines.append(f"{platform_markup(platform):<30} {p.count(platform)} account(s)")

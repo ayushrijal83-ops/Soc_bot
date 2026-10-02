@@ -127,6 +127,45 @@ PublisherEngine / adapters: unchanged, never see the strategy
   analytics comparing the chosen strategy with actual audience countries **from official platform insights APIs
   only**. No metrics are fabricated and no analytics are collected in V1.
 
+### 7b-3. Audience-aware timing suggestions (`src/content/timezones.py`, `src/content/scheduling.py`): ✅ **IMPLEMENTED** (V2.1, 2026-10-02)
+**A recommendation engine only.** It suggests publishing times that fall in good *local* hours for the audience's
+timezones. It does not schedule anything, creates no jobs, sends nothing to any platform, and does not control or
+guarantee geographic distribution: choosing countries is not targeting, and the platforms alone decide who sees a
+post. No VPN, proxy or location spoofing exists anywhere.
+
+```
+audience snapshot (V1 Audience.snapshot() / posts.audience_json)
+  -> zones_for(countries, year): country -> weighted IANA zones (curated table, else tzdata zone.tab)
+  -> 15-minute UTC slots, now rounded up after a 15-minute lead, 24-hour horizon
+  -> per zone: local time (zoneinfo, that slot's real date = DST-aware) -> posting window weight, quiet-hours penalty
+  -> slot score = sum(audience weight x zone score); coverage = audience share inside a window
+  -> merge neighbouring equal-score slots -> drop score <= 0 and < 25 % of the best -> >= 2 h apart -> at most 3
+  -> Recommendation(slots with UTC range + local views, zones, notes, engine_version, tzdata_version, windows)
+```
+- **Country -> timezones** (`timezones.py`): a country is never reduced to one zone. `CURATED_ZONES` holds
+  representative zones with **approximate population shares** (heuristics, not audience data) for US, CA, AU, RU,
+  BR, MX, ID, ES, PT, CN (Shanghai only), NZ, CL, EC. Other countries are derived from tzdata's `zone.tab`, grouped by
+  their January/July UTC offsets, equal weights, marked `derived` (a note when there is more than one zone). BV/HM
+  have no timezone data and get a note. Each country gets an equal share of a multi-country audience.
+- **Posting windows** (`DEFAULT_WINDOWS`, configurable through `TimezoneEngine(windows=...)`): morning 07:00–09:00
+  (0.6), midday 12:00–13:30 (0.8), evening 19:00–22:00 (1.0), quiet hours 00:00–06:00 (−0.5 penalty). Heuristic
+  defaults, not platform facts. **Weekday/weekend differences are not modelled yet.**
+- **Strategies**: `audience_local` -> suggestions; `global` (and no strategy / the Global profile) -> no suggestion
+  and the note "Global audience: no audience-local time preference; publish when convenient." (there is deliberately
+  no "best worldwide time"); `manual` -> no suggestion; `convert_manual(local, zone, snapshot)` turns a wall-clock time
+  in an IANA zone into UTC plus the audience's local views (DST gap rejected, DST overlap = first occurrence). Default
+  zone: `SOC_BOT_TIMEZONE` (.env), else UTC; the computer's timezone is never guessed.
+- **Time handling**: `now` must be timezone-aware and is always passed in (the engine never reads the clock);
+  everything is computed in aware UTC; no fixed offsets: DST comes from the IANA data per date.
+- **Reproducibility**: same snapshot + same `now` + same tzdata = same result. Results record `engine_version` and
+  `tzdata_version`; a newer tzdata release (a country changing its clocks) can change historical calculations.
+  Suggestions are not stored.
+- **Where shown** (read-only): TUI Create Post › Review ("Suggested times", strategy only) and the CLI batch summary,
+  via `PublishingService.suggest_times(audience_id)` / `convert_manual(...)`. Viewing them never schedules or publishes.
+- **Dependency**: `tzdata` (requirements.txt): Windows has no system timezone database for `zoneinfo`.
+- **Next (V2.2, separate)**: real scheduling (stored UTC publish time) designed so it cannot collide with resume, which
+  publishes every `pending` job; per-profile windows; weekday/weekend windows.
+
 ### 7c. Media Delivery (`src/media_storage/`): ✅ **IMPLEMENTED** (Instagram only; real run pending storage config)
 ```
 InstagramPublisher ──► MediaSourceProvider (prepare / get_public_url / cleanup; max_file_size capability)

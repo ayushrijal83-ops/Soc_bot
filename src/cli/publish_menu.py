@@ -1,5 +1,6 @@
 """Minimal CLI for Phase 4: create a post, preview the plan, publish, and inspect the queue."""
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.accounts.manager import AccountManager
@@ -16,6 +17,8 @@ from src.cli.display import (
 from src.cli.prompts import prompt_choice, prompt_int, prompt_text
 from src.content.audience import AudienceStore
 from src.content.audience import summary as audience_summary
+from src.content.scheduling import TimezoneEngine
+from src.content.scheduling import describe as describe_times
 from src.core.jobs import JobError
 from src.core.publisher import (
     JobResult,
@@ -94,6 +97,10 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
     print_batch_summary(check.media.size_bytes, video_path, cover, destinations, plan, engine)
     print_info(f"Audience strategy: {audience_summary(audience.snapshot() if audience else None)} "
                "(metadata only: platforms decide who sees the post)")
+    print_info("Suggested times (strategy only, does not control distribution; nothing is scheduled):")
+    rec = TimezoneEngine().recommend(audience.snapshot() if audience else None, datetime.now(timezone.utc))
+    for line in describe_times(rec):
+        print(f"  {line}")
     if not valid:
         print_error("Fix the problems above before publishing.")
         return
