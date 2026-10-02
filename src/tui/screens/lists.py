@@ -25,6 +25,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from src.content.audience import summary as audience_summary
 from src.tui.theme import (
     AMBER,
     BLUE,
@@ -153,7 +154,8 @@ class BatchDetailScreen(Screen):
             f"Video [b]{v.video}[/]   Cover {v.cover or 'none'}   {status_markup(v.status)}\n"
             f"Caption [dim]{caption[:110]}{'…' if len(caption) > 110 else ''}[/]\n"
             f"Platforms {'  '.join(platform_markup(p) for p in v.platforms)}   Accounts {v.total}   "
-            f"Automatic retries used {retried}")
+            f"Automatic retries used {retried}\n"
+            f"Audience [dim]{audience_summary(v.audience)}[/]")
         table = self.query_one(DataTable)
         table.clear()
         for job in v.jobs:

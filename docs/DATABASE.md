@@ -63,6 +63,9 @@ User-created posts (video + caption).
 | id | INTEGER | PRIMARY KEY, AUTOINCREMENT | Internal ID |
 | video_id | INTEGER | NOT NULL, FK → videos(id) ON DELETE CASCADE | Video reference |
 | caption | TEXT | | User-provided caption |
+| auto_retry | INTEGER | | 1 = one automatic retry round for failed Instagram jobs (004) |
+| audience_profile_id | INTEGER | FK → audience_profiles(id) ON DELETE SET NULL | Audience strategy chosen for this post (005); NULL = none |
+| audience_json | TEXT | | **Immutable snapshot** of that strategy at creation (005); see "Audience Strategy" below |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Creation time |
 
 **Indexes:**
@@ -188,6 +191,14 @@ accounts 1───< publish_jobs >───1 posts >───1 videos
 
 Use simple versioned SQL migration files in `src/storage/migrations/`:
 - `001_initial_schema.sql` — Initial schema with all tables
+- `002_publishing.sql` — `publish_jobs.options_json` + unique (post_id, account_id)
+- `003_content_intake.sql` — content_items, publishing_profiles, cover status columns
+- `004_batch_retry.sql` — `posts.auto_retry`, `publish_jobs.auto_retry_used`
+- `005_audience_strategy.sql` — `audience_profiles` (+ 16 built-in rows), `posts.audience_profile_id`, `posts.audience_json`
+
+The runner splits statements on `;`, also inside `--` comments and string literals, so a migration must not contain
+`;` anywhere except at statement ends. Tables built by `create_all()` only get *server* defaults declared in the ORM:
+SQL seed rows rely on them (`AudienceProfile` declares them for that reason).
 
 Migration runner in `database.py` tracks applied versions in `schema_version` table.
 
@@ -266,5 +277,47 @@ One row per content package (identified by its video), linked to the post that p
 |--------|------|-------------|-------------|
 | id | INTEGER | PK | |
 | name | TEXT | NOT NULL, **UNIQUE** | `default` (only one used for now) |
-| settings_json | TEXT | NOT NULL | `{"accounts": {"youtube": [ids]...}, "cover_enabled", "after_success", "mode", "tiktok_privacy_level", "youtube_privacy_status", "youtube_made_for_kids"}`: account IDs only, never tokens |
+| settings_json | TEXT | NOT NULL | `{"accounts": {"youtube": [ids]...}, "cover_enabled", "after_success", "mode", "tiktok_privacy_level", "youtube_privacy_status", "youtube_made_for_kids", "audience_profile_id"}`: account IDs only, never tokens |
 | created_at, updated_at | TIMESTAMP | | |
+
+`audience_profile_id` (005) is the audience strategy recorded on every post the Content Inbox creates. Profiles saved
+before 005 have no such key and load as `None` (no strategy).
+
+## Audience Strategy (migration `005_audience_strategy.sql`)
+
+Content-strategy metadata only: never sent to a platform, never credentials or personal data. It does not and
+cannot guarantee distribution to a country (see ARCHITECTURE.md §7b-2).
+
+### audience_profiles
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | INTEGER | PK | |
+| name | TEXT | NOT NULL, **UNIQUE** (`uq_audience_profiles_name`) | e.g. `United States`, `North America` |
+| description | TEXT | | Optional |
+| countries_json | TEXT | NOT NULL, DEFAULT `'[]'` | JSON list of ISO 3166-1 alpha-2 codes, e.g. `["US","CA"]`; `[]` = global (built-in Global only) |
+| language | TEXT | | ISO 639 code, e.g. `en` |
+| caption_locale | TEXT | | e.g. `en-US` |
+| timezone_strategy | TEXT | NOT NULL, DEFAULT `global`, CHECK in (global, audience_local, manual) | `AudienceTimeStrategy` |
+| builtin | INTEGER | NOT NULL, DEFAULT 0 | 1 = seeded by migration 005 |
+| enabled | INTEGER | NOT NULL, DEFAULT 1 | 0 = hidden from new posts (profiles are never deleted) |
+| created_at, updated_at | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | |
+
+**Why a JSON list and not a join table:** countries are always read and written as one set with their profile and
+never queried per country, and every code is validated in `src/content/audience.py` against the ISO table. This
+follows the existing `settings_json` convention; any valid ISO code can be stored without a schema change. If
+per-country queries are ever needed (analytics), add a join table then.
+
+**Built-in rows** (seeded with `INSERT OR IGNORE`): Global `[]`; United States `US`/en-US; Canada `CA`/en-CA;
+United Kingdom `GB`/en-GB; Australia `AU`/en-AU; Germany `DE`/de-DE; France `FR`/fr-FR; Japan `JP`/ja-JP;
+South Korea `KR`/ko-KR; Netherlands `NL`/nl-NL; Sweden `SE`/sv-SE; Norway `NO`/nb-NO; Denmark `DK`/da-DK;
+Switzerland `CH`/de-CH; Singapore `SG`/en-SG; New Zealand `NZ`/en-NZ.
+
+### Historical snapshot (`posts.audience_json`)
+Written once when the post is created (`AudienceStore.attach`) and never replaced:
+```json
+{"profile_id": 2, "name": "United States", "countries": ["US"], "language": "en",
+ "caption_locale": "en-US", "timezone_strategy": "audience_local"}
+```
+Editing, renaming or disabling the profile later leaves this untouched; `audience_profile_id` is only a link for
+future analytics grouping. Posts created before migration 005 keep NULL in both columns (= no strategy) and publish
+exactly as before.

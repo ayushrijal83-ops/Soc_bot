@@ -92,6 +92,41 @@ content/incoming/<package>/  ->  ContentDetector  ->  ContentValidator  ->  Publ
 - **intake.py**: `ContentIntake`: scan/inspect (read-only), plan, publish (one package), publish_ready (AUTO), history
 - No platform-specific code: per-platform options come from the profile, and cover handling comes from the adapter's capability methods. See [CONTENT_INTAKE.md](CONTENT_INTAKE.md).
 
+### 7b-2. Audience Strategy (`src/content/audience.py`): ✅ **IMPLEMENTED** (V1, 2026-10-02, migration 005)
+**What it is:** reusable *content-strategy metadata* recorded on each post: which countries the post is meant for
+(ISO 3166-1 alpha-2 codes), its language (ISO 639), caption locale (e.g. `en-US`) and a posting-time strategy.
+**What it is NOT:** geographic targeting. Organic Instagram / TikTok / YouTube publishing has no audience-country
+parameter, so nothing from a profile is sent to any platform, and there are no location, VPN or proxy tricks
+anywhere. Choosing "United States" does **not** guarantee the post is shown in the United States: the platforms
+alone decide distribution. The strategy exists for future caption localisation, audience-aware scheduling and analytics.
+
+```
+AudienceStore (audience_profiles) --list()--> TUI Create Post (Caption step: "Audience Strategy" select, default Global)
+                                  --list()--> CLI Create Post / publishing profile editor (Content Inbox)
+PublishingService.create_batch / run_create_post / ContentIntake.publish
+   +- JobStore.create_post (unchanged) --> AudienceStore.attach(post_id, profile_id)
+         writes posts.audience_profile_id + posts.audience_json (immutable snapshot)
+PublisherEngine / adapters: unchanged, never see the strategy
+```
+- **Profiles**: `Audience` dataclass + `AudienceStore` (list / get / save / attach / for_post). Countries are validated
+  against the full ISO 3166-1 alpha-2 table (`ISO_COUNTRIES`, 249 codes): any valid code works without code or schema
+  changes. Rejected: unknown codes (e.g. `UK`, `USA`, `XX`), duplicate codes, an empty country list on a custom
+  profile, bad language/locale, unknown time strategy, duplicate names.
+- **Built-ins**: Global (no countries, `global` time) + 15 single-country profiles (US, CA, GB, AU, DE, FR, JP, KR, NL,
+  SE, NO, DK, CH, SG, NZ, each with its language/locale and `audience_local` time), seeded as rows by migration 005.
+  Same code path as custom profiles; they can be edited or disabled, never deleted.
+- **Custom profiles**: Settings › Audience Profiles (classic menu; in the TUI: Settings › Advanced › Open classic
+  settings): create / edit / enable-disable. Profiles are never deleted (disabling hides them from new posts).
+- **`AudienceTimeStrategy`**: `global` | `audience_local` | `manual`. Recorded only; no scheduler reads it yet.
+- **Snapshot**: `attach` stores `{"profile_id", "name", "countries", "language", "caption_locale",
+  "timezone_strategy"}` in `posts.audience_json` once; a second attach never replaces it. Editing or disabling the
+  profile later does not change existing posts. Posts with no snapshot (all posts before migration 005, or "Skip")
+  mean "no strategy" and are shown as `none (Global)`.
+- **Where it is shown**: Create Post Review, the CLI batch summary, the publishing-profile view, Batch detail.
+- **Future direction**: audience-aware scheduling from `timezone_strategy` + countries; caption locale handling;
+  analytics comparing the chosen strategy with actual audience countries **from official platform insights APIs
+  only**. No metrics are fabricated and no analytics are collected in V1.
+
 ### 7c. Media Delivery (`src/media_storage/`): ✅ **IMPLEMENTED** (Instagram only; real run pending storage config)
 ```
 InstagramPublisher ──► MediaSourceProvider (prepare / get_public_url / cleanup; max_file_size capability)

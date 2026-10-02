@@ -9,6 +9,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from src.content.audience import AudienceStore
 from src.storage.database import Account, Database, PublishingProfile
 
 PLATFORMS = ("instagram", "tiktok", "youtube")
@@ -28,6 +29,8 @@ class Profile:
     tiktok_privacy_level: str | None = None
     youtube_privacy_status: str = "private"
     youtube_made_for_kids: bool = False
+    # Audience strategy recorded on every post this profile creates (None = no strategy).
+    audience_profile_id: int | None = None
 
     def account_ids(self) -> list[int]:
         return [aid for p in PLATFORMS for aid in self.accounts.get(p, [])]
@@ -96,6 +99,13 @@ class ProfileStore:
                     elif require_active and account.status != "active":
                         label = account.display_name or account.username
                         problems.append(f"{platform.title()} {label} is not currently authorized ({account.status}).")
+        if profile.audience_profile_id is not None:
+            audience = AudienceStore(self.database).get(profile.audience_profile_id)
+            if audience is None:
+                problems.append(f"Audience profile #{profile.audience_profile_id} is no longer available.")
+            elif not audience.enabled:
+                problems.append(f"Audience profile '{audience.name}' is disabled. Enable it under Settings › "
+                                "Audience Profiles or choose another audience strategy in the publishing profile.")
         if profile.accounts.get("tiktok") and not profile.tiktok_privacy_level:
             problems.append("TikTok privacy level is not chosen in the profile.")
         return problems

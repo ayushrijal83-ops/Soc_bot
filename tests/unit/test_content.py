@@ -15,6 +15,7 @@ from src.cli.content_menu import (
     run_history,
     verify_and_publish,
 )
+from src.content.audience import AudienceStore
 from src.content.detector import ContentDetector, is_safe_name
 from src.content.intake import ContentIntake, content_key
 from src.content.manager import ContentManager, ContentPathError
@@ -579,8 +580,8 @@ class TestContentCli:
         db, accounts, ids, _ = env
         intake = intake_with(env, TestIntakePublishing().pubs())
         # instagram: none; tiktok: 1; youtube: 1,2; tiktok privacy 4 (SELF_ONLY); yt privacy 1;
-        # made for kids n; cover y; after success 1; mode 1 (VERIFY); save y
-        answers = ["", "1", "1,2", "4", "1", "n", "y", "1", "1", "y"]
+        # made for kids n; cover y; after success 1; mode 1 (VERIFY); audience 2 (United States); save y
+        answers = ["", "1", "1,2", "4", "1", "n", "y", "1", "1", "2", "y"]
         with patch("builtins.input", side_effect=answers):
             profile = edit_profile(intake, accounts)
         assert profile is not None
@@ -588,6 +589,7 @@ class TestContentCli:
         assert saved.accounts["youtube"] == sorted([ids["yt_a"], ids["yt_b"]])
         assert saved.accounts["tiktok"] == [ids["tt"]] and saved.accounts["instagram"] == []
         assert saved.tiktok_privacy_level == "SELF_ONLY" and saved.mode == "verify"
+        assert AudienceStore(db).get(saved.audience_profile_id).countries == ["US"]
 
     def test_history_shows_destinations_and_covers(self, env, capsys):
         save_profile(env)

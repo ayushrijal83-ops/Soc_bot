@@ -7,6 +7,7 @@ into small UI events. Nothing here exposes tokens, temporary media URLs or conta
 
 from __future__ import annotations
 
+import json
 import threading
 from collections import Counter
 from collections.abc import Callable
@@ -14,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from src.content.audience import AudienceStore
 from src.core.jobs import JobInfo
 from src.core.publisher import (
     JobResult,
@@ -107,6 +109,7 @@ class BatchPlan:
     shared_tunnel: bool = False
     retry_delay: float = 5.0
     auto_retry: bool = True
+    audience_id: int | None = None        # audience strategy (metadata only; never sent to a platform)
 
     @property
     def valid(self) -> list[DestinationView]:
@@ -163,6 +166,7 @@ class BatchView:
     counts: dict[str, int]
     status: str
     jobs: list[JobView] = field(default_factory=list)
+    audience: dict | None = None          # snapshot taken when the post was created; None = no strategy
 
     @property
     def total(self) -> int:
@@ -199,6 +203,7 @@ class PublishingService:
         self.engine = engine
         self.accounts = account_manager
         self.store = engine.store
+        self.audiences = AudienceStore(engine.store.database)
 
     # --- inputs --------------------------------------------------------------------------
 
@@ -256,7 +261,13 @@ class PublishingService:
         """One post (= batch) with one job per valid destination. Duplicates are skipped unless asked."""
         destinations = [(d.account_id, plan.options[d.account_id]) for d in plan.valid
                         if include_already_published or not d.already_published]
+        if plan.audience_id is not None:
+            audience = self.audiences.get(plan.audience_id)
+            if audience is None or not audience.enabled:
+                raise ValueError("The selected audience strategy is no longer available. Choose another one.")
         post_id = self.store.create_post(plan.video_path, plan.caption, destinations, auto_retry=plan.auto_retry)
+        if plan.audience_id is not None:
+            self.audiences.attach(post_id, plan.audience_id)
         for job in self.store.jobs_for_post(post_id):
             if job.options.get("cover_path"):
                 self.store.set_cover_status(job.id, "pending")
@@ -320,7 +331,8 @@ class PublishingService:
         counts = Counter(job.status for job in jobs)
         return BatchView(post_id, video.filename, ", ".join(sorted(covers)) or None, post.caption or "",
                          sorted({j.platform for j in jobs}), post.created_at, dict(counts),
-                         batch_status([j.status for j in jobs]), views)
+                         batch_status([j.status for j in jobs]), views,
+                         json.loads(post.audience_json) if post.audience_json else None)
 
     def batches(self, limit: int = 30) -> list[BatchView]:
         post_ids = []

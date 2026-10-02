@@ -14,6 +14,8 @@ from src.cli.display import (
     print_warning,
 )
 from src.cli.prompts import prompt_choice, prompt_int, prompt_text
+from src.content.audience import AudienceStore
+from src.content.audience import summary as audience_summary
 from src.core.jobs import JobError
 from src.core.publisher import (
     JobResult,
@@ -48,6 +50,10 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
         return
 
     caption = prompt_text("Caption", required=False, default="") or ""
+    audiences = AudienceStore(engine.store.database)
+    audience = ask_audience(audiences)
+    if audience is False:
+        return
 
     accounts = account_manager.get_active_accounts()
     if not accounts:
@@ -86,6 +92,8 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
     print_plan(plan)  # validation only: no network, nothing saved yet
     valid = [d for d, item in zip(destinations, plan) if item.ready]
     print_batch_summary(check.media.size_bytes, video_path, cover, destinations, plan, engine)
+    print_info(f"Audience strategy: {audience_summary(audience.snapshot() if audience else None)} "
+               "(metadata only: platforms decide who sees the post)")
     if not valid:
         print_error("Fix the problems above before publishing.")
         return
@@ -99,6 +107,8 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
 
     try:
         post_id = engine.store.create_post(video_path, caption, valid, auto_retry=True)
+        if audience:
+            audiences.attach(post_id, audience.id)
     except JobError as e:
         print_error(str(e))
         return
@@ -108,6 +118,18 @@ def run_create_post(account_manager: AccountManager, engine: PublisherEngine) ->
     print_info(f"Publishing post #{post_id}...")
     result = engine.publish_post(post_id, on_update=batch_progress(engine, post_id))
     _print_summary(result.jobs, engine)
+
+
+def ask_audience(store: AudienceStore, current_id: int | None = None):
+    """Pick an enabled audience profile (default: the current one, else Global). False = cancelled."""
+    profiles = store.list()
+    if not profiles:
+        return None
+    ids = [a.id for a in profiles]
+    default = ids.index(current_id) + 1 if current_id in ids else 1
+    choice = prompt_choice("Audience strategy (strategy metadata; platforms decide distribution)",
+                           [a.label for a in profiles], default=default)
+    return False if choice is None else profiles[choice - 1]
 
 
 def _ask_cover() -> str | None | bool:

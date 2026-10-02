@@ -12,6 +12,22 @@ Working rules from the user: never commit or push (the user does), never print/m
 
 ---
 
+## Audience Strategy V1 — read this first (2026-10-02, uncommitted)
+
+- **What**: reusable audience profiles (`src/content/audience.py`, table `audience_profiles`, migration 005) holding
+  ISO 3166-1 alpha-2 countries, language, caption locale and `AudienceTimeStrategy` (`global` / `audience_local` /
+  `manual`). 16 built-ins seeded by the migration; custom profiles via Settings › Audience Profiles (classic menu).
+- **Where chosen**: TUI Create Post (Caption step select), CLI Create Post (`ask_audience`), publishing profile
+  (`Profile.audience_profile_id`, Content Inbox).
+- **How stored**: `AudienceStore.attach(post_id, profile_id)` after `JobStore.create_post` writes
+  `posts.audience_profile_id` + immutable `posts.audience_json` snapshot (never replaced). `JobStore` and the
+  publishing engine/adapters were **not changed**; adapters never see the strategy.
+- **Honesty rule**: it is content-strategy metadata. Organic platforms have no audience-country parameter; do not
+  invent one, do not send fake geo data, and never claim a country guarantee in UI or docs.
+- **Next**: audience-aware scheduling foundation → caption locale use → analytics from official insights APIs only.
+- Migration gotcha found: the runner splits on `;` even inside comments/strings, and `INSERT OR IGNORE` silently
+  drops rows that hit NOT NULL on `create_all()` tables without server defaults (`AudienceProfile` declares them).
+
 ## Instagram Local Media Delivery — read this first (2026-09-25, uncommitted)
 
 **Latest (size-based routing, `MEDIA_STORAGE_PROVIDER=auto`):**
@@ -736,6 +752,12 @@ Run: `pytest tests/unit/ -v`
 - TikTok published links are not saved: the Content Posting API documents no post URL (see CONTENT_INTAKE.md → Published Links)
 
 ---
+
+## Audience Strategy limitations (V1)
+- Strategy is recorded, not acted on: no scheduler, no caption localisation, no analytics yet.
+- No platform receives it; organic distribution by country cannot be guaranteed or controlled.
+- Profiles cannot be deleted (disable instead); custom profiles are managed in the classic settings menu only.
+- Content Inbox posts get the publishing profile's strategy; there is no per-package override yet.
 
 ## Current Blockers
 

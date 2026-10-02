@@ -556,7 +556,7 @@ def test_create_post_one_cover_many_accounts_one_confirmation(env, exe, monkeypa
     eng = make_engine(env, probe)
     instagram_numbers = [str(i) for i, a in enumerate(accounts.get_active_accounts(), 1) if a.platform == "instagram"]
     prompts = []
-    answers = iter([video, str(cover), "Hello", ",".join(instagram_numbers), "", "y"])
+    answers = iter([video, str(cover), "Hello", "", ",".join(instagram_numbers), "", "y"])
 
     def fake_input(prompt=""):
         prompts.append(prompt)
@@ -565,7 +565,7 @@ def test_create_post_one_cover_many_accounts_one_confirmation(env, exe, monkeypa
     with patch("builtins.input", fake_input), patch("src.cli.publish_menu.clear_screen"):
         run_create_post(accounts, eng)
     out = capsys.readouterr().out
-    assert sum("Publish now?" in p for p in prompts) == 1 and len(prompts) == 6  # ONE confirmation
+    assert sum("Publish now?" in p for p in prompts) == 1 and len(prompts) == 7  # ONE confirmation
     assert "4 selected, 4 valid, 0 invalid" in out and "at most 5 at a time" in out
     assert "cover.jpg (same cover for all selected accounts" in out and "AUTO -> Cloudflare Quick Tunnel" in out
     assert "outbound for Instagram" in out

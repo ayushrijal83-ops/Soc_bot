@@ -9,6 +9,7 @@ The UI never sees tokens, temporary media URLs, tunnels, Instagram containers or
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.content.audience import AudienceStore
 from src.services.accounts import (
     AccountService,
     AccountView,
@@ -45,6 +46,7 @@ class AppServices:
     auth_manager: object
     engine: object
     intake: object
+    audiences: AudienceStore
 
 
 def build_services(account_manager, auth_manager, engine, intake, env_file: Path) -> AppServices:
@@ -58,6 +60,7 @@ def build_services(account_manager, auth_manager, engine, intake, env_file: Path
         auth_manager=auth_manager,
         engine=engine,
         intake=intake,
+        audiences=AudienceStore(engine.store.database),
     )
 
 

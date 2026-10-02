@@ -1,4 +1,4 @@
-"""Create Post: a 5-step wizard (Media → Caption → Destinations → Options → Review).
+"""Create Post: a 5-step wizard (Media → Caption + Audience → Destinations → Options → Review).
 
 Everything here is local validation through the service layer. Nothing is uploaded, no tunnel is
 started and no job is created until Publish is confirmed.
@@ -25,6 +25,7 @@ from textual.widgets import (
 )
 from textual.widgets.selection_list import Selection
 
+from src.content.audience import summary as audience_summary
 from src.platforms.tiktok.publisher import PRIVACY_LEVELS
 from src.platforms.youtube.publisher import PRIVACY_STATUSES
 from src.tui.theme import PLATFORM_NAMES, mb, platform_markup, status_markup
@@ -77,6 +78,11 @@ class CreatePostScreen(Page):
                 yield Static("CAPTION", classes="section")
                 yield TextArea(id="caption", classes="fill")
                 yield Static("0 characters", id="caption-count", classes="muted")
+                yield Static("AUDIENCE STRATEGY", classes="section")
+                yield Select([], prompt="Skip / Global", id="audience")
+                yield Static("[dim]Strategy metadata for captions, timing and analytics. Platforms alone decide "
+                             "who sees a post; no country is sent to them. More profiles: Settings › Advanced.[/]",
+                             classes="muted")
             with Vertical(id="step-2"):
                 yield Static("PLATFORMS", classes="section")
                 with Horizontal(classes="cards", id="platform-picker"):
@@ -115,6 +121,7 @@ class CreatePostScreen(Page):
             yield Button("Cancel", id="cancel")
 
     def on_mount(self) -> None:
+        self.refresh_audiences(keep=False)
         self.refresh_platform_cards()
         self.show_step(0)
 
@@ -137,6 +144,7 @@ class CreatePostScreen(Page):
         self.query_one("#publish", Button).display = step == len(STEPS) - 1
         self.refresh_bindings()  # footer: Next on steps 1-4, PUBLISH on Review
         if step == 1:
+            self.refresh_audiences()
             self.query_one("#caption", TextArea).focus()
         if step == 2:
             self.refresh_accounts()
@@ -277,6 +285,22 @@ class CreatePostScreen(Page):
         text = event.text_area.text
         self.query_one("#caption-count", Static).update(f"{len(text)} characters  ·  {text.count('#')} hashtags")
 
+    def refresh_audiences(self, keep: bool = True) -> None:
+        """Enabled profiles (custom ones may have been added in classic settings); Global by default."""
+        select = self.query_one("#audience", Select)
+        current = select.value if keep else None
+        profiles = self.app.services.audiences.list()
+        select.set_options([(a.label, a.id) for a in profiles])
+        ids = [a.id for a in profiles]
+        if current in ids:
+            select.value = current
+        elif ids:
+            select.value = ids[0]
+
+    def audience_id(self) -> int | None:
+        value = self.query_one("#audience", Select).value
+        return value if isinstance(value, int) else None
+
     # --- step 3: destinations -------------------------------------------------------------------
 
     def refresh_platform_cards(self) -> None:
@@ -367,10 +391,14 @@ class CreatePostScreen(Page):
             self.video.path, caption, self.cover.path if self.cover and self.cover.ok else None,
             sorted(self.selected), self.platform_options())
         p = self.plan
+        p.audience_id = self.audience_id()
+        audience = self.app.services.audiences.get(p.audience_id) if p.audience_id else None
         lines = ["[b $primary]READY TO PUBLISH[/]", "",
                  f"Video        [b]{self.video.name}[/]  ({mb(p.size_bytes)})",
                  f"Cover        {(self.cover.name + '  →  same cover for all Instagram accounts') if self.cover else 'none'}",
-                 f"Caption      {len(caption)} characters", ""]
+                 f"Caption      {len(caption)} characters",
+                 f"Audience     {audience_summary(audience.snapshot() if audience else None)}",
+                 "[dim]             strategy metadata only: platforms decide distribution[/]", ""]
         for platform in ("instagram", "youtube", "tiktok"):
             if p.count(platform):
                 lines.append(f"{platform_markup(platform):<30} {p.count(platform)} account(s)")
@@ -414,7 +442,11 @@ class CreatePostScreen(Page):
         if not confirmed:
             return
         include = self.query_one("#include-dups", Checkbox).value
-        post_id = self.app.services.publishing.create_batch(self.plan, include_already_published=include)
+        try:
+            post_id = self.app.services.publishing.create_batch(self.plan, include_already_published=include)
+        except ValueError as e:
+            self.app.notify(str(e), severity="error")
+            return
         from src.tui.screens.publishing import PublishingScreen
 
         self.reset_form()
@@ -430,5 +462,6 @@ class CreatePostScreen(Page):
         self.platforms, self.selected = set(), set()
         self.load_video()
         self.load_cover()
+        self.refresh_audiences(keep=False)
         self.refresh_platform_cards()
         self.show_step(0)

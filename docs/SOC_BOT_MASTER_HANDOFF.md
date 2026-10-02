@@ -711,11 +711,12 @@ SQLite through SQLAlchemy. The path comes from `DATABASE_URL` (the example uses 
 |---|---|---|
 | `accounts` | platform, platform_account_id (unique pair), username, display_name, `access_token_enc`, `refresh_token_enc`, expires_at, status, meta_json (scopes) | 1–N publish_jobs (cascade) |
 | `videos` | filename, path, size_bytes, duration, mime, width, height, **checksum (unique)** | 1–N posts |
-| `posts` | video_id, caption, **auto_retry** (004) | = one batch; 1–N publish_jobs (cascade) |
+| `posts` | video_id, caption, **auto_retry** (004), **audience_profile_id** (005, SET NULL) + **audience_json** (005, immutable snapshot) | = one batch; 1–N publish_jobs (cascade) |
 | `publish_jobs` | post_id, account_id (**unique pair**, 002), status (CHECK: pending / uploading / processing / published / failed / retrying), platform_media_id, error_message, retry_count, next_retry_at, published_at, **options_json** (002), **cover_status / cover_error** (003), **auto_retry_used** (004) | 1–N publish_attempts (cascade) |
 | `publish_attempts` | job_id, attempt_number (unique per job), status, **response_json** (provider state), error_json, started / completed | none |
 | `content_items` (003) | content_key (unique), package paths, status, post_id (SET NULL) | none |
-| `publishing_profiles` (003) | name (unique), settings_json | none |
+| `publishing_profiles` (003) | name (unique), settings_json (may hold `audience_profile_id`, 005) | none |
+| `audience_profiles` (005) | name (unique), description, countries_json (ISO 3166-1 alpha-2 list), language, caption_locale, timezone_strategy (CHECK global / audience_local / manual), builtin, enabled | referenced by posts (SET NULL) |
 | `schema_version` | version, applied_at, description | none |
 
 **Migrations:**
@@ -726,8 +727,15 @@ SQLite through SQLAlchemy. The path comes from `DATABASE_URL` (the example uses 
 | 002 | `options_json` + unique `(post_id, account_id)` |
 | 003 | Content intake tables + cover status columns |
 | 004 | `posts.auto_retry` (NULL = never auto-retried: all older posts) + `publish_jobs.auto_retry_used` (default 0) |
+| 005 | Audience Strategy: `audience_profiles` + 16 built-in rows, `posts.audience_profile_id`, `posts.audience_json` |
 
-**Current schema version: 4.**
+**Current schema version: 5.**
+
+**Audience Strategy (005) [CURRENT, 2026-10-02]:** content-strategy metadata, not geographic targeting. A post
+stores the strategy chosen at creation as an immutable JSON snapshot; editing a profile never rewrites history; posts
+from before 005 have no strategy and work unchanged. Nothing is sent to any platform (organic publishing has no
+audience-country parameter), so no country distribution is guaranteed. Full description: ARCHITECTURE.md §7b-2 and
+DATABASE.md "Audience Strategy".
 
 The runner (ADR-014) strips comment lines, tolerates "duplicate column" when `create_all()` already created a column, and records versions with `merge`. `main.py` runs `create_all()` + `migrate()` on every start.
 
@@ -1015,6 +1023,7 @@ Verified with `git log` at the time of writing (dates are author dates):
 | TikTok | **LIMITED**: code complete, mock-tested, **never run for real** | No developer credentials |
 | TUI | **READY** | 823 tests incl. TUI; real TUI publish |
 | Classic CLI | READY (`--plain`) | Tests |
+| Audience Strategy V1 | **READY as metadata** (profiles, selection, snapshots); scheduling / localisation / analytics not built | `test_audience.py` |
 | Docs / setup guides / launcher | READY | `setup_guide/`, `Start_Soc_bot.bat`, README |
 
 ---
@@ -1040,6 +1049,7 @@ Verified with `git log` at the time of writing (dates are author dates):
 - ffprobe is optional; without it, duration and resolution aren't checked locally.
 - TikTok `refresh_expires_in` is not persisted.
 - There is no single-instance lock for the app itself. Only the link files are locked across processes. Don't run two publishing sessions against the same DB at once.
+- Audience Strategy is recorded only: it does not influence who sees a post (platforms decide), no scheduler or analytics use it yet, and profiles can be disabled but not deleted.
 
 **Known bugs:**
 - None open at the time of writing. The last full run passed (823 tests, Ruff clean).

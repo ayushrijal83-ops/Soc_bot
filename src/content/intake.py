@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from src.accounts.manager import AccountManager
+from src.content.audience import AudienceStore
 from src.content.detector import ContentDetector
 from src.content.manager import ContentManager
 from src.content.models import ContentPackage, content_root, stability_seconds
@@ -281,6 +282,8 @@ class ContentIntake:
                                                     auto_retry=True)
             # The video row is de-duplicated by checksum and may carry an older path.
             self.engine.store.update_video_path(post_id, str(package.video_path))
+            if profile.audience_profile_id is not None:
+                AudienceStore(self.database).attach(post_id, profile.audience_profile_id)
             self._link_post(item.id, post_id)
             new_jobs = [j.id for j in self.engine.store.jobs_for_post(post_id)]
         else:

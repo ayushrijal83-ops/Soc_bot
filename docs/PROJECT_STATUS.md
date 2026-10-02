@@ -3,6 +3,24 @@
 ## Current Phase
 **Usable daily tool (2026-09-26): TUI polished, setup guides, one-click launcher, new README.**
 
+### Audience Strategy V1 (2026-10-02, uncommitted)
+Posts can carry an **audience strategy**: target countries (ISO 3166-1 alpha-2), language, caption locale and a
+posting-time strategy (`global` / `audience_local` / `manual`). It is **strategy metadata, not geographic
+targeting**: organic Instagram / TikTok / YouTube publishing has no audience-country parameter, nothing is sent to
+the platforms, and no country distribution is guaranteed. Details: ARCHITECTURE.md §7b-2, DATABASE.md.
+
+| Change | What it means for the user |
+|---|---|
+| Migration 005 | `audience_profiles` table (16 built-ins: Global, US, CA, GB, AU, DE, FR, JP, KR, NL, SE, NO, DK, CH, SG, NZ) + `posts.audience_profile_id` / `posts.audience_json`. Existing posts, accounts and profiles keep working unchanged. |
+| TUI Create Post | Caption step has an **Audience Strategy** select (default Global; blank = Skip). Review shows the choice; Batch detail shows it later. |
+| Classic CLI | Create Post asks for the audience strategy (Enter = Global); the publishing profile (Content Inbox) has an audience strategy too. |
+| Custom profiles | Settings › Audience Profiles (TUI: Settings › Advanced › Open classic settings): create / edit / enable-disable; any valid ISO country code; invalid, duplicate or empty country lists are rejected. |
+| History | Each post keeps an immutable snapshot of the strategy chosen at creation; editing a profile later never changes it. |
+| Tests | `tests/unit/test_audience.py` (16 tests); 5 existing scripted Create Post tests got the extra audience answer, the profile-editor test picks an audience, and 2 migration-list assertions now end at 5. Full suite: **851 passed**, Ruff clean. |
+
+**Not done (by design, V1):** no scheduler uses `timezone_strategy` yet, captions are not localised automatically,
+no audience analytics are collected, and adapters receive nothing new.
+
 ### Latest work (2026-09-26, after the TUI)
 | Change | What it means for the user |
 |---|---|

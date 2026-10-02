@@ -12,6 +12,15 @@ from src.cli.display import (
     print_warning,
 )
 from src.cli.prompts import prompt_choice, prompt_text
+from src.cli.publish_menu import ask_audience
+from src.content.audience import (
+    TIME_STRATEGIES,
+    Audience,
+    AudienceError,
+    AudienceStore,
+    parse_countries,
+)
+from src.content.audience import summary as audience_summary
 from src.content.intake import ContentIntake, InboxEntry, PackageResult
 from src.content.profile import PLATFORMS, Profile, ProfileError
 from src.core.publisher import JobResult
@@ -163,7 +172,8 @@ def run_settings(intake: ContentIntake, account_manager: AccountManager) -> None
     clear_screen()
     print_header("SETTINGS")
     choice = prompt_choice("Option", ["Create/Edit Publishing Profile", "View Publishing Profile",
-                                      "Reset Publishing Profile", "Check Instagram media storage", "Back"], default=5)
+                                      "Reset Publishing Profile", "Check Instagram media storage",
+                                      "Audience Profiles", "Back"], default=6)
     if choice == 1:
         edit_profile(intake, account_manager)
     elif choice == 2:
@@ -172,6 +182,68 @@ def run_settings(intake: ContentIntake, account_manager: AccountManager) -> None
         print_success("Profile reset." if intake.profiles.reset() else "There was no profile.")
     elif choice == 4:
         check_media_storage()
+    elif choice == 5:
+        run_audience_profiles(AudienceStore(intake.database))
+
+
+# --- audience profiles -------------------------------------------------------------------
+
+def run_audience_profiles(store: AudienceStore) -> None:
+    """List / create / edit / enable-disable audience profiles. Profiles are never deleted:
+    disabling hides them from new posts while existing posts keep their snapshot."""
+    while True:
+        print_header("AUDIENCE PROFILES")
+        print_info("Strategy metadata (captions, posting time, analytics later). Organic platforms decide who "
+                   "sees a post: choosing a country does not guarantee distribution there.")
+        profiles = store.list(include_disabled=True)
+        print_table(["#", "Name", "Countries", "Locale", "Time", "Type", "State"],
+                    [[str(i), a.name, ", ".join(a.countries) or "-", a.caption_locale or a.language or "-",
+                      a.timezone_strategy, "built-in" if a.builtin else "custom", "enabled" if a.enabled else "disabled"]
+                     for i, a in enumerate(profiles, 1)])
+        choice = prompt_choice("Action", ["Create profile", "Edit profile", "Enable/Disable profile", "Back"], default=4)
+        if choice in (None, 4):
+            return
+        if choice == 1:
+            edit_audience(store, Audience(name="", timezone_strategy="audience_local"))
+            continue
+        number = prompt_text("Profile number", required=False, default="")
+        if not number or not number.isdigit() or not 1 <= int(number) <= len(profiles):
+            print_error("No such profile.")
+            continue
+        audience = profiles[int(number) - 1]
+        if choice == 2:
+            edit_audience(store, audience)
+        else:
+            audience.enabled = not audience.enabled
+            store.save(audience)
+            print_success(f"{audience.name} {'enabled' if audience.enabled else 'disabled'}.")
+
+
+def edit_audience(store: AudienceStore, audience: Audience) -> Audience | None:
+    """Ask every field (current values as defaults), validate, save. Existing posts are not changed."""
+    name = prompt_text("Name", default=audience.name or None)
+    countries = prompt_text("Countries (ISO codes, e.g. US, CA)", required=not audience.builtin,
+                            default=", ".join(audience.countries) or None)
+    language = prompt_text("Language (ISO 639, e.g. en; blank = none)", required=False,
+                           default=audience.language or "")
+    locale = prompt_text("Caption locale (e.g. en-US; blank = none)", required=False,
+                         default=audience.caption_locale or "")
+    timing = prompt_choice("Timezone strategy", list(TIME_STRATEGIES),
+                           default=TIME_STRATEGIES.index(audience.timezone_strategy) + 1)
+    description = prompt_text("Description (optional)", required=False, default=audience.description or "")
+    if name is None or timing is None:
+        return None
+    audience.name, audience.countries = name, parse_countries(countries or "")
+    audience.language, audience.caption_locale = language, locale
+    audience.timezone_strategy, audience.description = TIME_STRATEGIES[timing - 1], description or ""
+    try:
+        store.save(audience)
+    except AudienceError as e:
+        print_error(str(e))
+        return None
+    print_success(f"Saved: {audience_summary(audience.snapshot())}. Existing posts keep the strategy they were "
+                  "created with.")
+    return audience
 
 
 def check_media_storage() -> bool:
@@ -232,6 +304,8 @@ def show_profile(intake: ContentIntake, account_manager: AccountManager, profile
     print(f"Cover/Thumbnail: {'[x] Enabled' if profile.cover_enabled else '[ ] Disabled'}")
     print(f"After successful publishing: move to {profile.after_success}/")
     print(f"Publishing mode: {profile.mode.upper()}")
+    audience = AudienceStore(intake.database).get(profile.audience_profile_id) if profile.audience_profile_id else None
+    print(f"Audience strategy: {audience_summary(audience.snapshot() if audience else None)}")
     if profile.accounts.get("tiktok"):
         print(f"TikTok privacy level: {profile.tiktok_privacy_level}")
     if profile.accounts.get("youtube"):
@@ -286,6 +360,10 @@ def edit_profile(intake: ContentIntake, account_manager: AccountManager) -> Prof
         return None
     profile.after_success = ("published", "archive")[after - 1]
     profile.mode = ("verify", "auto")[mode - 1]
+    audience = ask_audience(AudienceStore(intake.database), profile.audience_profile_id)
+    if audience is False:
+        return None
+    profile.audience_profile_id = audience.id if audience else None
 
     show_profile(intake, account_manager, profile)
     if not confirm("Save profile?", default=True):
