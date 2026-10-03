@@ -543,7 +543,7 @@ Only one Soc_bot process (and one publishing action at a time inside a window) c
 
 ### Problem: `python main.py --run-due` exits with code 1
 
-The scheduler check could not run at all (for example `.env` missing or `ENCRYPTION_KEY` not set, or the wrong *Start in* folder in Task Scheduler). Run `python main.py --run-due` by hand in the project folder and read the `[ERROR]` line. A post that failed to publish does **not** cause exit 1; it is listed in the summary and the run exits 0.
+The scheduler check could not run at all (for example `.env` missing or `ENCRYPTION_KEY` not set). A wrong *Start in* folder in Task Scheduler usually gives exit code 2 instead (Python cannot find `main.py`); it never makes Soc_bot use a different database, because a relative `DATABASE_URL` (the default `sqlite:///data/publisher.db`) is always read from the Soc_bot folder, not the working directory. Run `python main.py --run-due` by hand in the project folder and read the `[ERROR]` line. A post that failed to publish does **not** cause exit 1; it is listed in the summary and the run exits 0.
 
 ### Problem: YouTube publishing fails with "Access token expired and could not be renewed; reconnect the account"
 

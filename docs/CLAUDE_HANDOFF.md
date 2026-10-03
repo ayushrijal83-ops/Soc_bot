@@ -12,7 +12,19 @@ Working rules from the user: never commit or push (the user does), never print/m
 
 ---
 
-## V2.2 Real Scheduling — read this first (2026-10-02, phases 1–3 uncommitted)
+## V2.3 Scheduling validation — read this first (2026-10-02)
+
+- Commits: `40180f7` fix: harden publishing failure state (ADR-038), `3dfbd63` test: add scheduling stress coverage.
+- Validated: real Instagram scheduling (2 Reels, each published once), failure/recovery (fakes), multi-post stress and
+  real two-process scheduler races. No duplicate publication found.
+- Phase 4.1 fix: a relative SQLite `DATABASE_URL` (the default `sqlite:///data/publisher.db`) is resolved against the
+  project folder (`PROJECT_ROOT` from `src/core/publish_lock.py`, like `.env`, `CONTENT_ROOT` and the lock), no longer
+  the working directory, which made `--run-due` from another folder silently use a new empty database (exit 0).
+  Absolute paths, `:memory:`, `file:` URIs and non-SQLite URLs are unchanged (`tests/unit/test_database_path.py`).
+- Known flaky test (pre-existing, not scheduling): `test_tui_oauth.py::test_paste_field_is_visible_on_screen`
+  (OAuth worker refreshes the Accounts screen during test teardown, `NoMatches('#acct-instagram')`).
+
+## V2.2 Real Scheduling — read this first (2026-10-02, phases 1–6, committed `ecaf242`)
 
 - **Model**: post-level hold. `posts.schedule_status` NULL / scheduled / missed / cancelled / released (migration 006).
   Held = scheduled, missed, cancelled: `JobStore.claim`, `open_post_ids` and `retry_owed_post_ids` exclude them in
@@ -42,7 +54,7 @@ Working rules from the user: never commit or push (the user does), never print/m
   `PublisherEngine.publish_post` directly on a held post can still mark a job failed if an adapter crashes before
   the claim (never publishes).
 
-## Audience Strategy V2.1 timing suggestions — read this first (2026-10-02, uncommitted)
+## Audience Strategy V2.1 timing suggestions — read this first (2026-10-02, committed `9d5fcc6`)
 
 - **What**: `src/content/timezones.py` (country -> weighted IANA zones: `CURATED_ZONES` + tzdata `zone.tab`
   fallback) and `src/content/scheduling.py` (`TimezoneEngine.recommend(snapshot, now)`,
@@ -58,7 +70,7 @@ Working rules from the user: never commit or push (the user does), never print/m
 - **Limitations**: no weekday/weekend windows, no per-profile windows, equal weights for derived multi-zone countries
   (e.g. MN, UA, CD).
 
-## Audience Strategy V1 — read this first (2026-10-02, uncommitted)
+## Audience Strategy V1 — read this first (2026-10-02, committed `9c2801e`)
 
 - **What**: reusable audience profiles (`src/content/audience.py`, table `audience_profiles`, migration 005) holding
   ISO 3166-1 alpha-2 countries, language, caption locale and `AudienceTimeStrategy` (`global` / `audience_local` /

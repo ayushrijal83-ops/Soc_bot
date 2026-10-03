@@ -219,6 +219,8 @@ See `test_publishing_engine.py` and `test_cli_publish.py` above. **Mocked tests 
 | Callers: TUI timer, `main.py --run-due` subprocess (exit 0 / 3 / 1), poll interval | `test_scheduler_callers.py` |
 | Scheduling UI (TUI + CLI), held posts never shown as pending, UI never writes schedule columns | `test_scheduling_ui.py`, `test_scheduling_cli.py` |
 | Failure records without an attempt row, uncertain outcomes never auto-retried | `test_failure_state.py` |
+| Multi-post stress: 10 due posts, mixed outcomes, scheduler threads, two real `--run-due` processes, killed process + restart, `max_posts` | `test_scheduling_stress.py` |
+| Relative SQLite `DATABASE_URL` anchored to the project folder (absolute, `:memory:`, `file:` URI, MySQL unchanged; `--run-due` from another working directory) | `test_database_path.py` |
 
 Guidance:
 - Inject time: `SchedulingService(..., clock=lambda: NOW)`, `DueScheduler.run_due(now)`. Never wait for real time.
@@ -276,6 +278,6 @@ jobs:
 ```
 
 ## Current Status
-✅ **Phases 1–5B**: 402 unit tests passing; `ruff check .`: 0 errors; no skipped tests. OAuth and publishing are tested with mocks only. Real provider runs: YouTube OAuth + publishing + thumbnail ✅ (manual, 2026-09-25); TikTok/Instagram NOT RUN.
+✅ **V2.3 (2026-10-02)**: 1101 tests passing; `ruff check .`: 0 errors; no skipped tests. Unit tests use fakes and mocks only (no real platform calls). Real provider runs (manual): YouTube OAuth + publishing + thumbnail; Instagram OAuth, Reels, fan-out and real scheduled publishing (V2.3); TikTok NOT RUN (no developer credentials).
 
-Next: real-provider verification (Phase 5).
+Known flaky (pre-existing, unrelated to scheduling): `test_tui_oauth.py::test_paste_field_is_visible_on_screen` fails occasionally with `NoMatches('#acct-instagram')` during test teardown.

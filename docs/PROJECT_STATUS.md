@@ -3,7 +3,19 @@
 ## Current Phase
 **Usable daily tool (2026-09-26): TUI polished, setup guides, one-click launcher, new README.**
 
-### V2.2 Real Scheduling: phases 1–3 of the backend (2026-10-02, uncommitted)
+### V2.3 Scheduling validation (2026-10-02; commits `40180f7`, `3dfbd63`)
+| Phase | Result |
+|---|---|
+| 1. Real-world | 2 real Instagram Reels scheduled through the classic menu and published by the TUI's own scheduler, each exactly once; restart survived; a second `--run-due` during publishing exited 3. |
+| 2. Failure & recovery | 23 failure-injection scenarios (API, network, timeout, auth, crashes before/after release, races, missed window): no duplicate publication, no lost or corrupted schedule. |
+| 2.5. Engine hardening | Failures before any provider call now keep a structured error (`code`, `uncertain`); an unknown outcome is never retried automatically (ADR-038, `test_failure_state.py`). |
+| 3. Multi-post stress | 10 due posts per pass, mixed outcomes, 5 scheduler threads, 2 real scheduler processes, killed process + restart, `max_posts`: oldest first, one publish per post (`test_scheduling_stress.py`). |
+| 4. Production hardening | Audit; one defect found: a relative SQLite `DATABASE_URL` followed the working directory (wrong Task Scheduler *Start in* = a different, empty database, exit 0). |
+| 4.1. Database path | Fixed: relative SQLite paths are anchored to the project folder; absolute, `:memory:`, `file:` URI and non-SQLite URLs unchanged (`test_database_path.py`, incl. `--run-due` from another directory). |
+
+Tests: 1101 passed, Ruff clean.
+
+### V2.2 Real Scheduling: phases 1–6 (2026-10-02, committed `ecaf242`)
 | Phase | Done |
 |---|---|
 | 1. Storage + hold gate | Migration 006 (`posts.scheduled_at` / `schedule_status` / `schedule_json`); jobs of scheduled / missed / cancelled posts are never claimed, resumed or auto-retried; scheduled posts are created atomically. |
@@ -17,7 +29,7 @@
 
 V2.2 scheduling is usable end to end. Tests: 1066 passed (40 new scheduling-UI tests), Ruff clean. Not included: Content Inbox scheduling.
 
-### Audience Strategy V2.1: timing suggestions (2026-10-02, uncommitted)
+### Audience Strategy V2.1: timing suggestions (2026-10-02, committed `9d5fcc6`)
 A **recommendation engine** for publishing times in good local hours for the audience's timezones (DST-aware, IANA
 data via `zoneinfo` + `tzdata`). It schedules nothing, creates no jobs, sends nothing to platforms and does not
 control or guarantee geographic distribution. Details: ARCHITECTURE.md §7b-3.
@@ -33,7 +45,7 @@ control or guarantee geographic distribution. Details: ARCHITECTURE.md §7b-3.
 **Not done (by design):** no scheduling or stored publish times (V2.2), no weekday/weekend windows, no per-profile
 windows, no analytics or optimisation.
 
-### Audience Strategy V1 (2026-10-02, uncommitted)
+### Audience Strategy V1 (2026-10-02, committed `9c2801e`)
 Posts can carry an **audience strategy**: target countries (ISO 3166-1 alpha-2), language, caption locale and a
 posting-time strategy (`global` / `audience_local` / `manual`). It is **strategy metadata, not geographic
 targeting**: organic Instagram / TikTok / YouTube publishing has no audience-country parameter, nothing is sent to

@@ -19,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
+    make_url,
     text,
 )
 from sqlalchemy.exc import OperationalError
@@ -29,6 +30,7 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
+from src.core.publish_lock import PROJECT_ROOT
 from src.storage.tokens import TokenEncryption, TokenEncryptionError
 
 
@@ -325,10 +327,17 @@ class Database:
         # Convert URL object to string if needed
         database_url = str(database_url)
 
-        # Ensure data directory exists for SQLite
-        if database_url.startswith("sqlite:///"):
-            db_path = database_url.replace("sqlite:///", "")
-            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        # A relative SQLite file path is anchored to the project folder (like .env, CONTENT_ROOT and the
+        # publishing lock), never the working directory: a wrong Task Scheduler "Start in" must not open a
+        # different, empty database. Absolute paths, :memory:, file: URIs and non-SQLite URLs are unchanged.
+        url = make_url(database_url)
+        if (url.get_backend_name() == "sqlite" and url.database and url.database != ":memory:"
+                and not url.query.get("uri")):
+            db_path = Path(url.database)
+            if not db_path.anchor:  # relative: no drive and no root ("C:/x", "/x" and UNC paths are kept)
+                db_path = PROJECT_ROOT / db_path
+                database_url = url.set(database=str(db_path))
+            db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.encryption = encryption
 
@@ -336,7 +345,7 @@ class Database:
         self.engine = create_engine(database_url, echo=False, future=True)
         
         # Enable foreign keys and CHECK constraints for SQLite - register BEFORE any connections
-        if database_url.startswith("sqlite"):
+        if url.get_backend_name() == "sqlite":
             @event.listens_for(self.engine, "connect")
             def set_sqlite_pragma(dbapi_connection, connection_record):
                 cursor = dbapi_connection.cursor()

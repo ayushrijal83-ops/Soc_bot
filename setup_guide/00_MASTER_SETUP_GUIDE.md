@@ -390,13 +390,17 @@ Rules (the same for both):
 4. **Actions** tab → **New…**: *Action:* Start a program.
    - **Program/script:** `D:\Soc_bot\.venv\Scripts\python.exe` (your Soc_bot folder's virtual-environment Python)
    - **Add arguments:** `main.py --run-due`
-   - **Start in:** `D:\Soc_bot` (required, so Soc_bot finds its `.env`, database and content folders)
+   - **Start in:** `D:\Soc_bot` (required: `main.py` in *Add arguments* is found from this folder)
    OK.
 5. **Settings** tab: *If the task is already running:* **Do not start a new instance**. OK.
 6. Test it: right-click the task → **Run**. Then **Last Run Result**:
    - `0x0`: the check ran (posts that were due are published; failed posts are reported in Soc_bot).
    - `0x3`: another Soc_bot window was publishing; nothing changed, the next run tries again.
-   - `0x1`: the check could not run (for example `.env` missing, or wrong **Start in** folder).
+   - `0x1`: the check could not run (for example `.env` missing or `ENCRYPTION_KEY` not set).
+   - `0x2`: usually a wrong **Start in** folder (Python cannot find `main.py`); the check did not run.
+   Relative SQLite database paths (such as the default `data\publisher.db`) are resolved relative to the
+   Soc_bot project folder, whatever the **Start in**, so a wrong folder never silently checks a different,
+   empty database. Absolute database URLs are used exactly as configured.
 
 To see the check's output in a file instead, use **Program/script** `cmd.exe` and **Add arguments**
 `/c .venv\Scripts\python.exe main.py --run-due >> logs\run_due.log 2>&1` (keep **Start in** `D:\Soc_bot`).
