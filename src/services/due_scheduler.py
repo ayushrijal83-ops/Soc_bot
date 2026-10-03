@@ -32,6 +32,7 @@ from src.core.publish_lock import (
     PublishLockBusy,
     default_lock,
 )
+from src.platforms.base import redact
 from src.services.scheduling import _dump, _iso
 from src.storage.database import Post
 
@@ -108,6 +109,7 @@ class DueScheduler:
 
         def emit(event: DueEvent) -> None:
             result.events.append(event)
+            _log_event(event)
             if event.kind == "error":
                 result.errors.append(event)
             if on_event is None:
@@ -124,6 +126,7 @@ class DueScheduler:
             emit(DueEvent("busy", message=BUSY_MESSAGE))
             result.finished_at = self._utc(self.clock())
             return result
+        log.info("Scheduler pass started (%s UTC).", f"{now:%Y-%m-%d %H:%M:%S}")
         try:
             self._report_malformed(emit)
             self._mark_missed(now, result, emit)
@@ -135,9 +138,15 @@ class DueScheduler:
                 post_id, scheduled_at, raw = candidate
                 attempted.add(post_id)
                 self._release_and_publish(post_id, scheduled_at, raw, now, result, emit)
+        except KeyboardInterrupt:
+            log.warning("Scheduler pass interrupted (Ctrl+C); unfinished jobs stay open for a later resume.")
+            raise
         finally:
             self.lock.release()
         result.finished_at = self._utc(self.clock())
+        log.info("Scheduler pass finished: released %d, published %d, failed %d, missed %d, skipped %d, errors %d.",
+                 len(result.released), len(result.published), len(result.failed), len(result.missed),
+                 len(result.skipped), len(result.errors))
         return result
 
     # --- steps ---------------------------------------------------------------------------
@@ -235,6 +244,27 @@ class DueScheduler:
     @staticmethod
     def _naive(moment: datetime) -> datetime:
         return moment.astimezone(UTC).replace(tzinfo=None)
+
+
+def _log_event(event: DueEvent) -> None:
+    """One concise, redacted log line per scheduler outcome (logs/soc_bot.log in the app and with --run-due)."""
+    when = f" (scheduled {event.scheduled_at:%Y-%m-%d %H:%M} UTC)" if event.scheduled_at else ""
+    post = f"post #{event.post_id}{when}" if event.post_id is not None else "scheduler"
+    message = redact(event.message)
+    if event.kind == "released":
+        log.info("Scheduled %s released for publishing.", post)
+    elif event.kind == "published":
+        log.info("Scheduled %s published.", post)
+    elif event.kind == "failed":
+        log.warning("Scheduled %s finished with problems (%s).", post, event.status)
+    elif event.kind == "missed":
+        log.warning("Scheduled %s missed its window; not published automatically.", post)
+    elif event.kind == "skipped":
+        log.info("Scheduled %s skipped: %s", post, message)
+    elif event.kind == "busy":
+        log.info("Scheduler pass skipped: %s", message)
+    elif event.kind == "error":
+        log.error("Scheduler error, %s: %s", post, message or "unknown error")
 
 
 __all__ = ["MAX_POSTS_PER_RUN", "MISSED_GRACE", "POLL_DEFAULT", "POLL_MAX", "POLL_MIN", "DueEvent", "DueRunResult",

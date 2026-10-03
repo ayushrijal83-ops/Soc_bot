@@ -369,20 +369,18 @@ Each entry follows:
 - Log files empty
 
 **Root Cause:**
-- Log level too high (WARNING)
-- Log directory not writable
-- Logger not configured
+- Looking in the wrong place: the full-screen app and `--run-due` write `logs/soc_bot.log`; the classic menu
+  and `--scan` print `[INFO] ...` lines on the console only
+- `logs/` directory not writable
 
 **Solution:**
-1. Set `LOG_LEVEL=DEBUG` in `.env`
-2. Check `logs/` directory permissions
-3. Verify logging config in `main.py`
+1. Per-job error details are stored with each attempt; Queue / History show each job's result
+2. Read `logs/soc_bot.log` in the Soc_bot folder (scheduler checks, publishing progress, errors)
+3. Check `logs/` directory permissions
 
-**Affected Files:** `main.py`, `.env`, `logs/`
+The log level is fixed at INFO; there is no `LOG_LEVEL` setting.
 
-**How to Reproduce:** Set LOG_LEVEL=ERROR, trigger failure
-
-**How to Verify:** Debug logs show full request/response (sanitized)
+**Affected Files:** `main.py` (`configure_logging`, `configure_file_logging`), `logs/`
 
 ---
 
@@ -543,7 +541,13 @@ Only one Soc_bot process (and one publishing action at a time inside a window) c
 
 ### Problem: `python main.py --run-due` exits with code 1
 
-The scheduler check could not run at all (for example `.env` missing or `ENCRYPTION_KEY` not set). A wrong *Start in* folder in Task Scheduler usually gives exit code 2 instead (Python cannot find `main.py`); it never makes Soc_bot use a different database, because a relative `DATABASE_URL` (the default `sqlite:///data/publisher.db`) is always read from the Soc_bot folder, not the working directory. Run `python main.py --run-due` by hand in the project folder and read the `[ERROR]` line. A post that failed to publish does **not** cause exit 1; it is listed in the summary and the run exits 0.
+The scheduler check could not run at all (for example `.env` missing or `ENCRYPTION_KEY` not set). A wrong *Start in* folder in Task Scheduler usually gives exit code 2 instead (Python cannot find `main.py`); it never makes Soc_bot use a different database, because a relative SQLite `DATABASE_URL` (the default `sqlite:///data/publisher.db`) is resolved relative to the Soc_bot project folder, not the working directory; an absolute database URL is used exactly as configured. Run `python main.py --run-due` by hand in the project folder and read the `[ERROR]` line. A post that failed to publish does **not** cause exit 1; it is listed in the summary and the run exits 0.
+
+With the `cmd.exe /c ... >> logs\run_due.log` form, exit code 1 before Soc_bot even starts means the `logs` folder was missing ("The system cannot find the path specified"). Use the form in the setup guide, which starts with `mkdir logs 2>nul &`.
+
+### Problem: `python main.py --run-due` exits with code 130 (Task Scheduler `0x82`)
+
+The check was interrupted with Ctrl+C before it finished. The publishing lock is released. Posts the check had not reached stay scheduled and are checked again next time; a post it was publishing keeps its unfinished jobs open in the Queue (resume them there). `logs/soc_bot.log` shows how far the check got.
 
 ### Problem: YouTube publishing fails with "Access token expired and could not be renewed; reconnect the account"
 

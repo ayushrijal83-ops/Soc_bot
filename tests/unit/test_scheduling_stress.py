@@ -196,6 +196,7 @@ def _no_probe(self, *a, **k):
 publisher.PublisherEngine.__init__ = _no_probe
 import main
 main.ENV_FILE = Path(env_file)
+main.LOG_DIR = Path(lock_path).parent / "logs"  # never the project's logs/ folder
 sys.argv = ["main.py", "--run-due"]
 sys.exit(main.main())
 """

@@ -398,12 +398,18 @@ Rules (the same for both):
    - `0x3`: another Soc_bot window was publishing; nothing changed, the next run tries again.
    - `0x1`: the check could not run (for example `.env` missing or `ENCRYPTION_KEY` not set).
    - `0x2`: usually a wrong **Start in** folder (Python cannot find `main.py`); the check did not run.
+   - `0x82` (130): the check was interrupted with Ctrl+C before it finished. Posts it had not reached stay
+     scheduled; a post it was publishing keeps its unfinished jobs open in the Queue (resume them there).
    Relative SQLite database paths (such as the default `data\publisher.db`) are resolved relative to the
    Soc_bot project folder, whatever the **Start in**, so a wrong folder never silently checks a different,
    empty database. Absolute database URLs are used exactly as configured.
 
-To see the check's output in a file instead, use **Program/script** `cmd.exe` and **Add arguments**
-`/c .venv\Scripts\python.exe main.py --run-due >> logs\run_due.log 2>&1` (keep **Start in** `D:\Soc_bot`).
+Every check also writes what it did (released, published, failed, missed, errors) to `logs\soc_bot.log` in the
+Soc_bot folder; the `logs` folder is created automatically. To also keep the check's full screen output in a
+file, use **Program/script** `cmd.exe` and **Add arguments**
+`/c mkdir logs 2>nul & .venv\Scripts\python.exe main.py --run-due >> logs\run_due.log 2>&1`
+(keep **Start in** `D:\Soc_bot`). The `mkdir logs 2>nul &` part creates the `logs` folder on a fresh install (the
+redirect fails without it) and is harmless when it already exists; the task still reports Soc_bot's exit code.
 Never start Soc_bot by double-clicking `main.py`; use `Start_Soc_bot.bat` or the commands above.
 
 ### Updating Soc_bot later
@@ -480,6 +486,6 @@ python main.py                 # full-screen app
 python main.py --plain         # classic text menu
 python main.py --dry-run       # show what would be published, publishes nothing
 python main.py --scan          # process content\incoming (AUTO profile publishes, VERIFY only lists)
-python main.py --run-due       # one scheduler check, then exit (0 = done, 3 = another window publishing, 1 = error)
+python main.py --run-due       # one scheduler check, then exit (0 = done, 3 = another window publishing, 1 = error, 130 = Ctrl+C)
 python main.py --help          # all options
 ```

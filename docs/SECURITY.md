@@ -15,7 +15,7 @@
 | Threat | Mitigation | Status |
 |--------|------------|--------|
 | Token theft from DB | Encryption at rest, file permissions | ✅ IMPLEMENTED |
-| Token exposure in logs | Structured logging with sanitization | 📋 PLANNED |
+| Token exposure in logs | `redact()` on error text, tokens only in headers, `httpx` logger at WARNING | ✅ IMPLEMENTED (structured logging: 📋 PLANNED) |
 | .env committed to git | .gitignore, pre-commit hooks | ✅ IMPLEMENTED |
 | MITM on API calls | HTTPS enforcement, cert validation | 📋 PLANNED |
 | CSRF in OAuth | State (single-use, platform-bound) + PKCE where supported | ✅ IMPLEMENTED |
@@ -169,30 +169,21 @@ Before any API call:
 
 ## Size Limits
 
-| Platform | Max Size (Config) | Enforced |
-|----------|-------------------|----------|
-| Instagram | 4 GB | ✅ Pre-upload |
+| Platform | Max Size | Enforced |
+|----------|----------|----------|
+| Instagram | 300 MB | ✅ Pre-upload |
 | TikTok | 4 GB | ✅ Pre-upload |
 | YouTube | 256 GB | ✅ Pre-upload |
 
-Default conservative limit: **2 GB** (configurable via env)
+The limits are fixed per platform in each adapter (`MAX_SIZE_BYTES`); there is no environment setting for them.
 
 ## Secure Logging
 
-```python
-# Sanitized logging
-logger.info("Upload started", extra={
-    "job_id": job.id,
-    "account": account.username,  # Safe: public handle
-    "platform": account.platform,
-    # NEVER log: tokens, file paths, captions, error details with secrets
-})
-```
-
-- Structured JSON logs
-- No tokens, secrets, PII in logs
-- Error logs: generic messages, correlation IDs only
-- Debug logs: only in development (LOG_LEVEL=DEBUG)
+- Plain-text `soc_bot.*` log lines at a fixed INFO level (no `LOG_LEVEL` setting); structured JSON logging
+  (ADR-010) is still planned, not implemented
+- No tokens, secrets or authorization codes in logs: tokens travel only in `Authorization` headers, the `httpx`
+  logger is kept at WARNING (its INFO lines contain URLs), and error text passes through `redact()` before it is
+  stored, shown or logged (scheduler log lines included)
 
 ## HTTPS Requirements
 

@@ -950,11 +950,10 @@ From `.env.example` [CURRENT]. **Never copy the real `.env` into docs.**
 | S3 | `MEDIA_STORAGE_BUCKET/REGION/ENDPOINT/ACCESS_KEY/SECRET_KEY` | for S3 only | empty | ENDPOINT must be https |
 | S3 | `MEDIA_STORAGE_PRESIGNED_URL_TTL` | no | 900 (60..604800) | none |
 | S3 | `MEDIA_STORAGE_DELETE_AFTER_PUBLISH` | no | true | none |
-| App | `LOG_LEVEL`, `DRY_RUN` | no | INFO, false | none |
 | App | `OAUTH_CALLBACK_HOST`, `OAUTH_CALLBACK_PORT` | no | 127.0.0.1, 0 | none |
 | Content | `CONTENT_ROOT`, `CONTENT_STABILITY_SECONDS` | no | `<project>/content`, 3 | Read in `src/content/models.py`; not in `.env.example` |
 
-`.env.example` also lists `MAX_CONCURRENT_UPLOADS` and `MAX_VIDEO_SIZE_*` as commented optional values. **Not verified from current repository** that the code reads them; a grep found no reader in `src/`.
+`LOG_LEVEL`, `DRY_RUN`, `MAX_CONCURRENT_UPLOADS` and `MAX_VIDEO_SIZE_*` were removed from `.env.example` in V2.3: no code read them (dry-run is `python main.py --dry-run`). `tests/unit/test_env_example.py` fails if `.env.example` lists a setting no code reads.
 
 ---
 

@@ -2,36 +2,37 @@
 
 ## Test Framework
 - **pytest** — Primary test runner
-- **pytest-asyncio** — Async test support
-- **pytest-mock** — Mocking utilities
-- **respx** — HTTP mocking for API tests
-- **faker** — Test data generation
+- **unittest.mock** (standard library) — patching and fakes
+- **httpx.MockTransport** (built into httpx) — HTTP mocking for API tests
+- `tests/conftest.py` autouse guards: no external network (only loopback), a temporary default `DATABASE_URL`,
+  never the real `data/publisher.db` (refused, and the session checks the file is unchanged), a private
+  publishing lock, no real cloudflared
 
 ## Test Organization
 
 ```
 tests/
-├── unit/                    # Fast, isolated unit tests (402 tests ✅)
+├── unit/                    # Fast, isolated unit tests (1123 tests ✅)
 │   ├── test_tokens.py       # Token encryption (13 tests)
 │   ├── test_database.py     # Database layer + migrations (37 tests)
 │   ├── test_cli_display.py  # Display utilities (10 tests)
 │   ├── test_cli_prompts.py  # Input validation (22 tests)
-│   ├── test_cli_menu.py     # Menu navigation (13 tests)
-│   ├── test_main.py         # Entry point, dry-run (10 tests)
+│   ├── test_cli_menu.py     # Menu navigation (16 tests)
+│   ├── test_main.py         # Entry point, dry-run (16 tests)
 │   ├── test_account_manager.py  # Account management (38 tests)
 │   ├── test_auth_state.py       # OAuth state/PKCE (23 tests)
 │   ├── test_auth_callback.py    # OAuth callback server (17 tests)
 │   ├── test_auth_manager.py     # AuthManager flow, dynamic port, persistence (11 tests)
-│   ├── test_platform_auth.py    # Platform auth adapters, mocked HTTP (25 tests)
-│   ├── test_publishers.py       # Instagram/TikTok/YouTube publishers, httpx.MockTransport (45 tests)
-│   ├── test_publishing_engine.py  # Jobs, state machine, engine, retries, tokens, dry-run, validation (36 tests)
+│   ├── test_platform_auth.py    # Platform auth adapters, mocked HTTP (27 tests)
+│   ├── test_publishers.py       # Instagram/TikTok/YouTube publishers, httpx.MockTransport (53 tests)
+│   ├── test_publishing_engine.py  # Jobs, state machine, engine, retries, tokens, dry-run, validation (37 tests)
 │   ├── test_cli_publish.py      # Create Post / Publishing Queue CLI (5 tests)
-│   ├── test_content.py          # Phase 5A content intake/profile/lifecycle/covers/CLI (57 tests)
+│   ├── test_content.py          # Phase 5A content intake/profile/lifecycle/covers/CLI (59 tests)
 │   └── test_tiktok_5b.py        # Phase 5B TikTok end-to-end with a mocked TikTok API (21 tests)
 ├── integration/             # Slower, cross-component tests
 │   ├── test_database.py     # 📋 PLANNED (uses temp DB)
 │   ├── test_account_manager.py  # 📋 PLANNED
-│   ├── test_publisher_engine.py  # 📋 PLANNED
+│   ├── test_publishing_engine.py  # 📋 PLANNED (unit coverage: unit/test_publishing_engine.py)
 │   └── test_oauth_flows.py   # 📋 PLANNED
 ├── platform/                # Platform-specific tests (mocked APIs)
 │   ├── test_instagram_adapter.py  # 📋 PLANNED
@@ -45,7 +46,9 @@ tests/
     └── test_accounts.json
 ```
 
-## Unit Tests (Implemented: 402)
+## Unit Tests (Implemented: 1123)
+
+The table below covers the original modules; later modules are listed in the sections further down.
 
 | Test Module | Tests | Coverage |
 |-------------|-------|----------|
@@ -53,16 +56,16 @@ tests/
 | `test_database.py` | 37 | Init, schema versions 1+2, v1→v2 upgrade, idempotency, health check, model CRUD, constraints, unique job per destination, per-row timestamps, relationships, indexes, encryption |
 | `test_cli_display.py` | 10 | Headers, menus, tables, status messages, empty tables |
 | `test_cli_prompts.py` | 22 | Text, int, choice, yes/no, menu selection, EOF, Ctrl+C |
-| `test_cli_menu.py` | 15 | (+ Content Inbox option, no duplicate Exit) | Init, routing, handlers, run loop, edge cases |
+| `test_cli_menu.py` | 16 | (+ Content Inbox option, no duplicate Exit) | Init, routing, handlers, run loop, edge cases |
 | `test_main.py` | 16 | Args parsing, dry-run (no network, plan shown, jobs untouched), services passed to menu, KeyboardInterrupt, exceptions; isolated temp DB |
 | `test_account_manager.py` | 38 | Account CRUD, listing, filtering, updates, disconnect, enable, dev accounts, security, edge cases |
 | `test_auth_state.py` | 23 | OAuth state, PKCE (base64url + hex), platform binding, single use, expiration, cleanup |
 | `test_auth_callback.py` | 17 | Callback server: dynamic port, bind failure, platform mismatch, single use, non-callback paths, escaping, no code echo |
 | `test_auth_manager.py` | 11 | End-to-end connect flow on a real loopback server with mocked providers; dynamic port; state/platform mismatch; TikTok rotation persisted; Instagram re-exchange; reconnect update; no secrets in logs |
-| `test_platform_auth.py` | 25 | Instagram Login endpoints/scopes/exchange/identity/revocation, TikTok hex PKCE/expiry/rotation, YouTube base64url PKCE, expiry model |
+| `test_platform_auth.py` | 27 | Instagram Login endpoints/scopes/exchange/identity/revocation, TikTok hex PKCE/expiry/rotation, YouTube base64url PKCE, expiry model |
 | `test_publishers.py` | 53 | (+ Phase 5A: YouTube thumbnail after video, failure keeps video published, network error reported, resume never retries, no cover, oversize/unsupported not uploaded, state persisted; TikTok never sends a cover) | Instagram container/poll/publish, timeout stays processing, ERROR/EXPIRED, resume without re-publish, error mapping (190/10/transient/rate limit), malformed, timeout; TikTok creator info/init/chunked upload/status, private post id, rejected content, 401/scope/spam/429/5xx, privacy mismatch, upload failure, resume polls only; YouTube session/chunks/308 resume, network resume, uncertain final chunk, quota, 401, 4xx, 5xx, processing failure, resume without re-upload; secret redaction; token only in headers; foreign session URI rejected |
 | `test_publishing_engine.py` | 37 | (+ cover failure stored separately) | Job creation/dedup, state machine, atomic claim, success + provider ID persisted, **failure isolation (IG ok / TikTok fail / YT ok)**, unexpected exception isolation, bounded retries, non-retryable errors, resume from saved state, no re-publish, processing resume, crash recovery (safe vs unsafe), manual retry, validation failure, missing video, disconnected account, no tokens in attempts, token renewal (expiring / fresh / expired+unrenewable / Instagram early renewal), dry-run without network or mutation, end-to-end with real adapters + mocked HTTP |
-| `test_content.py` | 56 | Detector (package/video/caption/cover, missing, multiple, unsupported, empty, UTF-8, partial files, safe names), stability (changing vs stable vs old), manager (stage dirs, moves, suffix, outside-root refusal, CONTENT_ROOT), profile (create/load/update/reset, no tokens, invalid/wrong-platform account, disconnected, no destinations), intake (publish all + move, options from package/profile, partial failure → failed/, retry only failed, **crash resume without republish**, duplicate package, new profile account → one new job, invalid → failed/, blocked Instagram, no profile, copying, archive, AUTO, read-only scan, content key), cover capabilities (YouTube limits, TikTok/Instagram truthful), CLI (one confirmation, decline, inbox VERIFY, AUTO no prompt, profile setup, history, dry-run without side effects) |
+| `test_content.py` | 59 | Detector (package/video/caption/cover, missing, multiple, unsupported, empty, UTF-8, partial files, safe names), stability (changing vs stable vs old), manager (stage dirs, moves, suffix, outside-root refusal, CONTENT_ROOT), profile (create/load/update/reset, no tokens, invalid/wrong-platform account, disconnected, no destinations), intake (publish all + move, options from package/profile, partial failure → failed/, retry only failed, **crash resume without republish**, duplicate package, new profile account → one new job, invalid → failed/, blocked Instagram, no profile, copying, archive, AUTO, read-only scan, content key), cover capabilities (YouTube limits, TikTok/Instagram truthful), CLI (one confirmation, decline, inbox VERIFY, AUTO no prompt, profile setup, history, dry-run without side effects) |
 | `test_tiktok_5b.py` | 21 | Real OAuth plumbing (loopback callback, state, hex PKCE verifier/challenge, token exchange form, encrypted persistence, scopes recorded, no secrets in result), missing `video.publish` blocks, creator_info preflight (notes, privacy mismatch, malformed, provider error; never in scan/dry-run), SELF_ONLY publish via the real adapter + engine + intake (Content-Range/Length, no bearer on upload URL, signed URL never persisted), lifecycle + history, cover `not_supported`, already published, **crash after upload → resume polls only**, still processing ≠ failed, FAILED not retried, retry rules (429/5xx/timeout retried; 401/scope/privacy/spam not), VERIFY CLI one confirmation |
 | `test_cli_publish.py` | 5 | Create Post confirm → published, cancel → nothing, blocked plan → nothing, missing video, queue listing |
 
@@ -176,10 +179,10 @@ Real provider OAuth is **not** exercised by any automated test. Real OAuth test:
 |-------------|-----------------|
 | `test_database.py` | CRUD, migrations, constraints (temp DB) |
 | `test_account_manager.py` | OAuth flow, token refresh, disconnect |
-| `test_publisher_engine.py` | Job creation, execution, dry-run |
+| `test_publishing_engine.py` | Job creation, execution, dry-run (covered today by `tests/unit/test_publishing_engine.py`) |
 | `test_oauth_flows.py` | 📋 PLANNED |
 
-## Platform Adapter Tests (Implemented: 45, in `test_publishers.py`)
+## Platform Adapter Tests (Implemented: 53, in `test_publishers.py`)
 
 All provider HTTP goes through `httpx.MockTransport` (built into httpx; no extra dependency). The tests check the exact requests sent (URLs, methods, headers, bodies, Content-Range) and the handling of each documented response.
 
@@ -216,7 +219,7 @@ See `test_publishing_engine.py` and `test_cli_publish.py` above. **Mocked tests 
 | SchedulingService: zones, DST gap/overlap, +2 min / +365 d, suggestions, cancel / reschedule / publish now, races | `test_scheduling_service.py` |
 | DueScheduler: due / missed boundaries, oldest first, atomic release, failures, races | `test_due_scheduler.py` |
 | Publishing lock: real OS lock with child processes, re-entrancy, process death, busy behaviour | `test_publish_lock.py` |
-| Callers: TUI timer, `main.py --run-due` subprocess (exit 0 / 3 / 1), poll interval | `test_scheduler_callers.py` |
+| Callers: TUI timer, `main.py --run-due` subprocess (exit 0 / 3 / 1; 130 on Ctrl+C in `test_scheduler_logging.py`), poll interval | `test_scheduler_callers.py` |
 | Scheduling UI (TUI + CLI), held posts never shown as pending, UI never writes schedule columns | `test_scheduling_ui.py`, `test_scheduling_cli.py` |
 | Failure records without an attempt row, uncertain outcomes never auto-retried | `test_failure_state.py` |
 | Multi-post stress: 10 due posts, mixed outcomes, scheduler threads, two real `--run-due` processes, killed process + restart, `max_posts` | `test_scheduling_stress.py` |
@@ -237,7 +240,7 @@ Guidance:
 # All tests
 pytest
 
-# Unit only (fast) — 402 tests passing
+# Unit only — 1123 tests passing
 pytest tests/unit -v
 
 # Integration (requires test DB)
@@ -278,6 +281,6 @@ jobs:
 ```
 
 ## Current Status
-✅ **V2.3 (2026-10-02)**: 1101 tests passing; `ruff check .`: 0 errors; no skipped tests. Unit tests use fakes and mocks only (no real platform calls). Real provider runs (manual): YouTube OAuth + publishing + thumbnail; Instagram OAuth, Reels, fan-out and real scheduled publishing (V2.3); TikTok NOT RUN (no developer credentials).
+✅ **V2.3 (2026-10-03)**: 1123 tests passing; `ruff check .`: 0 errors; no skipped tests. Unit tests use fakes and mocks only (no real platform calls). Real provider runs (manual): YouTube OAuth + publishing + thumbnail; Instagram OAuth, Reels, fan-out and real scheduled publishing (V2.3); TikTok NOT RUN (no developer credentials).
 
 Known flaky (pre-existing, unrelated to scheduling): `test_tui_oauth.py::test_paste_field_is_visible_on_screen` fails occasionally with `NoMatches('#acct-instagram')` during test teardown.

@@ -325,6 +325,7 @@ def _no_probe(self, *a, **k):
 publisher.PublisherEngine.__init__ = _no_probe
 import main
 main.ENV_FILE = Path(env_file)                     # never the developer's .env
+main.LOG_DIR = Path(lock_path).parent / "logs"     # never the project's logs/ folder
 sys.argv = ["main.py", "--run-due"]
 sys.exit(main.main())
 """
@@ -380,6 +381,9 @@ def test_cli_run_due_subprocess_publishes_and_exits_0(cli_env):
     assert statuses(db, posts) == {"due": "released", "future": "scheduled", "overdue": "missed"}
     assert {j.status for j in JobStore(db).jobs_for_post(posts["due"])} == {"published"}
     assert {j.status for j in JobStore(db).jobs_for_post(posts["overdue"])} == {"pending"}
+    log = (cli_env[5] / "logs" / "soc_bot.log").read_text(encoding="utf-8")  # durable record of the pass
+    assert f"post #{posts['due']}" in log and "published." in log and "missed its window" in log
+    assert "Scheduler pass finished: released 1, published 1, failed 0, missed 1" in log
 
 
 def test_cli_run_due_subprocess_busy_exits_3_and_changes_nothing(cli_env):

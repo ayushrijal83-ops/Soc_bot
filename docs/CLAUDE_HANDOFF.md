@@ -21,6 +21,11 @@ Working rules from the user: never commit or push (the user does), never print/m
   project folder (`PROJECT_ROOT` from `src/core/publish_lock.py`, like `.env`, `CONTENT_ROOT` and the lock), no longer
   the working directory, which made `--run-due` from another folder silently use a new empty database (exit 0).
   Absolute paths, `:memory:`, `file:` URIs and non-SQLite URLs are unchanged (`tests/unit/test_database_path.py`).
+- V2.3 release hardening: `.env.example` only lists settings the code reads
+  (`tests/unit/test_env_example.py`); `DueScheduler` logs each outcome (`soc_bot.scheduler`, redacted) and
+  `--run-due` adds `logs/soc_bot.log` (`main.LOG_DIR`); `--run-due` + Ctrl+C exits 130 (`RUN_DUE_INTERRUPTED`);
+  `tests/conftest.py` blocks external network and refuses the real `data/publisher.db`
+  (`tests/unit/test_test_safety.py`, `test_scheduler_logging.py`).
 - Known flaky test (pre-existing, not scheduling): `test_tui_oauth.py::test_paste_field_is_visible_on_screen`
   (OAuth worker refreshes the Accounts screen during test teardown, `NoMatches('#acct-instagram')`).
 
@@ -42,7 +47,7 @@ Working rules from the user: never commit or push (the user does), never print/m
   (`tests/conftest.py`), so a running Soc_bot window never makes tests busy.
 - **Callers (phase 5)**: TUI timer in `SocBotApp` (`run_scheduler` / `_scheduler_pass`, worker group "scheduler",
   `has_work()` before taking the lock, `publishing_active` = manual OR scheduler publishing) and
-  `main.py --run-due` (`report_due_run`: exit 0 / 3 busy / 1 error). Task Scheduler steps: setup guide PART 8.
+  `main.py --run-due` (`report_due_run`: exit 0 / 3 busy / 1 error; Ctrl+C 130). Task Scheduler steps: setup guide PART 8.
 - **UI (phase 6)**: `src/tui/screens/schedule.py` (`ScheduleModal` for schedule + reschedule,
   `ScheduledActionsModal`), Queue SCHEDULED section in `lists.py`, Review `⏰ Schedule…` in `create_post.py`,
   Publish now = `PublishingScreen(release=True)` (lock first, then `publish_now`, then `publish_batch`), CLI in
@@ -413,7 +418,7 @@ All 11 required documentation files updated to reflect Phase 3B completion:
 - test_tokens.py: 14 tests (encryption, decryption, edge cases)
 - test_database.py: 33 tests (init, models, constraints, relationships, indexes, encryption integration)
 - test_cli_display.py: 11 tests (headers, menus, tables, status messages)
-- test_cli_prompts.py: 24 tests (text, int, choice, yes/no, menu selection, EOF, Ctrl+C)
+- test_cli_prompts.py: 22 tests (text, int, choice, yes/no, menu selection, EOF, Ctrl+C)
 - test_cli_menu.py: 14 tests (init, routing, handlers, run loop, edge cases)
 - test_main.py: 4 tests (args parsing, dry-run, KeyboardInterrupt, exceptions)
 ```
@@ -478,7 +483,7 @@ All 11 required documentation files updated to reflect Phase 3B completion:
 - test_tokens.py: 14 tests (encryption, decryption, edge cases)
 - test_database.py: 33 tests (init, models, constraints, relationships, indexes, encryption integration)
 - test_cli_display.py: 11 tests (headers, menus, tables, status messages)
-- test_cli_prompts.py: 24 tests (text, int, choice, yes/no, menu selection, EOF, Ctrl+C)
+- test_cli_prompts.py: 22 tests (text, int, choice, yes/no, menu selection, EOF, Ctrl+C)
 - test_cli_menu.py: 14 tests (init, routing, handlers, run loop, edge cases)
 - test_main.py: 4 tests (args parsing, dry-run, KeyboardInterrupt, exceptions)
 - test_account_manager.py: 38 tests (CRUD, listing, filtering, updates, disconnect, enable, dev accounts, security, edge cases)
@@ -574,7 +579,7 @@ Before fixes: 170 passed
 - test_tokens.py: 14 tests (encryption, decryption, edge cases)
 - test_database.py: 33 tests (init, models, constraints, relationships, indexes, encryption integration)
 - test_cli_display.py: 11 tests (headers, menus, tables, status messages)
-- test_cli_prompts.py: 24 tests (text, int, choice, yes/no, menu selection, EOF, Ctrl+C)
+- test_cli_prompts.py: 22 tests (text, int, choice, yes/no, menu selection, EOF, Ctrl+C)
 - test_cli_menu.py: 14 tests (init, routing, handlers, run loop, edge cases)
 - test_main.py: 4 tests (args parsing, dry-run, KeyboardInterrupt, exceptions)
 - test_account_manager.py: 38 tests (CRUD, listing, filtering, updates, disconnect, enable, dev accounts, security, edge cases)

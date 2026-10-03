@@ -25,18 +25,23 @@ from src.storage.tokens import TokenEncryption
 
 # The project's .env, found relative to this file so it works from any working directory.
 ENV_FILE = Path(__file__).resolve().parent / ".env"
+LOG_DIR = Path(__file__).resolve().parent / "logs"
 
 
-def configure_file_logging() -> Path:
-    """TUI mode: the screen belongs to the UI, so Soc_bot's log lines go to logs/soc_bot.log instead."""
+def configure_file_logging(replace: bool = True) -> Path:
+    """TUI mode: the screen belongs to the UI, so Soc_bot's log lines go to logs/soc_bot.log instead.
+
+    ``replace=False`` (--run-due) keeps the console handler and adds the file, so unattended scheduler runs
+    leave a durable record too."""
     import logging
 
-    log_dir = Path(__file__).resolve().parent / "logs"
-    log_dir.mkdir(exist_ok=True)
-    path = log_dir / "soc_bot.log"
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    path = LOG_DIR / "soc_bot.log"
     logger = logging.getLogger("soc_bot")
     for handler in list(logger.handlers):
-        logger.removeHandler(handler)
+        if replace or isinstance(handler, logging.FileHandler):
+            logger.removeHandler(handler)
+            handler.close()
     handler = logging.FileHandler(path, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     logger.addHandler(handler)
@@ -97,7 +102,8 @@ Examples:
   python main.py --dry-run       # Preview unpublished posts and content packages (no API calls)
   python main.py --scan          # Scan content/incoming; AUTO profiles publish, VERIFY only lists
   python main.py --run-due       # One scheduler pass: publish due scheduled posts, then exit
-                                 #   (exit code 0 = done, 3 = another window is publishing, 1 = error)
+                                 #   (exit code 0 = done, 3 = another window is publishing, 1 = error,
+                                 #    130 = interrupted with Ctrl+C)
         """
     )
     parser.add_argument(
@@ -114,7 +120,8 @@ Examples:
         "--run-due",
         action="store_true",
         help="Run ONE scheduler pass (publish scheduled posts that are due, mark long-overdue ones missed) and exit. "
-             "Exit code 0 = pass completed, 3 = another Soc_bot window is publishing (nothing changed), 1 = error.",
+             "Exit code 0 = pass completed, 3 = another Soc_bot window is publishing (nothing changed), 1 = error, "
+             "130 = interrupted with Ctrl+C.",
     )
     parser.add_argument(
         "--plain",
@@ -193,7 +200,7 @@ def print_batch_dry_run(engine, post_id: int, plan) -> None:
           f"{'1 final retry round' if engine.store.post_auto_retry(post_id) else 'off (older post)'}")
 
 
-RUN_DUE_OK, RUN_DUE_ERROR, RUN_DUE_BUSY = 0, 1, 3
+RUN_DUE_OK, RUN_DUE_ERROR, RUN_DUE_BUSY, RUN_DUE_INTERRUPTED = 0, 1, 3, 130  # 130: conventional Ctrl+C exit
 RUN_DUE_BUSY_MESSAGE = "Another Soc_bot window is publishing. Scheduled posts were not changed."
 
 
@@ -201,6 +208,7 @@ def run_due(account_manager, auth_manager, engine, intake) -> int:
     """``--run-due``: exactly one DueScheduler pass (the same scheduler the TUI uses), then exit."""
     from src.services import build_services
 
+    configure_file_logging(replace=False)  # scheduler outcomes also go to logs/soc_bot.log
     services = build_services(account_manager, auth_manager, engine, intake, ENV_FILE)
     return report_due_run(services.due_scheduler)
 
@@ -279,7 +287,8 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         print("\n\nInterrupted. Goodbye!")
-        return 0
+        # An interrupted scheduler pass is not a completed one (run_due's finally releases the lock).
+        return RUN_DUE_INTERRUPTED if args.run_due else 0
     except Exception as e:  # noqa: BLE001 - top-level CLI boundary
         print(f"\n[ERROR] Unexpected error: {e}")
         return 1

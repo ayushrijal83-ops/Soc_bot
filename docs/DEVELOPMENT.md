@@ -42,8 +42,6 @@ Required variables for development:
 ```env
 DATABASE_URL=sqlite:///data/publisher.db
 ENCRYPTION_KEY=your_generated_key
-LOG_LEVEL=DEBUG
-DRY_RUN=true
 
 # Instagram (Instagram API with Instagram Login)
 INSTAGRAM_APP_ID=
@@ -124,9 +122,6 @@ python main.py --dry-run
 
 # Help
 python main.py --help
-
-# With debug logging
-LOG_LEVEL=DEBUG python main.py
 ```
 
 ## Running Tests
@@ -135,7 +130,7 @@ LOG_LEVEL=DEBUG python main.py
 # All tests
 pytest
 
-# Unit tests only (170 tests)
+# Unit tests only
 pytest tests/unit -v
 
 # Integration tests only
@@ -170,9 +165,10 @@ pytest tests/unit/test_account_manager.py -v
 ```
 
 ### Logging
-- Logs written to `logs/` directory
-- Console output controlled by `LOG_LEVEL`
-- Structured JSON logging for machine parsing
+- Plain-text `soc_bot.*` log lines at INFO (the level is fixed; there is no `LOG_LEVEL` setting)
+- Full-screen app and `--run-due`: `logs/soc_bot.log` (created automatically); classic menu, `--scan`
+  and `--run-due` also print them as `[INFO] ...` on the console
+- Structured JSON logging is not implemented (ADR-010 is still planned)
 
 ## Code Style
 

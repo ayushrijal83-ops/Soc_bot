@@ -13,7 +13,9 @@
 | 4. Production hardening | Audit; one defect found: a relative SQLite `DATABASE_URL` followed the working directory (wrong Task Scheduler *Start in* = a different, empty database, exit 0). |
 | 4.1. Database path | Fixed: relative SQLite paths are anchored to the project folder; absolute, `:memory:`, `file:` URI and non-SQLite URLs unchanged (`test_database_path.py`, incl. `--run-due` from another directory). |
 
-Tests: 1101 passed, Ruff clean.
+| 5. Release hardening | `.env.example` lists only settings the code reads (removed `LOG_LEVEL`, `DRY_RUN`, `MAX_CONCURRENT_UPLOADS`, `MAX_VIDEO_SIZE_*`; drift test); scheduler outcomes logged to `logs/soc_bot.log` (app and `--run-due`, redacted); `--run-due` interrupted by Ctrl+C exits 130; Task Scheduler redirect form creates `logs\` first; tests block external network and refuse the real database. |
+
+Tests: 1123 passed, Ruff clean.
 
 ### V2.2 Real Scheduling: phases 1–6 (2026-10-02, committed `ecaf242`)
 | Phase | Done |
@@ -23,7 +25,7 @@ Tests: 1101 passed, Ruff clean.
 | 3. Due scheduler | `DueScheduler.run_due(now)`: one pass, UTC only; late by more than 60 min -> missed (never auto-published); due -> released -> normal publishing via `PublishingService`; atomic release (one winner across concurrent runs). |
 | 4. Publishing lock | `data/publishing.lock`: OS-level, non-blocking (Windows `msvcrt`, POSIX `fcntl`), freed by the OS if a process dies. Every publishing entry point holds it (TUI/service publish, retry, resume; scheduler pass; CLI create/queue; Content Inbox). A second window gets "Another Soc_bot window is publishing. Please try again later." and nothing changes. |
 
-| 5. Scheduler callers | The TUI checks for due scheduled posts at start and every 30 s (`SOC_BOT_SCHEDULER_POLL_SECONDS`, 10–300); `python main.py --run-due` does one check and exits (0 done, 3 another window publishing, 1 error); setup guide explains running it every minute from Windows Task Scheduler. |
+| 5. Scheduler callers | The TUI checks for due scheduled posts at start and every 30 s (`SOC_BOT_SCHEDULER_POLL_SECONDS`, 10–300); `python main.py --run-due` does one check and exits (0 done, 3 another window publishing, 1 error, 130 Ctrl+C); setup guide explains running it every minute from Windows Task Scheduler. |
 
 | 6. Scheduling UI | TUI: Review → `⏰ Schedule…` (suggested times or custom date/time/timezone, confirmation, inline errors); Queue SCHEDULED section with reschedule / publish now / cancel; dashboard "Next scheduled"; scheduled posts no longer appear as "pending". CLI: `Publish: Now / Schedule / Cancel` and scheduled-post actions in the Queue. |
 

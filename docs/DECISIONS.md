@@ -234,7 +234,7 @@ This tool is **distribution/publishing only**. No AI generation, no video editin
 ## ADR-010: Structured Logging with Sanitization
 
 **Date:** 2024-01-XX
-**Status:** Accepted
+**Status:** Accepted, not implemented yet (V2.3 writes plain-text, redacted `soc_bot.*` log lines)
 
 ### Context
 Need observability without leaking secrets.
@@ -591,7 +591,7 @@ Content Inbox packages are published immediately (VERIFY / AUTO) as before; they
 ## ADR-037: Scheduling D9 — Scheduler Callers: TUI Timer and `--run-due` (V2.2)
 
 ### Decision
-One `DueScheduler.run_due()` pass, called by the TUI (right after start, then every `SOC_BOT_SCHEDULER_POLL_SECONDS`, 10–300, default 30) and by `python main.py --run-due` (one pass, exit 0 done / 3 lock busy / 1 error), e.g. from Windows Task Scheduler. No daemon or Windows service. Every pass holds the process-level publishing lock (`data/publishing.lock`).
+One `DueScheduler.run_due()` pass, called by the TUI (right after start, then every `SOC_BOT_SCHEDULER_POLL_SECONDS`, 10–300, default 30) and by `python main.py --run-due` (one pass, exit 0 done / 3 lock busy / 1 error / 130 Ctrl+C), e.g. from Windows Task Scheduler. No daemon or Windows service. Every pass holds the process-level publishing lock (`data/publishing.lock`).
 
 ### Consequences
 Scheduled posts publish only while the TUI or a `--run-due` task runs, and not while the PC is off or asleep.
