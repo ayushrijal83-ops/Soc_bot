@@ -23,6 +23,7 @@ class AccountView:
     status: str           # ready | attention | disconnected
     status_text: str      # human text, never a secret
     expires_at: datetime | None
+    group_id: int | None = None
 
 
 @dataclass
@@ -32,6 +33,13 @@ class ConnectResult:
     account_label: str | None = None
     details: str | None = None            # redacted technical detail (on request)
     missing_scopes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DeleteResult:
+    ok: bool
+    message: str          # friendly, safe to show
+    stopped_jobs: int = 0  # not-yet-started jobs that will now never be claimed
 
 
 def require_worker_thread() -> None:
@@ -123,6 +131,49 @@ class AccountService:
     def enable(self, account_id: int) -> None:
         self.accounts.enable_account(account_id)
 
+    def delete(self, account_id: int) -> DeleteResult:
+        """Permanently delete an account. Blocks (refuses, changes nothing) if any of its jobs is
+        currently claimed (uploading/processing): that job's outcome at the platform is unknown,
+        so deletion never pretends it could be cancelled. Otherwise: best-effort token revocation
+        (existing AuthManager flow, same as disconnect), stops every not-yet-started job so it
+        can never be claimed later, then permanently scrubs the account's credentials.
+
+        Revocation runs its own event loop: call from a worker thread, like disconnect."""
+        from src.accounts.manager import AccountAlreadyDeletedError, AccountNotFoundError
+
+        require_worker_thread()
+        try:
+            self.accounts.get_account(account_id)
+        except AccountNotFoundError as e:
+            return DeleteResult(False, str(e))
+
+        jobs = self.engine.store.jobs_for_account(account_id) if self.engine is not None else []
+        in_flight = [j for j in jobs if j.status in ("uploading", "processing")]
+        if in_flight:
+            return DeleteResult(False, f"Cannot delete: {len(in_flight)} job(s) for this account "
+                                "are currently in progress; their outcome at the platform is not yet "
+                                "known, so this is never cancelled automatically. Wait until they "
+                                "finish (check the Queue), then try again.")
+
+        if self.auth is not None:
+            try:
+                self.auth.disconnect_account(account_id)  # best-effort revoke; deletion proceeds regardless
+            except Exception:  # noqa: BLE001 - revocation is best-effort, same as plain disconnect
+                pass
+
+        stopped = 0
+        if self.engine is not None:
+            for job in jobs:
+                if job.status in ("pending", "retrying") and not job.membership_removed_at:
+                    if self.engine.store.remove_membership(job.id):
+                        stopped += 1
+
+        try:
+            self.accounts.delete_account(account_id)
+        except AccountAlreadyDeletedError as e:
+            return DeleteResult(False, str(e))
+        return DeleteResult(True, "Account permanently deleted. Publishing history was preserved.", stopped)
+
     def _view(self, account) -> AccountView:
         label = account.display_name or account.username or f"account {account.id}"
         if account.status != "active":
@@ -141,4 +192,4 @@ class AccountService:
                 # The engine renews access tokens before publishing (refresh token / long-lived refresh).
                 text = "Ready (login renewed automatically when publishing)"
         return AccountView(account.id, account.platform, label, account.username or "", status, text,
-                           account.expires_at)
+                           account.expires_at, account.group_id)

@@ -23,13 +23,17 @@ Connected social media accounts.
 | expires_at | TIMESTAMP | | Access token expiry (UTC) |
 | status | TEXT | NOT NULL, DEFAULT 'active', CHECK(status IN ('active','expired','revoked','disconnected')) | Account status |
 | meta_json | TEXT | | JSON for platform-specific extra data |
+| group_id | INTEGER | FK → account_groups(id) ON DELETE SET NULL (007) | Content-niche group; NULL = unassigned. See "Account Groups" below |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Record creation |
 | updated_at | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Last update (auto-updated via SQLAlchemy) |
+| deleted_at | TIMESTAMP | | NULL = normal; set once, permanently, on account deletion (010). See "Account Deletion" below |
 
 **Indexes:**
 - `idx_accounts_platform` ON (platform)
 - `uq_accounts_platform_id` ON (platform, platform_account_id) UNIQUE
 - `idx_accounts_status` ON (status)
+- `idx_accounts_group` ON (group_id) (007)
+- `idx_accounts_deleted` ON (deleted_at) (010)
 
 **Check Constraints:**
 - `ck_accounts_platform`: platform IN ('instagram','tiktok','youtube')
@@ -69,11 +73,14 @@ User-created posts (video + caption).
 | scheduled_at | TIMESTAMP | | Publish instant, naive UTC (006); NULL = publish now |
 | schedule_status | TEXT | CHECK in (scheduled, released, missed, cancelled) (006) | NULL = ordinary post; see "Scheduling" below |
 | schedule_json | TEXT | | How the time was chosen + append-only history (006) |
+| origin_group_id | INTEGER | FK → account_groups(id) ON DELETE SET NULL (008) | The group this batch was created from; NULL = ordinary (non-group) post |
+| origin_group_name | TEXT | | **Immutable snapshot** of the group's name at batch creation (008); stays even if the group is renamed or deleted |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Creation time |
 
 **Indexes:**
 - `idx_posts_video` ON (video_id)
 - `idx_posts_schedule` ON (schedule_status, scheduled_at) (006)
+- `idx_posts_origin_group` ON (origin_group_id) (008)
 
 ### publish_jobs
 Individual publishing job per destination (platform + account).
@@ -91,6 +98,7 @@ Individual publishing job per destination (platform + account).
 | error_message | TEXT | | Last error if failed |
 | retry_count | INTEGER | NOT NULL, DEFAULT 0 | Number of retries attempted |
 | next_retry_at | TIMESTAMP | | Scheduled retry time |
+| membership_removed_at | TIMESTAMP | | NULL = normal. Set (CAS, pending/retrying jobs only) when the account was removed from its group, the group was deleted, or the account itself was deleted (009; reused by 010) — see "Job Membership-Removal Tracking" below |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | Job creation |
 | published_at | TIMESTAMP | | When successfully published |
 
@@ -200,6 +208,10 @@ Use simple versioned SQL migration files in `src/storage/migrations/`:
 - `004_batch_retry.sql` — `posts.auto_retry`, `publish_jobs.auto_retry_used`
 - `005_audience_strategy.sql` — `audience_profiles` (+ 16 built-in rows), `posts.audience_profile_id`, `posts.audience_json`
 - `006_scheduling.sql` — `posts.scheduled_at`, `posts.schedule_status`, `posts.schedule_json`, index `idx_posts_schedule`
+- `007_account_groups.sql` — `account_groups` table, `accounts.group_id`, index `idx_accounts_group`
+- `008_group_batches.sql` — `posts.origin_group_id`, `posts.origin_group_name`, index `idx_posts_origin_group`
+- `009_job_membership_removal.sql` — `publish_jobs.membership_removed_at`
+- `010_account_deletion.sql` — `accounts.deleted_at`, index `idx_accounts_deleted`
 
 The runner splits statements on `;`, also inside `--` comments and string literals, so a migration must not contain
 `;` anywhere except at statement ends. Tables built by `create_all()` only get *server* defaults declared in the ORM:
@@ -355,3 +367,90 @@ Written once when the post is created (`AudienceStore.attach`) and never replace
 Editing, renaming or disabling the profile later leaves this untouched; `audience_profile_id` is only a link for
 future analytics grouping. Posts created before migration 005 keep NULL in both columns (= no strategy) and publish
 exactly as before.
+
+## Account Groups (migration `007_account_groups.sql`)
+
+Groups let a connected account belong to a content niche (e.g. "AI Anime", "Motivation") for group publishing.
+
+### account_groups
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | INTEGER | PK | |
+| name | TEXT | NOT NULL, **UNIQUE** (`uq_account_groups_name`) | |
+| created_at, updated_at | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | |
+
+**Membership is a single nullable column, not a join table:** `accounts.group_id` (above), `ON DELETE SET NULL`.
+An account can therefore only ever belong to zero or one group by construction — there is no schema state in which
+it could be a member of two. Deleting a group never disconnects or deletes its accounts: the FK sets `group_id`
+back to NULL for all of them, and `GroupManager.delete_group` does the same explicitly in the same transaction.
+
+**Occupancy is enforced in `GroupManager.assign_account`, not only in the CLI:** assigning an account that already
+belongs to a *different* group is rejected (`AccountAlreadyAssignedError`); the caller must unassign it first, then
+assign it to the new group. `GroupManager.move_account` is the one explicit exception — it performs the unassign
+and the assign itself, in one call, precisely because calling it *is* the explicit relocation action.
+
+## Group-Batch Origin Tracking (migration `008_group_batches.sql`)
+
+`posts.origin_group_id` + `posts.origin_group_name` (both above) record which group a group-publishing batch was
+created from, following the exact same pattern as the audience-strategy snapshot: `origin_group_id` is a live FK
+link (`SET NULL` if the group is later deleted), while `origin_group_name` is an **immutable snapshot** of the
+group's name taken once, at batch creation (`GroupService._attach_origin`), and never rewritten. Renaming or
+deleting the group afterwards never changes `origin_group_name`, so a batch's origin stays visible in history even
+after the group itself is gone. NULL in both columns = an ordinary post, not created through a group (unchanged
+individual-account publishing).
+
+## Job Membership-Removal Tracking (migration `009_job_membership_removal.sql`)
+
+`publish_jobs.membership_removed_at` (above) is set, via an atomic conditional `UPDATE`, when a `pending` or
+`retrying` job's account is removed from its group, its group is deleted, or (migration 010) the account itself is
+deleted — in every case, "this job will never be claimed again."
+
+**Why a new column and not a new `publish_jobs.status` value:** `ck_jobs_status` is a CHECK constraint fixed to the
+column at table creation; SQLite cannot extend an existing CHECK constraint without rebuilding the whole table,
+which every migration in this project (001–010) deliberately avoids. A plain additive nullable column, guarded only
+by the project's existing compare-and-swap convention, achieves the same safety without ever touching that
+constraint:
+- `JobStore.claim()` and `JobStore.open_post_ids()` both require `membership_removed_at IS NULL`, so a marked job can
+  never be claimed and never keeps a resume pass (`resume_open_jobs` / `--run-due`) busy on work that will not happen.
+- `JobStore.remove_membership(job_id)` sets it, but only `WHERE status IN ('pending','retrying') AND
+  membership_removed_at IS NULL` — if a worker has already claimed the job (`uploading`/`processing`), the update
+  affects zero rows and the job is left alone: its outcome at the platform is unknown, so it is never guessed at or
+  claimed to be cancelled.
+- `JobStore.restore_membership(job_id)` clears it (undoing an accidental or reconsidered removal); the existing
+  unique index `uq_jobs_post_account` guarantees this is always the *same* job row, never a duplicate.
+- `src/core/publisher.py:batch_status(statuses, removed)` and `PublishingService.queue_counts()` both take the
+  count of marked jobs into account so a batch whose only remaining work was marked never looks perpetually
+  "pending"/"running" — it reports an aggregate `"stopped"` instead (a computed rollup value, not a new
+  `publish_jobs.status`; the column itself is never touched).
+
+## Account Deletion (migration `010_account_deletion.sql`)
+
+`accounts.deleted_at` (above) marks an account permanently deleted. **This is a tombstone, never a row delete:**
+`publish_jobs.account_id` has `ON DELETE CASCADE`, and the ORM's `Account.publish_jobs` relationship cascades too,
+so an actual `DELETE FROM accounts` would silently destroy every job and (transitively) every attempt for that
+account. Deletion (`AccountManager.delete_account`, orchestrated by `AccountService.delete`) never issues one.
+Instead, in one transaction:
+- `access_token_enc` is overwritten with a fixed, non-secret placeholder string (the column is `NOT NULL`, so it is
+  never left blank) and `refresh_token_enc` is set to NULL. The original credentials are not recoverable afterwards.
+- `group_id` is set to NULL (the account leaves its group, if any — the group itself and its other members are
+  untouched).
+- `status` is set to `'disconnected'`.
+- `deleted_at` is set to the current UTC time, once, permanently; a second deletion attempt is rejected
+  (`AccountAlreadyDeletedError`), not silently reapplied.
+
+**Never touched by deletion:** the `accounts` row itself, every `publish_jobs` / `publish_attempts` row for that
+account (status, `platform_media_id`, `error_message`, attempt history — all preserved exactly), and every
+`posts` / `videos` row. Historical records remain fully readable after deletion.
+
+**Job safety** (`AccountService.delete`, not the CLI): if any job for the account is currently `uploading` or
+`processing`, deletion is refused entirely and nothing changes — its outcome at the platform is not yet known, and
+deletion never pretends an in-progress remote upload was cancelled. Otherwise, every `pending`/`retrying` job for
+the account gets `publish_jobs.membership_removed_at` set (reusing migration 009's column and its `claim()` guard
+unchanged), so none of them can ever be claimed again, even after a process restart.
+
+**Removed from operational use:** `AccountManager.list_accounts()` excludes deleted accounts by default
+(`include_deleted=True` opts back in, e.g. for an audit view); every account picker in the CLI and TUI goes through
+this method or through `get_active_accounts()` (which filters on `status`, and a deleted account is always
+`'disconnected'`), so a deleted account can never be selected for publishing, scheduling or group membership again.
+`AccountManager.get_account(id)` is deliberately **not** filtered, so a job's account can still be resolved by ID
+for history and audit display after it is deleted.

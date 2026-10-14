@@ -86,3 +86,46 @@ def test_queue_lists_jobs(setup, capsys):
         run_publishing_queue(engine)
     out = capsys.readouterr().out
     assert "PENDING" in out and "tiktok" in out
+
+
+def test_queue_shows_a_fully_removed_batch_as_stopped_not_pending(setup, capsys):
+    """A batch whose only job's account was removed from its group must never look like it is
+    still waiting to run."""
+    db, accounts, video = setup
+    account_id = accounts.list_accounts()[0].id
+    post_id = JobStore(db).create_post(video, "c", [(account_id, {"privacy_level": "SELF_ONLY"})])
+    job_id = JobStore(db).jobs_for_post(post_id)[0].id
+    JobStore(db).remove_membership(job_id)
+    engine = PublisherEngine(db, accounts, publishers={"tiktok": FakePublisher("tiktok")}, probe_media=False)
+
+    with patch("builtins.input", side_effect=["4"]), patch("src.cli.publish_menu.clear_screen"):
+        run_publishing_queue(engine)
+
+    out = capsys.readouterr().out
+    assert f"BATCH #{post_id}  STOPPED" in out
+    assert "Removed: 1" in out
+    assert "removed from group: will not run" in out
+    assert "Pending: 0" in out
+
+
+def test_queue_shows_a_mixed_batch_with_removed_and_active_jobs_accurately(setup, capsys):
+    """One account was removed from its group; the other still has a genuinely open job: the
+    batch must keep reporting its real state, and the removed job must be clearly annotated."""
+    db, accounts, video = setup
+    tt1 = accounts.list_accounts()[0].id
+    tt2 = accounts.create_account(platform="tiktok", platform_account_id="o2", username="tt_user2",
+                                  access_token="TOKEN",
+                                  expires_at=datetime.now(timezone.utc) + timedelta(days=1)).id
+    post_id = JobStore(db).create_post(video, "c", [(tt1, {"privacy_level": "SELF_ONLY"}),
+                                                     (tt2, {"privacy_level": "SELF_ONLY"})])
+    jobs = JobStore(db).jobs_for_post(post_id)
+    JobStore(db).remove_membership(jobs[0].id)  # jobs[1] stays genuinely pending
+    engine = PublisherEngine(db, accounts, publishers={"tiktok": FakePublisher("tiktok")}, probe_media=False)
+
+    with patch("builtins.input", side_effect=["4"]), patch("src.cli.publish_menu.clear_screen"):
+        run_publishing_queue(engine)
+
+    out = capsys.readouterr().out
+    assert f"BATCH #{post_id}  PENDING" in out  # nothing has started yet: still accurately "pending"
+    assert "Removed: 1" in out and "Pending: 1" in out
+    assert "removed from group: will not run" in out

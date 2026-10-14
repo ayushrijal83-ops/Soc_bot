@@ -81,7 +81,7 @@ class TestDatabaseInitialization:
         """Test that schema_version table records migration."""
         with database.session() as session:
             versions = session.query(SchemaVersion).order_by(SchemaVersion.version).all()
-            assert [v.version for v in versions] == [1, 2, 3, 4, 5, 6]
+            assert [v.version for v in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
             assert versions[0].description == "001_initial_schema"
             assert versions[1].description == "002_publishing"
 
@@ -965,5 +965,82 @@ class TestMigrationUpgrade:
             indexes = {r[1] for r in session.execute(text("PRAGMA index_list(publish_jobs)"))}
         assert "options_json" in cols
         assert "uq_jobs_post_account" in indexes
-        assert db.get_applied_migrations() == [1, 2, 3, 4, 5, 6]
+        assert db.get_applied_migrations() == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        db.engine.dispose()
+
+    def test_v9_database_upgrades_to_v10_additively(self, temp_db_path, encryption):
+        """010_account_deletion.sql must upgrade a v9 database (migrations 1-9 already applied,
+        no accounts.deleted_at yet) exactly like every other additive migration here: the new
+        column appears, schema_version records version 10 exactly once in the correct order, and
+        a pre-existing account row survives untouched. Re-running migrate() must be a no-op."""
+        from pathlib import Path
+
+        from sqlalchemy import text
+
+        db = Database(f"sqlite:///{temp_db_path}", encryption=encryption)
+        migrations = Path(__file__).resolve().parents[2] / "src" / "storage" / "migrations"
+        for version in range(1, 10):
+            name = next(p for p in migrations.glob(f"{version:03d}_*.sql"))
+            db.apply_migration(version, name.stem, name.read_text())
+
+        with db.session() as session:
+            cols_before = {r[1] for r in session.execute(text("PRAGMA table_info(accounts)"))}
+        assert "deleted_at" not in cols_before
+        assert db.get_applied_migrations() == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+        # Insert via raw SQL (not the ORM AccountManager, whose mapped Account class always
+        # expects deleted_at): a pre-migration-010 row, like a real pre-upgrade database.
+        # access_token_enc holds a realistic-looking encrypted value, never a real secret.
+        token_enc = encryption.encrypt("dev_access_token").decode()
+        with db.session() as session:
+            session.execute(
+                text("INSERT INTO accounts (platform, platform_account_id, username, "
+                     "access_token_enc, status) VALUES (:p, :pid, :u, :tok, 'active')"),
+                {"p": "tiktok", "pid": "tt_pre010", "u": "pre_migration_user", "tok": token_enc},
+            )
+            session.commit()
+        with db.session() as session:
+            account_id = session.execute(
+                text("SELECT id FROM accounts WHERE platform_account_id = 'tt_pre010'")
+            ).scalar()
+
+        db.migrate()
+
+        with db.session() as session:
+            cols_after = {r[1] for r in session.execute(text("PRAGMA table_info(accounts)"))}
+            indexes_after = {r[1] for r in session.execute(text("PRAGMA index_list(accounts)"))}
+            version_10_count = session.execute(
+                text("SELECT COUNT(*) FROM schema_version WHERE version = 10")
+            ).scalar()
+        assert "deleted_at" in cols_after
+        assert "idx_accounts_deleted" in indexes_after
+        assert version_10_count == 1  # recorded exactly once
+        assert db.get_applied_migrations() == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # exactly once, in order
+
+        with db.session() as session:
+            row = session.execute(
+                text("SELECT id, username, status, deleted_at FROM accounts WHERE id = :id"),
+                {"id": account_id},
+            ).first()
+        assert row.id == account_id
+        assert row.username == "pre_migration_user"
+        assert row.status == "active"
+        assert row.deleted_at is None
+
+        # Re-running the normal startup migration mechanism again must be a no-op: no duplicate
+        # schema_version row, no change to the already-migrated account row.
+        db.migrate()
+        with db.session() as session:
+            version_10_count_again = session.execute(
+                text("SELECT COUNT(*) FROM schema_version WHERE version = 10")
+            ).scalar()
+            row_again = session.execute(
+                text("SELECT username, status, deleted_at FROM accounts WHERE id = :id"),
+                {"id": account_id},
+            ).first()
+        assert version_10_count_again == 1
+        assert db.get_applied_migrations() == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        assert row_again.username == "pre_migration_user"
+        assert row_again.status == "active"
+        assert row_again.deleted_at is None
         db.engine.dispose()

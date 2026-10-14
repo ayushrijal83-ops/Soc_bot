@@ -387,7 +387,8 @@ class PublishingService:
         covers = {Path(j.options["cover_path"]).name for j in jobs if j.options.get("cover_path")}
         counts = Counter(job.status for job in jobs)
         held = post.schedule_status in HELD
-        status = post.schedule_status if held else batch_status([j.status for j in jobs])
+        removed = sum(1 for j in jobs if j.status in ("pending", "retrying") and j.membership_removed_at)
+        status = post.schedule_status if held else batch_status([j.status for j in jobs], removed)
         if held:  # a held post's jobs wait for its schedule: never shown as ordinary "pending"
             for view in views:
                 view.status = post.schedule_status
@@ -470,10 +471,17 @@ class PublishingService:
 
     def queue_counts(self) -> dict[str, int]:
         """Job counts by status. Jobs of held scheduled posts are NOT counted as pending/open; they appear as
-        "scheduled" / "missed" / "cancelled" (number of posts) instead."""
+        "scheduled" / "missed" / "cancelled" (number of posts) instead. A pending/retrying job whose account
+        was removed from its group (membership_removed_at set) is never counted as pending/retrying either --
+        it will never be claimed -- but it is still counted, under "removed", so no job silently disappears
+        from the totals."""
         held = self._held()
-        counts = Counter(job.status for job in self.store.recent_jobs(limit=100_000) if job.post_id not in held)
+        jobs = [job for job in self.store.recent_jobs(limit=100_000) if job.post_id not in held]
+        removed = sum(1 for job in jobs if job.status in ("pending", "retrying") and job.membership_removed_at)
+        counts = Counter(job.status for job in jobs
+                        if not (job.status in ("pending", "retrying") and job.membership_removed_at))
         result = {s: counts.get(s, 0) for s in ("pending", "uploading", "processing", "retrying", "published", "failed")}
+        result["removed"] = removed
         posts = Counter(held.values())
         return result | {s: posts.get(s, 0) for s in HELD}
 

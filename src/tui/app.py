@@ -13,6 +13,7 @@ from src.platforms.base import redact
 from src.services.due_scheduler import DueEvent, DueRunResult, scheduler_poll_seconds
 from src.tui.screens.create_post import CreatePostScreen
 from src.tui.screens.dashboard import DashboardScreen
+from src.tui.screens.groups import GroupsScreen
 from src.tui.screens.lists import (
     AccountsScreen,
     ContentScreen,
@@ -39,6 +40,7 @@ class SocBotApp(App):
         "queue": QueueScreen,
         "history": HistoryScreen,
         "accounts": AccountsScreen,
+        "groups": GroupsScreen,
         "links": LinksScreen,
         "content": ContentScreen,
         "settings": SettingsScreen,
@@ -50,6 +52,7 @@ class SocBotApp(App):
         Binding("q", "navigate('queue')", "Queue"),
         Binding("h", "navigate('history')", "History", show=False),
         Binding("a", "navigate('accounts')", "Accounts", show=False),
+        Binding("g", "navigate('groups')", "Groups", show=False),
         Binding("l", "navigate('links')", "Links", show=False),
         Binding("t", "navigate('content')", "Content", show=False),
         Binding("s", "navigate('settings')", "Settings", show=False),

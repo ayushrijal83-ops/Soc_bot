@@ -9,6 +9,7 @@ The UI never sees tokens, temporary media URLs, tunnels, Instagram containers or
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.accounts.groups import GroupManager
 from src.content.audience import AudienceStore
 from src.services.accounts import (
     AccountService,
@@ -17,6 +18,7 @@ from src.services.accounts import (
     PlatformSummary,
 )
 from src.services.due_scheduler import DueEvent, DueRunResult, DueScheduler
+from src.services.groups import GroupService, GroupView
 from src.services.library import (
     ContentService,
     LinkService,
@@ -41,6 +43,7 @@ from src.services.scheduling import ScheduleView, SchedulingError, SchedulingSer
 class AppServices:
     publishing: PublishingService
     accounts: AccountService
+    groups: GroupService
     links: LinkService
     content: ContentService
     settings: SettingsService
@@ -58,6 +61,7 @@ def build_services(account_manager, auth_manager, engine, intake, env_file: Path
     return AppServices(
         publishing=publishing,
         accounts=AccountService(account_manager, auth_manager, engine),
+        groups=GroupService(GroupManager(engine.store.database), publishing),
         links=LinkService(engine.links),
         content=ContentService(intake),
         settings=SettingsService(env_file, auth_manager),
@@ -85,6 +89,8 @@ __all__ = [
     "DueEvent",
     "DueRunResult",
     "DueScheduler",
+    "GroupService",
+    "GroupView",
     "JobView",
     "LinkService",
     "MediaStatus",

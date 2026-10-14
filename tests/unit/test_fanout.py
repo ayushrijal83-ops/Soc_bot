@@ -510,6 +510,28 @@ def test_batch_status():
     assert batch_status(["published", "failed"]) == "completed_with_failures"
 
 
+def test_batch_status_with_removed_jobs():
+    """removed (migration 009's membership_removed_at): a pending/retrying job that will never be
+    claimed. It must never be reported as "pending"/"running" (nothing will happen), nor as
+    "failed" (nothing actually failed)."""
+    # Every remaining job is removed: nothing ever ran, nothing left to do -- "stopped", not
+    # "pending" (which would wrongly suggest it is still waiting to start).
+    assert batch_status(["pending", "pending"], removed=2) == "stopped"
+    assert batch_status(["retrying", "retrying"], removed=2) == "stopped"
+    # One removed, one genuinely still waiting (nothing has started yet): still "pending".
+    assert batch_status(["pending", "pending"], removed=1) == "pending"
+    # One removed, one actually in flight: real progress is happening -- "running".
+    assert batch_status(["pending", "uploading"], removed=1) == "running"
+    # One removed, one already published: nothing left to do, one succeeded -- "completed".
+    assert batch_status(["pending", "published"], removed=1) == "completed"
+    # One removed, one failed, nothing succeeded -- "failed" (the removed one is not a failure).
+    assert batch_status(["pending", "failed"], removed=1) == "failed"
+    # One removed, one published, one failed -- a genuine mix -- "completed_with_failures".
+    assert batch_status(["pending", "published", "failed"], removed=1) == "completed_with_failures"
+    # removed=0 (the default) is byte-identical to the original behavior.
+    assert batch_status(["pending", "pending"]) == "pending"
+
+
 # ---------------------------------------------------------------------------------------------
 # K. Planning / dry-run: nothing starts, nothing is created
 # ---------------------------------------------------------------------------------------------

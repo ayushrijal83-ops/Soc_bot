@@ -73,7 +73,7 @@ def test_fresh_database_has_schedule_columns(env):
     db = env[0]
     assert {"scheduled_at", "schedule_status", "schedule_json"} <= columns(db)
     assert "idx_posts_schedule" in indexes(db)
-    assert db.get_applied_migrations()[-1] == 6
+    assert db.get_applied_migrations()[-1] == 10
     post_id = create(env)
     with db.session() as session, pytest.raises(Exception, match="CHECK"):
         session.execute(text("UPDATE posts SET schedule_status = 'bogus' WHERE id = :id"), {"id": post_id})
@@ -93,7 +93,7 @@ def test_upgrade_keeps_existing_posts_unscheduled(tmp_path, upto):
     db.create_all()            # what main.py does on every start
     db.migrate(verbose=False)
     db.migrate(verbose=False)  # second run: nothing left to apply
-    assert db.get_applied_migrations() == [1, 2, 3, 4, 5, 6]
+    assert db.get_applied_migrations() == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     assert {"scheduled_at", "schedule_status", "schedule_json"} <= columns(db) and "idx_posts_schedule" in indexes(db)
     with db.session() as session:
         old = session.get(Post, 1)

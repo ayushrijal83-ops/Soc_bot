@@ -336,3 +336,34 @@ def test_publish_batch_refuses_held_post_before_the_engine(services, sched, monk
     with pytest.raises(ValueError, match="release it"):
         services.publishing.publish_batch(view.post_id)
     assert sched.view(view.post_id).job_counts == {"pending": 2} and services.fake.calls == []
+
+
+# --- batch_status field: must not imply a removed job is still waiting to run ------------------
+
+def test_view_batch_status_is_stopped_when_every_job_was_removed(services, sched):
+    """A released post whose every job's account was removed from its group: nothing was ever
+    claimed, nothing will ever run -- the secondary batch_status field must say "stopped", not
+    "pending" (which would wrongly suggest it is still waiting to start)."""
+    view = sched.schedule(plan(services), datetime(2026, 10, 15, 19, 30), zone="UTC")
+    released = sched.publish_now(view.post_id)
+    for jid in job_ids(services, released.post_id):
+        services.engine.store.remove_membership(jid)
+
+    final = sched.view(released.post_id)
+
+    assert final.batch_status == "stopped"
+    assert final.status == "released"  # the schedule's own lifecycle status is a separate field
+
+
+def test_view_batch_status_still_reports_running_with_one_genuinely_active_job(services, sched):
+    """One job's account was removed; the other is actually in flight (claimed): the batch must
+    keep reporting its real state, not "stopped"."""
+    view = sched.schedule(plan(services), datetime(2026, 10, 15, 19, 30), zone="UTC")
+    released = sched.publish_now(view.post_id)
+    ids = job_ids(services, released.post_id)
+    services.engine.store.remove_membership(ids[0])
+    services.engine.store.claim(ids[1])
+
+    final = sched.view(released.post_id)
+
+    assert final.batch_status == "running"

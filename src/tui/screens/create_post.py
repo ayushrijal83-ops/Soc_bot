@@ -35,6 +35,8 @@ from src.tui.widgets import ConfirmModal, FilePickerModal, Page
 
 STEPS = ["Media", "Caption", "Destinations", "Options", "Review"]
 VIDEO_EXT = (".mp4", ".mov", ".webm")
+GROUP_ROW_OFFSET = 1_000_000_000  # pseudo-id space for group rows in the destinations SelectionList,
+                                   # kept well above any real account id so the two never collide
 
 
 class CreatePostScreen(Page):
@@ -322,7 +324,9 @@ class CreatePostScreen(Page):
     def toggle_platform(self, platform: str) -> None:
         if platform in self.platforms:
             self.platforms.discard(platform)
-            self.selected = {a for a in self.selected if self._platform_of(a) != platform}
+            # Grouped accounts are only added/removed through their group row, never by the platform
+            # cards (which only browse the ungrouped list), so they are left untouched here.
+            self.selected = {a for a in self.selected if self._platform_of(a) != platform or self._is_grouped(a)}
         else:
             self.platforms.add(platform)
         self.refresh_platform_cards()
@@ -331,23 +335,63 @@ class CreatePostScreen(Page):
     def _platform_of(self, account_id: int) -> str:
         return next((a.platform for a in self.app.services.accounts.list() if a.id == account_id), "")
 
+    def _is_grouped(self, account_id: int) -> bool:
+        return next((a.group_id is not None for a in self.app.services.accounts.list() if a.id == account_id), False)
+
     def refresh_accounts(self) -> None:
+        """Destinations list: ungrouped accounts (filtered by the chosen platforms) plus one row per
+        non-empty group (shown regardless of the platform cards, since a group may span platforms).
+        An account that belongs to a group never appears as its own row -- the group row is the only
+        way to select it, so selecting/deselecting a group always acts on every member at once."""
         lst = self.query_one("#accounts", SelectionList)
         needle = self.query_one("#search", Input).value.strip().lower()
-        views = [a for a in self.app.services.accounts.list() if a.platform in self.platforms and a.status != "disconnected"]
-        self._shown_accounts = [a for a in views if not needle or needle in a.label.lower() or needle in a.platform]
+        all_accounts = self.app.services.accounts.list()
+        ungrouped = [a for a in all_accounts if a.platform in self.platforms and a.status != "disconnected"
+                    and a.group_id is None]
+        self._shown_accounts = [a for a in ungrouped if not needle or needle in a.label.lower() or needle in a.platform]
+
+        self._group_members = {}
+        group_rows = []
+        for g in self.app.services.groups.list():
+            if needle and needle not in g.name.lower():
+                continue
+            members = [a for a in self.app.services.groups.accounts_in(g.id) if a.status != "disconnected"]
+            if not members:
+                continue
+            pseudo_id = GROUP_ROW_OFFSET + g.id
+            self._group_members[pseudo_id] = [a.id for a in members]
+            platforms_in_group = " ".join(platform_markup(p) for p in sorted({a.platform for a in members}))
+            checked = set(self._group_members[pseudo_id]) <= self.selected
+            group_rows.append(Selection(f"👥  [b]{g.name}[/]  ({len(members)} account(s)) {platforms_in_group}",
+                                        pseudo_id, checked))
+
         with lst.prevent(SelectionList.SelectedChanged):
             lst.clear_options()
+            lst.add_options(group_rows)
             lst.add_options([Selection(f"{platform_markup(a.platform)}  @{a.label}   {status_markup(a.status, a.status_text)}",
                                        a.id, a.id in self.selected) for a in self._shown_accounts])
-        total = len(views)
-        self.query_one("#selected-count", Static).update(
-            f"Selected: [b]{len(self.selected)}[/] / {total}" if self.platforms else "Choose one or more platforms above.")
+        self._prev_raw_selected = set(lst.selected)
+        total = len(self._shown_accounts) + sum(len(m) for m in self._group_members.values())
+        if self.platforms or self._group_members:
+            self.query_one("#selected-count", Static).update(f"Selected: [b]{len(self.selected)}[/] / {total}")
+        else:
+            self.query_one("#selected-count", Static).update("Choose one or more platforms above, or create a group.")
 
     def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
+        raw = set(event.selection_list.selected)
+        prev = getattr(self, "_prev_raw_selected", set())
+        group_members = getattr(self, "_group_members", {})
+        for pseudo_id in (raw - prev) & group_members.keys():       # a group row was just checked
+            self.selected |= set(group_members[pseudo_id])
+        for pseudo_id in (prev - raw) & group_members.keys():       # a group row was just unchecked
+            self.selected -= set(group_members[pseudo_id])
+        self._prev_raw_selected = raw
+
         visible = {a.id for a in getattr(self, "_shown_accounts", [])}
-        self.selected = (self.selected - visible) | set(event.selection_list.selected)
-        total = len([a for a in self.app.services.accounts.list() if a.platform in self.platforms and a.status != "disconnected"])
+        plain_raw = {r for r in raw if r < GROUP_ROW_OFFSET}
+        self.selected = (self.selected - visible) | plain_raw
+        total = (len(getattr(self, "_shown_accounts", []))
+                + sum(len(m) for m in group_members.values()))
         self.query_one("#selected-count", Static).update(f"Selected: [b]{len(self.selected)}[/] / {total}")
 
     def action_search(self) -> None:

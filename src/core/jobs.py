@@ -67,6 +67,7 @@ class JobInfo:
     cover_status: str | None = None
     cover_error: str | None = None
     auto_retry_used: bool = False
+    membership_removed_at: datetime | None = None
 
 
 def _now() -> datetime:
@@ -174,6 +175,19 @@ class JobStore:
             )
             return [self._info(job, account) for job, account in rows]
 
+    def jobs_for_account(self, account_id: int) -> list[JobInfo]:
+        """Every job (any post, any status) for one account. Used to decide whether an account is
+        safe to delete and to stop its not-yet-started jobs when it is."""
+        with self.database.session() as session:
+            rows = (
+                session.query(PublishJob, Account)
+                .join(Account, PublishJob.account_id == Account.id)
+                .filter(PublishJob.account_id == account_id)
+                .order_by(PublishJob.id)
+                .all()
+            )
+            return [self._info(job, account) for job, account in rows]
+
     def get_job(self, job_id: int) -> JobInfo:
         with self.database.session() as session:
             row = (
@@ -198,11 +212,14 @@ class JobStore:
             return [self._info(job, account) for job, account in rows]
 
     def open_post_ids(self) -> list[int]:
-        """Posts with at least one job that is not published or failed (held scheduled posts excluded)."""
+        """Posts with at least one job that is not published or failed (held scheduled posts, and
+        jobs whose account was removed from its group, excluded: resume/--run-due never needs to
+        keep retrying a job that can no longer be claimed)."""
         with self.database.session() as session:
             rows = (
                 session.query(PublishJob.post_id)
-                .filter(PublishJob.status.in_(("pending", "retrying", "uploading", "processing")), _not_held())
+                .filter(PublishJob.status.in_(("pending", "retrying", "uploading", "processing")),
+                        PublishJob.membership_removed_at.is_(None), _not_held())
                 .distinct()
                 .order_by(PublishJob.post_id)
                 .all()
@@ -280,6 +297,7 @@ class JobStore:
             cover_status=job.cover_status,
             cover_error=job.cover_error,
             auto_retry_used=bool(job.auto_retry_used),
+            membership_removed_at=job.membership_removed_at,
         )
 
     # --- state machine -------------------------------------------------------
@@ -334,13 +352,47 @@ class JobStore:
             session.commit()
 
     def claim(self, job_id: int) -> bool:
-        """Atomically move a pending/retrying job to uploading. False if someone else owns it or its post
-        is held by a schedule (checked in the same UPDATE)."""
+        """Atomically move a pending/retrying job to uploading. False if someone else owns it, its
+        post is held by a schedule, or its account was removed from the group (checked in the
+        same UPDATE)."""
         with self.database.session() as session:
             result = session.execute(
                 update(PublishJob)
-                .where(PublishJob.id == job_id, PublishJob.status.in_(("pending", "retrying")), _not_held())
+                .where(PublishJob.id == job_id, PublishJob.status.in_(("pending", "retrying")),
+                       PublishJob.membership_removed_at.is_(None), _not_held())
                 .values(status="uploading", error_message=None)
+            )
+            session.commit()
+        return result.rowcount == 1
+
+    def remove_membership(self, job_id: int) -> bool:
+        """Stop a not-yet-started job (pending/retrying) because its account was removed from its
+        group, the group was deleted, or the account itself was deleted (migration 010 reuses
+        this same marker: a job that will never be claimed again, for any of those reasons).
+        Atomic conditional UPDATE: False if the job was already claimed by a worker (uploading/
+        processing) or is already terminal/removed -- its outcome is then left alone, never
+        guessed at.
+        """
+        with self.database.session() as session:
+            result = session.execute(
+                update(PublishJob)
+                .where(PublishJob.id == job_id, PublishJob.status.in_(("pending", "retrying")),
+                       PublishJob.membership_removed_at.is_(None))
+                .values(membership_removed_at=_now())
+            )
+            session.commit()
+        return result.rowcount == 1
+
+    def restore_membership(self, job_id: int) -> bool:
+        """Undo remove_membership: the account was re-added to the same group before the job ever
+        ran. False if the job was never removed (nothing to restore). Never creates a new job row:
+        the existing unique index on (post_id, account_id) already guarantees this is the same
+        job, never a duplicate."""
+        with self.database.session() as session:
+            result = session.execute(
+                update(PublishJob)
+                .where(PublishJob.id == job_id, PublishJob.membership_removed_at.is_not(None))
+                .values(membership_removed_at=None)
             )
             session.commit()
         return result.rowcount == 1

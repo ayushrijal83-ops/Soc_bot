@@ -10,6 +10,7 @@ from src.cli.display import (
     print_menu,
     print_not_implemented,
 )
+from src.cli.group_menu import run_group_menu
 from src.cli.links_menu import run_published_links
 from src.cli.prompts import prompt_menu_selection
 from src.cli.publish_menu import run_create_post, run_publishing_queue
@@ -27,6 +28,7 @@ class MenuHandler:
         self.menu_options = [
             "Create Post",
             "Connected Accounts",
+            "Account Groups",
             "Publishing Queue",
             "History",
             "Content Inbox",
@@ -50,12 +52,13 @@ class MenuHandler:
         handlers: dict[int, Callable[[], bool]] = {
             1: self.handle_create_post,
             2: self.handle_connected_accounts,
-            3: self.handle_publishing_queue,
-            4: self.handle_history,
-            5: self.handle_content_inbox,
-            6: self.handle_published_links,
-            7: self.handle_settings,
-            8: self.handle_exit,
+            3: self.handle_account_groups,
+            4: self.handle_publishing_queue,
+            5: self.handle_history,
+            6: self.handle_content_inbox,
+            7: self.handle_published_links,
+            8: self.handle_settings,
+            9: self.handle_exit,
         }
 
         handler = handlers.get(choice)
@@ -78,7 +81,22 @@ class MenuHandler:
             print_not_implemented("Account management (AccountManager not initialized)")
             self._pause()
             return True
-        run_account_menu(self.account_manager, self.auth_manager)
+        run_account_menu(self.account_manager, self.auth_manager, self.engine)
+        return True
+
+    def handle_account_groups(self) -> bool:
+        """Handle Account Groups option: group management and group publishing."""
+        if self.account_manager is None or self.engine is None:
+            print_not_implemented("Account Groups")
+            self._pause()
+            return True
+        from src.accounts.groups import GroupManager
+        from src.services.groups import GroupService
+        from src.services.publishing import PublishingService
+
+        publishing = PublishingService(self.engine, self.account_manager)
+        group_service = GroupService(GroupManager(self.engine.store.database), publishing)
+        run_group_menu(group_service, self.account_manager)
         return True
 
     def handle_publishing_queue(self) -> bool:

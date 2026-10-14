@@ -357,10 +357,16 @@ class SchedulingService:
         local = scheduled_at.astimezone(ZoneInfo(zone)) if scheduled_at and zone else None
         overlap, fold = bool(data.get("dst_overlap")), int(data.get("fold", 0))
         note = (OVERLAP_NOTE if fold == 0 else SECOND_OCCURRENCE_NOTE) if overlap else None
+        # ``status`` (above) is the schedule's own lifecycle state (scheduled/released/missed/
+        # cancelled) and is never touched here. ``batch_status`` is the separate, secondary field
+        # describing the underlying publish batch; a pending/retrying job whose account was
+        # removed from its group must not keep it looking "pending"/"running" forever.
+        removed = sum(1 for job in jobs if job.status in ("pending", "retrying") and job.membership_removed_at)
         return ScheduleView(post_id, status, scheduled_at, local, zone, data.get("zone_source"), data.get("source"),
                             fold, overlap, note,
                             data.get("suggestion"), tuple(data.get("history", [])), len(jobs), counts,
-                            batch_status([job.status for job in jobs]), status == "released", video, audience)
+                            batch_status([job.status for job in jobs], removed), status == "released", video,
+                            audience)
 
     def next_scheduled(self) -> ScheduleView | None:
         """The soonest post still waiting (status scheduled), or None. One query + one view."""

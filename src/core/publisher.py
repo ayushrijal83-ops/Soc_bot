@@ -82,15 +82,30 @@ class PostResult:
         return batch_status([j.status for j in self.jobs])
 
 
-def batch_status(statuses: list[str]) -> str:
-    """Aggregate of a post's jobs (the batch is only a coordinator; jobs keep their own states)."""
-    if not statuses or all(s == "pending" for s in statuses):
+def batch_status(statuses: list[str], removed: int = 0) -> str:
+    """Aggregate of a post's jobs (the batch is only a coordinator; jobs keep their own states).
+
+    ``removed``: how many of ``statuses`` are pending/retrying jobs whose account was removed
+    from its group (migration 009's ``membership_removed_at``). They will never be claimed, so
+    they no longer count as open/running work -- but they were never published or failed either.
+    A batch made ENTIRELY of such jobs (nothing ever claimed, nothing published, nothing failed)
+    is "stopped", not "pending" (which would wrongly imply it is still waiting to start) or
+    "running" (nothing is actually in progress). ``removed=0`` (the default) is the original,
+    unchanged behavior.
+    """
+    if not statuses:
         return "pending"
-    if any(s in ("pending", "retrying", "uploading", "processing") for s in statuses):
+    in_flight = sum(1 for s in statuses if s in ("uploading", "processing"))
+    waiting = statuses.count("pending") + statuses.count("retrying") - removed
+    published = statuses.count("published")
+    failed = statuses.count("failed")
+    if in_flight == 0 and published == 0 and failed == 0:
+        return "stopped" if waiting <= 0 else "pending"
+    if in_flight > 0 or waiting > 0:
         return "running"
-    if all(s == "published" for s in statuses):
+    if failed == 0:
         return "completed"
-    if all(s == "failed" for s in statuses):
+    if published == 0:
         return "failed"
     return "completed_with_failures"
 

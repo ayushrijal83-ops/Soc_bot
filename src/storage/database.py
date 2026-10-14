@@ -53,13 +53,23 @@ class Account(Base):
     expires_at = Column(DateTime, nullable=True)
     status = Column(String(20), nullable=False, default="active")
     meta_json = Column(Text, nullable=True)
+    # Content-niche group (migration 007). NULL = unassigned; an account belongs to zero or one
+    # group. Deleting the group sets this back to NULL (accounts stay connected either way).
+    group_id = Column(Integer, ForeignKey("account_groups.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    # Permanent deletion, a tombstone (migration 010). NULL = normal. Set once the account is
+    # deleted: never the row itself (publish_jobs.account_id cascades on a real delete, which
+    # would silently destroy history). access_token_enc/refresh_token_enc are overwritten with a
+    # placeholder at the same time, never left holding the real credentials.
+    deleted_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("platform", "platform_account_id", name="uq_accounts_platform_id"),
         Index("idx_accounts_platform", "platform"),
         Index("idx_accounts_status", "status"),
+        Index("idx_accounts_group", "group_id"),
+        Index("idx_accounts_deleted", "deleted_at"),
         CheckConstraint("platform IN ('instagram','tiktok','youtube')", name="ck_accounts_platform"),
         CheckConstraint("status IN ('active','expired','revoked','disconnected')", name="ck_accounts_status"),
     )
@@ -101,6 +111,21 @@ class Account(Base):
         if self.refresh_token_enc:
             return encryption.decrypt(self.refresh_token_enc.encode())
         return None
+
+
+class AccountGroup(Base):
+    """Named group of accounts for a content niche (e.g. AI Anime, Motivation). Membership is a
+    single nullable column on ``accounts`` (zero or one group), not a join table (migration 007)."""
+
+    __tablename__ = "account_groups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (Index("uq_account_groups_name", "name", unique=True),)
 
 
 class Video(Base):
@@ -146,11 +171,18 @@ class Post(Base):
     scheduled_at = Column(DateTime, nullable=True)  # naive UTC
     schedule_status = Column(String(20), nullable=True)
     schedule_json = Column(Text, nullable=True)
+    # Group publishing (migration 008). origin_group_id: SET NULL if the group is later deleted.
+    # origin_group_name: immutable snapshot taken when the batch was created, so the origin stays
+    # visible even after the group is renamed or deleted. NULL in both = an ordinary post (ties to
+    # no group), exactly like posts created before this migration.
+    origin_group_id = Column(Integer, ForeignKey("account_groups.id", ondelete="SET NULL"), nullable=True)
+    origin_group_name = Column(String(100), nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("idx_posts_video", "video_id"),
         Index("idx_posts_schedule", "schedule_status", "scheduled_at"),
+        Index("idx_posts_origin_group", "origin_group_id"),
         CheckConstraint("schedule_status IN ('scheduled','released','missed','cancelled')",
                         name="ck_posts_schedule_status"),
     )
@@ -183,6 +215,12 @@ class PublishJob(Base):
     # 1 once this job's single automatic batch retry started (or a manual retry took over) (migration 004)
     auto_retry_used = Column(Integer, nullable=False, default=0)
     next_retry_at = Column(DateTime, nullable=True)
+    # Set (CAS, pending/retrying only) when the account was removed from its group, or the group
+    # was deleted, while this batch was still active (migration 009). NULL = normal. claim() and
+    # open_post_ids() both exclude a job once this is set, so it is never started; re-adding the
+    # account clears it back to NULL. This is deliberately NOT a new ``status`` value: the
+    # existing CHECK constraint on that column cannot be extended without rebuilding the table.
+    membership_removed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     published_at = Column(DateTime, nullable=True)
 

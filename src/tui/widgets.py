@@ -51,6 +51,7 @@ NAV = [
     ("queue", "Q", "Queue"),
     ("history", "H", "History"),
     ("accounts", "A", "Accounts"),
+    ("groups", "G", "Account Groups"),
     ("links", "L", "Published Links"),
     ("content", "T", "Content"),
     ("settings", "S", "Settings"),
@@ -178,7 +179,7 @@ class HelpModal(ModalScreen[None]):
 
     SHORTCUTS: ClassVar[list] = [
         ("D", "Dashboard"), ("C", "Create Post"), ("Q", "Queue"), ("H", "History"), ("A", "Accounts"),
-        ("L", "Published Links"), ("T", "Content"), ("S", "Settings"), ("X", "Exit"),
+        ("G", "Account Groups"), ("L", "Published Links"), ("T", "Content"), ("S", "Settings"), ("X", "Exit"),
         ("/", "Search (lists)"), ("Space", "Toggle selection"), ("Enter", "Open / confirm"),
         ("Esc", "Back / close"), ("Ctrl+P", "Command palette"), ("?", "This help"), ("Ctrl+Q", "Quit"),
     ]

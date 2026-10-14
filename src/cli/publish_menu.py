@@ -427,13 +427,25 @@ def print_batches(engine: PublisherEngine, jobs: list) -> None:
             name = "?"
         covers = {Path(j.options["cover_path"]).name for j in post_jobs if j.options.get("cover_path")}
         statuses = [j.status for j in post_jobs]
-        running = sum(s in ("uploading", "processing", "retrying") for s in statuses)
-        print(f"\nBATCH #{post_id}  {batch_status(statuses).upper()}")
+        # A pending/retrying job whose account was removed from its group will never be claimed:
+        # it must not be counted as still "Running"/"Pending" (it is never going to execute), nor
+        # let the batch's own status look perpetually pending/running.
+        is_removed = [j.status in ("pending", "retrying") and bool(j.membership_removed_at) for j in post_jobs]
+        removed = sum(is_removed)
+        active_statuses = [s for s, rm in zip(statuses, is_removed) if not rm]
+        running = sum(s in ("uploading", "processing", "retrying") for s in active_statuses)
+        pending = active_statuses.count("pending")
+        print(f"\nBATCH #{post_id}  {batch_status(statuses, removed).upper()}")
         print(f"  Video: {name}   Cover: {', '.join(sorted(covers)) or 'none'}   Accounts: {len(post_jobs)}")
-        print(f"  Published: {statuses.count('published')}   Running: {running}   "
-              f"Pending: {statuses.count('pending')}   Failed: {statuses.count('failed')}")
+        summary = (f"  Published: {statuses.count('published')}   Running: {running}   "
+                  f"Pending: {pending}   Failed: {statuses.count('failed')}")
+        if removed:
+            summary += f"   Removed: {removed}"
+        print(summary)
         for j in post_jobs:
             line = f"  {MARKS.get(j.status, ' ')} job {j.id:<5} {j.platform:<10} {j.account_label:<24} {j.status.upper()}"
-            if j.status == "failed" and j.error_message:
+            if j.status in ("pending", "retrying") and j.membership_removed_at:
+                line += "  (removed from group: will not run)"
+            elif j.status == "failed" and j.error_message:
                 line += f"  ({redact(j.error_message)[:80]})"
             print(line)

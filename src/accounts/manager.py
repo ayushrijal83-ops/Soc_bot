@@ -1,7 +1,7 @@
 """Account Manager for managing connected social media accounts."""
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.storage.database import Account, Database
 from src.storage.tokens import TokenEncryption, TokenEncryptionError
@@ -25,6 +25,16 @@ class InvalidPlatformError(AccountError):
 
 class InvalidStatusError(AccountError):
     """Raised when an invalid status is specified."""
+
+
+class AccountAlreadyDeletedError(AccountError):
+    """Raised when attempting to delete an account that was already permanently deleted."""
+
+
+# Encrypted in place of the real credentials once an account is deleted. access_token_enc is
+# NOT NULL, so it is overwritten rather than cleared; TokenEncryption also refuses to encrypt an
+# empty string, so this is a non-empty, unmistakably-not-a-real-token sentinel.
+DELETED_TOKEN_PLACEHOLDER = "deleted-account-credentials-revoked"
 
 
 class AccountManager:
@@ -187,13 +197,17 @@ class AccountManager:
         self,
         platform: str | None = None,
         status: str | None = None,
+        include_deleted: bool = False,
     ) -> list[Account]:
         """
-        List accounts with optional filtering.
+        List accounts with optional filtering. Deleted accounts (removed from operational use)
+        are excluded by default: they still exist as rows (publish_jobs/history reference them),
+        but no longer appear in ordinary account pickers.
 
         Args:
             platform: Filter by platform (instagram, tiktok, youtube).
             status: Filter by status (active, expired, revoked, disconnected).
+            include_deleted: Include deleted accounts too (e.g. an admin/audit view).
 
         Returns:
             List of Account instances.
@@ -209,6 +223,8 @@ class AccountManager:
                 query = query.filter(Account.platform == platform)
             if status:
                 query = query.filter(Account.status == status)
+            if not include_deleted:
+                query = query.filter(Account.deleted_at.is_(None))
             return query.order_by(Account.created_at.desc()).all()
 
     def update_account(
@@ -305,8 +321,59 @@ class AccountManager:
 
         Raises:
             AccountNotFoundError: If account does not exist.
+            AccountAlreadyDeletedError: If the account was permanently deleted (its credentials
+                are gone; re-enabling it is not possible -- reconnect it fresh instead).
         """
+        with self._session() as session:
+            account = session.query(Account).filter(Account.id == account_id).first()
+            if not account:
+                raise AccountNotFoundError(f"Account with ID {account_id} not found")
+            if account.deleted_at is not None:
+                raise AccountAlreadyDeletedError(f"Account with ID {account_id} was deleted and cannot be re-enabled")
         return self.update_account(account_id, status="active")
+
+    def delete_account(self, account_id: int) -> Account:
+        """
+        Permanently delete an account: a tombstone, not a row delete.
+
+        Destroys the stored credentials (overwritten with a non-secret placeholder; access_token_enc
+        is NOT NULL so it is never left blank), unassigns the account from its group, marks it
+        'disconnected' and sets deleted_at. The account row, its publish_jobs, publish_attempts and
+        any saved published-link records are never touched here: history and audit integrity are
+        preserved (publish_jobs.account_id has ON DELETE CASCADE, so an actual row delete would
+        silently destroy them -- this method never issues one).
+
+        This method does not check whether it is SAFE to delete (e.g. an in-progress external
+        upload) and does not stop this account's open jobs -- that cross-cutting orchestration
+        belongs to the caller (AccountService.delete), which has visibility into publish_jobs.
+
+        Args:
+            account_id: Internal account ID.
+
+        Returns:
+            The updated (now-deleted) Account instance.
+
+        Raises:
+            AccountNotFoundError: If the account does not exist.
+            AccountAlreadyDeletedError: If the account was already deleted.
+        """
+        with self._session() as session:
+            account = session.query(Account).filter(Account.id == account_id).first()
+            if not account:
+                raise AccountNotFoundError(f"Account with ID {account_id} not found")
+            if account.deleted_at is not None:
+                raise AccountAlreadyDeletedError(f"Account with ID {account_id} is already deleted")
+            try:
+                account.set_access_token(DELETED_TOKEN_PLACEHOLDER, self._encryption)
+            except TokenEncryptionError as e:
+                raise AccountError(f"Token scrub failed: {e}") from e
+            account.refresh_token_enc = None
+            account.status = "disconnected"
+            account.group_id = None
+            account.deleted_at = datetime.now(timezone.utc)
+            account.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return account
 
     def get_active_accounts(self, platform: str | None = None) -> list[Account]:
         """

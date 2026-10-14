@@ -12,10 +12,11 @@ class TestMenuHandler:
         """Test MenuHandler initialization."""
         handler = MenuHandler()
         assert handler.running is True
-        assert len(handler.menu_options) == 8
+        assert len(handler.menu_options) == 9
         assert handler.menu_options == [
             "Create Post",
             "Connected Accounts",
+            "Account Groups",
             "Publishing Queue",
             "History",
             "Content Inbox",
@@ -31,9 +32,10 @@ class TestMenuHandler:
         captured = capsys.readouterr()
         assert "SOCIAL PUBLISHER v1" in captured.out
         assert "1. Create Post" in captured.out
-        assert "5. Content Inbox" in captured.out
-        assert "6. Published Links" in captured.out
-        assert "8. Exit" in captured.out
+        assert "3. Account Groups" in captured.out
+        assert "6. Content Inbox" in captured.out
+        assert "7. Published Links" in captured.out
+        assert "9. Exit" in captured.out
 
     def test_handle_choice_create_post(self):
         """Test handle_choice for Create Post."""
@@ -52,11 +54,19 @@ class TestMenuHandler:
         # AccountManager not initialized, should show appropriate message
         mock_print.assert_called_once_with("Account management (AccountManager not initialized)")
 
+    def test_handle_choice_account_groups(self):
+        """Account Groups is option 3 (falls back to not-implemented without an engine)."""
+        handler = MenuHandler()
+        with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
+            result = handler.handle_choice(3)
+        assert result is True
+        mock_print.assert_called_once_with("Account Groups")
+
     def test_handle_choice_publishing_queue(self):
         """Test handle_choice for Publishing Queue."""
         handler = MenuHandler()
         with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
-            result = handler.handle_choice(3)
+            result = handler.handle_choice(4)
         assert result is True
         mock_print.assert_called_once_with("Publishing queue")
 
@@ -64,7 +74,7 @@ class TestMenuHandler:
         """Test handle_choice for History."""
         handler = MenuHandler()
         with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
-            result = handler.handle_choice(4)
+            result = handler.handle_choice(5)
         assert result is True
         mock_print.assert_called_once_with("Publishing history")
 
@@ -72,23 +82,23 @@ class TestMenuHandler:
         """Test handle_choice for Settings."""
         handler = MenuHandler()
         with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
-            result = handler.handle_choice(7)
+            result = handler.handle_choice(8)
         assert result is True
         mock_print.assert_called_once_with("Settings")
 
     def test_handle_choice_published_links(self):
-        """Published Links is option 6 (falls back to not-implemented without an engine)."""
+        """Published Links is option 7 (falls back to not-implemented without an engine)."""
         handler = MenuHandler()
         with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
-            result = handler.handle_choice(6)
+            result = handler.handle_choice(7)
         assert result is True
         mock_print.assert_called_once_with("Published Links")
 
     def test_handle_choice_content_inbox(self):
-        """Content Inbox is option 5 (falls back to not-implemented without an intake)."""
+        """Content Inbox is option 6 (falls back to not-implemented without an intake)."""
         handler = MenuHandler()
         with patch('src.cli.menu.print_not_implemented') as mock_print, patch('src.cli.menu.MenuHandler._pause'):
-            result = handler.handle_choice(5)
+            result = handler.handle_choice(6)
         assert result is True
         mock_print.assert_called_once_with("Content Inbox")
 
@@ -103,7 +113,7 @@ class TestMenuHandler:
         """Test handle_choice for Exit."""
         handler = MenuHandler()
         with patch('src.cli.menu.print_header') as mock_print:
-            result = handler.handle_choice(8)
+            result = handler.handle_choice(9)
         assert result is False
         mock_print.assert_called_once_with("Goodbye!")
 
@@ -116,16 +126,16 @@ class TestMenuHandler:
     def test_run_exits_on_exit_choice(self):
         """Test run loop exits on exit choice."""
         handler = MenuHandler()
-        # Simulate user selecting Exit (7)
-        with patch('src.cli.menu.prompt_menu_selection', side_effect=[8]), patch('src.cli.menu.MenuHandler._pause'):
+        # Simulate user selecting Exit (9)
+        with patch('src.cli.menu.prompt_menu_selection', side_effect=[9]), patch('src.cli.menu.MenuHandler._pause'):
             handler.run()
         assert handler.running is False
 
     def test_run_continues_on_other_choices(self):
         """Test run loop continues on other choices."""
         handler = MenuHandler()
-        # Simulate user selecting Create Post (1) then Exit (7)
-        with patch('src.cli.menu.prompt_menu_selection', side_effect=[1, 8]), patch('src.cli.menu.MenuHandler._pause'):
+        # Simulate user selecting Create Post (1) then Exit (9)
+        with patch('src.cli.menu.prompt_menu_selection', side_effect=[1, 9]), patch('src.cli.menu.MenuHandler._pause'):
             handler.run()
         assert handler.running is False
 

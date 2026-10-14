@@ -32,9 +32,10 @@ from src.cli.prompts import (
 class AccountMenuHandler:
     """Handles account management submenu navigation and actions."""
 
-    def __init__(self, account_manager: AccountManager, auth_manager=None):
+    def __init__(self, account_manager: AccountManager, auth_manager=None, engine=None):
         self.account_manager = account_manager
         self.auth_manager = auth_manager
+        self.engine = engine  # needed only to check/stop this account's jobs before deletion
         self.running = True
         self.menu_options = [
             "List Accounts",
@@ -46,6 +47,7 @@ class AccountMenuHandler:
             "Update Account",
             "Disconnect Account",
             "Enable Account",
+            "Delete Account",
             "Back to Main Menu",
         ]
 
@@ -71,7 +73,8 @@ class AccountMenuHandler:
             7: self.handle_update_account,
             8: self.handle_disconnect_account,
             9: self.handle_enable_account,
-            10: self.handle_back,
+            10: self.handle_delete_account,
+            11: self.handle_back,
         }
 
         handler = handlers.get(choice)
@@ -400,6 +403,58 @@ class AccountMenuHandler:
             self._pause()
         return True
 
+    def handle_delete_account(self) -> bool:
+        """Handle Delete Account option: permanent. Credentials are destroyed; publishing
+        history, jobs and attempts are preserved. Separate from Disconnect (that is reversible)."""
+        clear_screen()
+        print_header("DELETE ACCOUNT")
+        print_warning("This permanently removes the account from operational use and destroys its")
+        print_warning("saved credentials. This cannot be undone. Publishing history is preserved.")
+        print_info("To temporarily disable it instead (reversible), use Disconnect Account.")
+
+        account_id = prompt_int("Account ID", min_val=1)
+        if account_id is None:
+            return True
+
+        try:
+            account = self.account_manager.get_account(account_id)
+        except AccountNotFoundError:
+            print_error(f"Account with ID {account_id} not found")
+            self._pause()
+            return True
+
+        if account.deleted_at is not None:
+            print_error("This account was already deleted.")
+            self._pause()
+            return True
+
+        print_info(f"Platform: {account.platform.title()}")
+        print_info(f"Account:  @{account.username}")
+        print_info(f"Status:   {account.status.title()}")
+
+        if not confirm("Permanently delete this account? This cannot be undone.", default=False):
+            print_info("Cancelled. Nothing was changed.")
+            self._pause()
+            return True
+
+        if self.engine is None:
+            print_error("Account deletion is not available here (no publishing engine loaded).")
+            self._pause()
+            return True
+
+        from src.services.accounts import AccountService
+
+        service = AccountService(self.account_manager, self.auth_manager, self.engine)
+        result = service.delete(account_id)
+        if result.ok:
+            print_success(result.message)
+            if result.stopped_jobs:
+                print_info(f"{result.stopped_jobs} not-yet-started job(s) will no longer run.")
+        else:
+            print_error(result.message)
+        self._pause()
+        return True
+
     def handle_back(self) -> bool:
         """Handle Back option."""
         return False
@@ -422,9 +477,9 @@ class AccountMenuHandler:
             self.running = self.handle_choice(choice)
 
 
-def run_account_menu(account_manager: AccountManager, auth_manager=None) -> None:
+def run_account_menu(account_manager: AccountManager, auth_manager=None, engine=None) -> None:
     """Entry point for running the account management menu."""
-    handler = AccountMenuHandler(account_manager, auth_manager)
+    handler = AccountMenuHandler(account_manager, auth_manager, engine)
     handler.run()
 
 
